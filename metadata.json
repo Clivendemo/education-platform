@@ -1,0 +1,6 @@
+{
+  "name": "Elimu Kenya",
+  "description": "Kenya-first educational resource platform for discovering, accessing, and sharing curriculum-aligned educational materials.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
