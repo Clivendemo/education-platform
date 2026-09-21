@@ -1,0 +1,15 @@
+-- Enable required cryptographic extension (docs/DATABASE_SPEC.md Section 2.2)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Create the 11 logical PostgreSQL schemas (docs/DATABASE_SPEC.md Section 4)
+CREATE SCHEMA IF NOT EXISTS platform;
+CREATE SCHEMA IF NOT EXISTS taxonomy;
+CREATE SCHEMA IF NOT EXISTS content;
+CREATE SCHEMA IF NOT EXISTS files;
+CREATE SCHEMA IF NOT EXISTS commerce;
+CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS community;
+CREATE SCHEMA IF NOT EXISTS calendar;
+CREATE SCHEMA IF NOT EXISTS analytics;
+CREATE SCHEMA IF NOT EXISTS governance;
+CREATE SCHEMA IF NOT EXISTS system;
