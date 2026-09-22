@@ -8,6 +8,13 @@
       "when": 1789811691404,
       "tag": "0000_init_infrastructure",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790050120229,
+      "tag": "0001_geography_schema",
+      "breakpoints": true
     }
   ]
 }

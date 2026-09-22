@@ -23,12 +23,24 @@ export function getDatabasePool(): pg.Pool {
       max: env.DATABASE_POOL_MAX,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
 
     // Catch errors on idle clients to prevent unhandled process crashes
     poolInstance.on('error', (err: Error) => {
-      // Structured, sanitized log without credential leakage
-      console.error('Unexpected error on idle database client:', err.message);
+      // In serverless and cloud-hosted PostgreSQL environments (e.g. Neon, AWS, Cloud SQL),
+      // remote proxies and serverless backends routinely reap idle connections.
+      // node-postgres automatically discards the terminated client from the pool.
+      const isExpectedIdleClosure =
+        err.message.includes('Connection terminated unexpectedly') ||
+        (err as { code?: string }).code === 'ECONNRESET' ||
+        err.message.includes('socket hang up');
+
+      if (!isExpectedIdleClosure) {
+        // Unexpected database pool error; log without credential leakage
+        console.error('Unexpected error on idle database client:', err.message);
+      }
     });
   }
 
