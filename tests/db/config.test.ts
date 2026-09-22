@@ -1,9 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { envSchema } from '../../src/config/env.js';
 import * as schemas from '../../src/db/schemas.js';
-import { checkDatabaseHealth } from '../../src/db/index.js';
+import { checkDatabaseHealth, closeDatabase } from '../../src/db/index.js';
 
 describe('PostgreSQL Foundation Configuration & Schemas', () => {
+  afterAll(async () => {
+    await closeDatabase();
+  });
   describe('Environment Validation (envSchema)', () => {
     it('allows DATABASE_URL to be optional in development', () => {
       const result = envSchema.safeParse({
@@ -115,8 +118,9 @@ describe('PostgreSQL Foundation Configuration & Schemas', () => {
 
       for (const schemaName of expectedSchemas) {
         const schemaKey = `${schemaName}Schema` as keyof typeof schemas;
-        expect(schemas[schemaKey]).toBeDefined();
-        expect(schemas[schemaKey].schemaName).toBe(schemaName);
+        const schemaObj = schemas[schemaKey] as { schemaName: string };
+        expect(schemaObj).toBeDefined();
+        expect(schemaObj.schemaName).toBe(schemaName);
       }
     });
   });

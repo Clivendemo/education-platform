@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:check": "drizzle-kit check"
+    "db:check": "drizzle-kit check",
+    "db:seed:geography": "tsx src/db/seeds/kenya-geography.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

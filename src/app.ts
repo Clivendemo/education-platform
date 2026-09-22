@@ -1,12 +1,23 @@
 import crypto from 'node:crypto';
 import fastify, { type FastifyInstance, type FastifyServerOptions, type FastifyError } from 'fastify';
 import { healthRoutes } from './routes/api/v1/health.js';
+import { countriesRoutes } from './routes/api/v1/countries.js';
+import { geographyRoutes } from './routes/api/v1/geography.js';
+import type { GeographyService } from './services/geography.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
 const VALID_REQUEST_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
 
-export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
+export interface AppOptions extends FastifyServerOptions {
+  services?: {
+    geographyService?: GeographyService;
+  };
+}
+
+export function buildApp(opts: AppOptions = {}): FastifyInstance {
+  const { services, ...serverOpts } = opts;
+
   const app = fastify({
     requestIdHeader: false, // Prevents Fastify from blindly adopting unvalidated headers
     genReqId: (req) => {
@@ -19,7 +30,7 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
     childLoggerFactory: function (logger, bindings, options) {
       return logger.child({ ...bindings, requestId: bindings.reqId }, options);
     },
-    ...opts,
+    ...serverOpts,
   });
 
   // Ensure accepted/generated request ID is always included in response headers
@@ -71,6 +82,15 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
 
   // Mount API v1 routes
   app.register(healthRoutes, { prefix: '/api/v1' });
+  app.register(countriesRoutes, {
+    prefix: '/api/v1',
+    geographyService: services?.geographyService,
+  });
+  app.register(geographyRoutes, {
+    prefix: '/api/v1',
+    geographyService: services?.geographyService,
+  });
 
   return app;
 }
+

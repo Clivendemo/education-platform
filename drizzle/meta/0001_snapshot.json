@@ -1,0 +1,548 @@
+{
+  "id": "819b61cd-e120-4885-ac8e-2cb3f83c0eee",
+  "prevId": "aa4de5ff-4246-4b94-b4c8-516a3d26c08d",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "platform.administrative_area_types": {
+      "name": "administrative_area_types",
+      "schema": "platform",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hierarchy_level": {
+          "name": "hierarchy_level",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_type_id": {
+          "name": "parent_type_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "administrative_area_types_country_id_countries_id_fk": {
+          "name": "administrative_area_types_country_id_countries_id_fk",
+          "tableFrom": "administrative_area_types",
+          "tableTo": "countries",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "country_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "fk_area_types_parent_country": {
+          "name": "fk_area_types_parent_country",
+          "tableFrom": "administrative_area_types",
+          "tableTo": "administrative_area_types",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "parent_type_id",
+            "country_id"
+          ],
+          "columnsTo": [
+            "id",
+            "country_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_area_types_id_country": {
+          "name": "uq_area_types_id_country",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "country_id"
+          ]
+        },
+        "uq_area_types_id_parent_type": {
+          "name": "uq_area_types_id_parent_type",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "parent_type_id"
+          ]
+        },
+        "uq_area_types_country_slug": {
+          "name": "uq_area_types_country_slug",
+          "nullsNotDistinct": false,
+          "columns": [
+            "country_id",
+            "slug"
+          ]
+        },
+        "uq_area_types_country_level": {
+          "name": "uq_area_types_country_level",
+          "nullsNotDistinct": false,
+          "columns": [
+            "country_id",
+            "hierarchy_level"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_area_types_level": {
+          "name": "chk_area_types_level",
+          "value": "\"platform\".\"administrative_area_types\".\"hierarchy_level\" > 0"
+        },
+        "chk_area_types_parent_level": {
+          "name": "chk_area_types_parent_level",
+          "value": "(\"platform\".\"administrative_area_types\".\"hierarchy_level\" = 1 AND \"platform\".\"administrative_area_types\".\"parent_type_id\" IS NULL) OR (\"platform\".\"administrative_area_types\".\"hierarchy_level\" > 1 AND \"platform\".\"administrative_area_types\".\"parent_type_id\" IS NOT NULL)"
+        },
+        "chk_area_types_status": {
+          "name": "chk_area_types_status",
+          "value": "\"platform\".\"administrative_area_types\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "platform.administrative_areas": {
+      "name": "administrative_areas",
+      "schema": "platform",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type_id": {
+          "name": "type_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_type_id": {
+          "name": "parent_type_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_areas_country_id": {
+          "name": "idx_areas_country_id",
+          "columns": [
+            {
+              "expression": "country_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_areas_type_id": {
+          "name": "idx_areas_type_id",
+          "columns": [
+            {
+              "expression": "type_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_areas_parent_id": {
+          "name": "idx_areas_parent_id",
+          "columns": [
+            {
+              "expression": "parent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "administrative_areas_country_id_countries_id_fk": {
+          "name": "administrative_areas_country_id_countries_id_fk",
+          "tableFrom": "administrative_areas",
+          "tableTo": "countries",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "country_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "fk_areas_type_country": {
+          "name": "fk_areas_type_country",
+          "tableFrom": "administrative_areas",
+          "tableTo": "administrative_area_types",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "type_id",
+            "country_id"
+          ],
+          "columnsTo": [
+            "id",
+            "country_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "fk_areas_type_parent_type": {
+          "name": "fk_areas_type_parent_type",
+          "tableFrom": "administrative_areas",
+          "tableTo": "administrative_area_types",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "type_id",
+            "parent_type_id"
+          ],
+          "columnsTo": [
+            "id",
+            "parent_type_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "fk_areas_parent_country": {
+          "name": "fk_areas_parent_country",
+          "tableFrom": "administrative_areas",
+          "tableTo": "administrative_areas",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "parent_id",
+            "country_id"
+          ],
+          "columnsTo": [
+            "id",
+            "country_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "fk_areas_parent_area_type": {
+          "name": "fk_areas_parent_area_type",
+          "tableFrom": "administrative_areas",
+          "tableTo": "administrative_areas",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "parent_id",
+            "parent_type_id"
+          ],
+          "columnsTo": [
+            "id",
+            "type_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_areas_id_country": {
+          "name": "uq_areas_id_country",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "country_id"
+          ]
+        },
+        "uq_areas_id_type": {
+          "name": "uq_areas_id_type",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "type_id"
+          ]
+        },
+        "uq_areas_country_type_slug": {
+          "name": "uq_areas_country_type_slug",
+          "nullsNotDistinct": false,
+          "columns": [
+            "country_id",
+            "type_id",
+            "slug"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_areas_no_self_parent": {
+          "name": "chk_areas_no_self_parent",
+          "value": "\"platform\".\"administrative_areas\".\"parent_id\" IS NULL OR \"platform\".\"administrative_areas\".\"parent_id\" <> \"platform\".\"administrative_areas\".\"id\""
+        },
+        "chk_areas_parent_presence": {
+          "name": "chk_areas_parent_presence",
+          "value": "(\"platform\".\"administrative_areas\".\"parent_type_id\" IS NULL AND \"platform\".\"administrative_areas\".\"parent_id\" IS NULL) OR (\"platform\".\"administrative_areas\".\"parent_type_id\" IS NOT NULL AND \"platform\".\"administrative_areas\".\"parent_id\" IS NOT NULL)"
+        },
+        "chk_areas_status": {
+          "name": "chk_areas_status",
+          "value": "\"platform\".\"administrative_areas\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "platform.countries": {
+      "name": "countries",
+      "schema": "platform",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "iso_code": {
+          "name": "iso_code",
+          "type": "varchar(3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "url_prefix": {
+          "name": "url_prefix",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "default_language_code": {
+          "name": "default_language_code",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'en'"
+        },
+        "currency_code": {
+          "name": "currency_code",
+          "type": "varchar(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'KES'"
+        },
+        "education_terminology_config": {
+          "name": "education_terminology_config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "payment_config": {
+          "name": "payment_config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "policy_config": {
+          "name": "policy_config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_countries_iso_code": {
+          "name": "uq_countries_iso_code",
+          "nullsNotDistinct": false,
+          "columns": [
+            "iso_code"
+          ]
+        },
+        "uq_countries_url_prefix": {
+          "name": "uq_countries_url_prefix",
+          "nullsNotDistinct": false,
+          "columns": [
+            "url_prefix"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_countries_iso_code_upper": {
+          "name": "chk_countries_iso_code_upper",
+          "value": "\"platform\".\"countries\".\"iso_code\" = upper(\"platform\".\"countries\".\"iso_code\")"
+        },
+        "chk_countries_url_prefix_lower": {
+          "name": "chk_countries_url_prefix_lower",
+          "value": "\"platform\".\"countries\".\"url_prefix\" = lower(\"platform\".\"countries\".\"url_prefix\")"
+        },
+        "chk_countries_status": {
+          "name": "chk_countries_status",
+          "value": "\"platform\".\"countries\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "analytics": "analytics",
+    "calendar": "calendar",
+    "commerce": "commerce",
+    "community": "community",
+    "content": "content",
+    "files": "files",
+    "governance": "governance",
+    "identity": "identity",
+    "platform": "platform",
+    "system": "system",
+    "taxonomy": "taxonomy"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
