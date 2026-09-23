@@ -246,14 +246,14 @@ The documentation set must be completed before substantial application implement
 
 | Component               | Status      | Notes |
 | ----------------------- | ----------- | ----- |
-| School types            | NOT_STARTED |       |
-| School entity           | NOT_STARTED |       |
-| School slugs            | NOT_STARTED |       |
-| School public profile   | NOT_STARTED |       |
-| School status/lifecycle | NOT_STARTED |       |
-| School verification     | NOT_STARTED |       |
-| School API              | NOT_STARTED |       |
-| School tests            | NOT_STARTED |       |
+| School types            | VERIFIED    | Controlled types (PRIMARY, JUNIOR_SCHOOL, SECONDARY, SENIOR_SCHOOL, INTEGRATED) with DB check constraint |
+| School entity           | VERIFIED    | platform.schools schema, UUID PK, composite geography FKs |
+| School slugs            | DEFERRED    | Out of scope for Prompt 05; reserved for future public school pages |
+| School public profile   | DEFERRED    | Reserved for future phase |
+| School status/lifecycle | VERIFIED    | ACTIVE/INACTIVE controlled status with check constraint; active-only public discovery |
+| School verification     | NOT_STARTED | Reserved for future governance phase |
+| School API              | VERIFIED    | GET /api/v1/schools, GET /api/v1/schools/:id |
+| School tests            | VERIFIED    | Complete offline route and live DB integration tests |
 
 ---
 
@@ -987,8 +987,8 @@ Every major implementation stage should have a Git checkpoint.
 | Documentation foundation | NOT_STARTED |        |
 | Backend foundation       | NOT_STARTED |        |
 | Database foundation      | NOT_STARTED |        |
-| Geography                | NOT_STARTED |        |
-| Schools                  | NOT_STARTED |        |
+| Geography                | VERIFIED    | Prompt 04 accepted |
+| Schools                  | VERIFIED    | Prompt 05 implemented & verified |
 | Curriculum               | NOT_STARTED |        |
 | Resource engine          | NOT_STARTED |        |
 | Publication workflow     | NOT_STARTED |        |
