@@ -4,8 +4,10 @@ import { healthRoutes } from './routes/api/v1/health.js';
 import { countriesRoutes } from './routes/api/v1/countries.js';
 import { geographyRoutes } from './routes/api/v1/geography.js';
 import { schoolsRoutes } from './routes/api/v1/schools.js';
+import { curriculumRoutes } from './routes/api/v1/curriculum.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
+import type { CurriculumService } from './services/curriculum.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -15,6 +17,7 @@ export interface AppOptions extends FastifyServerOptions {
   services?: {
     geographyService?: GeographyService;
     schoolService?: SchoolService;
+    curriculumService?: CurriculumService;
   };
 }
 
@@ -96,6 +99,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(schoolsRoutes, {
     prefix: '/api/v1',
     schoolService: services?.schoolService,
+  });
+  app.register(curriculumRoutes, {
+    prefix: '/api/v1',
+    curriculumService: services?.curriculumService,
   });
 
   return app;
