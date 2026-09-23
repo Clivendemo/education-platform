@@ -15,12 +15,19 @@ const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATAB
 describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
   let kenyaCountryId: string;
   let nairobiAreaId: string;
-  let tanzaniaCountryId: string;
-  let arushaAreaId: string;
 
   const testSchoolIds: string[] = [];
 
   beforeAll(async () => {
+    // Ensure clean state: remove any prior external test artifacts if left by interrupted runs
+    await db
+      .delete(administrativeAreas)
+      .where(sql`${administrativeAreas.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
+    await db
+      .delete(administrativeAreaTypes)
+      .where(sql`${administrativeAreaTypes.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
+    await db.delete(countries).where(eq(countries.isoCode, 'TZ'));
+
     // Ensure Kenya geography exists
     await seedKenyaGeography();
 
@@ -40,60 +47,6 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
         .limit(1)
     )[0];
     nairobiAreaId = nairobi.id;
-
-    // Create a temporary Tanzania country and area to test cross-country foreign key integrity
-    const [tz] = await db
-      .insert(countries)
-      .values({
-        name: 'Tanzania Test',
-        isoCode: 'TZ',
-        urlPrefix: 'tz',
-        defaultLanguageCode: 'sw',
-        currencyCode: 'TZS',
-        status: 'ACTIVE',
-      })
-      .onConflictDoUpdate({
-        target: countries.isoCode,
-        set: { name: 'Tanzania Test' },
-      })
-      .returning();
-    tanzaniaCountryId = tz.id;
-
-    // Create an area type and area in Tanzania
-    const [tzType] = await db
-      .insert(administrativeAreaTypes)
-      .values({
-        countryId: tanzaniaCountryId,
-        name: 'Region',
-        slug: 'region',
-        hierarchyLevel: 1,
-        status: 'ACTIVE',
-      })
-      .onConflictDoUpdate({
-        target: [administrativeAreaTypes.countryId, administrativeAreaTypes.slug],
-        set: { name: 'Region' },
-      })
-      .returning();
-
-    const [arusha] = await db
-      .insert(administrativeAreas)
-      .values({
-        countryId: tanzaniaCountryId,
-        typeId: tzType.id,
-        name: 'Arusha',
-        slug: 'arusha',
-        status: 'ACTIVE',
-      })
-      .onConflictDoUpdate({
-        target: [
-          administrativeAreas.countryId,
-          administrativeAreas.typeId,
-          administrativeAreas.slug,
-        ],
-        set: { name: 'Arusha' },
-      })
-      .returning();
-    arushaAreaId = arusha.id;
   });
 
   afterAll(async () => {
@@ -102,18 +55,14 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
       await db.delete(schools).where(sql`${schools.id} IN ${testSchoolIds}`);
     }
 
-    // Clean up Tanzania test records
-    if (arushaAreaId) {
-      await db
-        .delete(administrativeAreas)
-        .where(eq(administrativeAreas.countryId, tanzaniaCountryId));
-      await db
-        .delete(administrativeAreaTypes)
-        .where(eq(administrativeAreaTypes.countryId, tanzaniaCountryId));
-      await db
-        .delete(countries)
-        .where(eq(countries.id, tanzaniaCountryId));
-    }
+    // Clean up any remaining Tanzania test records
+    await db
+      .delete(administrativeAreas)
+      .where(sql`${administrativeAreas.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
+    await db
+      .delete(administrativeAreaTypes)
+      .where(sql`${administrativeAreaTypes.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
+    await db.delete(countries).where(eq(countries.isoCode, 'TZ'));
 
     await closeDatabase();
   });
@@ -176,16 +125,73 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
 
   describe('School Geography Integrity & Constraints', () => {
     it('prevents cross-country administrative area assignment (Kenya school with Tanzania area)', async () => {
-      // Must be rejected by composite foreign key fk_schools_area_country and trigger
-      await expect(
-        db.insert(schools).values({
-          name: 'Invalid Cross Country School',
-          schoolType: 'SECONDARY',
+      // Create temporary non-Kenya country and area
+      const [tz] = await db
+        .insert(countries)
+        .values({
+          name: 'Tanzania Test',
+          isoCode: 'TZ',
+          urlPrefix: 'tz',
+          defaultLanguageCode: 'sw',
+          currencyCode: 'TZS',
           status: 'ACTIVE',
-          countryId: kenyaCountryId, // Kenya!
-          administrativeAreaId: arushaAreaId, // Arusha is in Tanzania!
-        }),
-      ).rejects.toThrow();
+        })
+        .onConflictDoUpdate({
+          target: countries.isoCode,
+          set: { name: 'Tanzania Test' },
+        })
+        .returning();
+
+      const [tzType] = await db
+        .insert(administrativeAreaTypes)
+        .values({
+          countryId: tz.id,
+          name: 'Region',
+          slug: 'region',
+          hierarchyLevel: 1,
+          status: 'ACTIVE',
+        })
+        .onConflictDoUpdate({
+          target: [administrativeAreaTypes.countryId, administrativeAreaTypes.slug],
+          set: { name: 'Region' },
+        })
+        .returning();
+
+      const [arusha] = await db
+        .insert(administrativeAreas)
+        .values({
+          countryId: tz.id,
+          typeId: tzType.id,
+          name: 'Arusha',
+          slug: 'arusha',
+          status: 'ACTIVE',
+        })
+        .onConflictDoUpdate({
+          target: [
+            administrativeAreas.countryId,
+            administrativeAreas.typeId,
+            administrativeAreas.slug,
+          ],
+          set: { name: 'Arusha' },
+        })
+        .returning();
+
+      try {
+        // Must be rejected by composite foreign key fk_schools_area_country and trigger
+        await expect(
+          db.insert(schools).values({
+            name: 'Invalid Cross Country School',
+            schoolType: 'SECONDARY',
+            status: 'ACTIVE',
+            countryId: kenyaCountryId, // Kenya!
+            administrativeAreaId: arusha.id, // Arusha is in Tanzania!
+          }),
+        ).rejects.toThrow();
+      } finally {
+        await db.delete(administrativeAreas).where(eq(administrativeAreas.id, arusha.id));
+        await db.delete(administrativeAreaTypes).where(eq(administrativeAreaTypes.id, tzType.id));
+        await db.delete(countries).where(eq(countries.id, tz.id));
+      }
     });
 
     it('rejects an invalid administrative area reference (non-existent UUID)', async () => {
