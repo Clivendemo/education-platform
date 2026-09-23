@@ -132,6 +132,8 @@ describe('PostgreSQL Foundation Configuration & Schemas', () => {
       if (!process.env.DATABASE_URL) {
         expect(health.status).toBe('unhealthy');
         expect(health.error).toBeDefined();
+      } else {
+        expect(['healthy', 'unhealthy']).toContain(health.status);
       }
     });
   });
