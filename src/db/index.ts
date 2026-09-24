@@ -17,11 +17,12 @@ export function getDatabasePool(): pg.Pool {
       throw new Error('DATABASE_URL is not configured.');
     }
 
+    const isTest = env.NODE_ENV === 'test' || process.env.VITEST === 'true';
     poolInstance = new Pool({
       connectionString: env.DATABASE_URL,
-      min: env.DATABASE_POOL_MIN,
-      max: env.DATABASE_POOL_MAX,
-      idleTimeoutMillis: 30000,
+      min: isTest ? 0 : env.DATABASE_POOL_MIN,
+      max: isTest ? 5 : env.DATABASE_POOL_MAX,
+      idleTimeoutMillis: 10000,
       connectionTimeoutMillis: 30000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
