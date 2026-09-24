@@ -21,7 +21,6 @@ export const SCHOOL_TYPES = [
   'SENIOR_SCHOOL',
   'INTEGRATED',
 ] as const;
-
 export type SchoolType = (typeof SCHOOL_TYPES)[number];
 
 /**
@@ -57,6 +56,7 @@ export const schools = platformSchema.table(
       .defaultNow(),
   },
   (table) => [
+    unique('uq_schools_id_country').on(table.id, table.countryId),
     unique('uq_schools_country_code').on(table.countryId, table.code),
     foreignKey({
       name: 'fk_schools_area_country',

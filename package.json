@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:check": "drizzle-kit check",
     "db:seed:geography": "tsx src/db/seeds/kenya-geography.ts",
-    "db:seed:curriculum": "tsx src/db/seeds/kenya-curriculum.ts"
+    "db:seed:curriculum": "tsx src/db/seeds/kenya-curriculum.ts",
+    "db:seed:resources": "tsx src/db/seeds/kenya-resources.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
