@@ -35,20 +35,30 @@ describe.skipIf(!isDbAvailable)('Curriculum Database Integration Tests', () => {
   const createdCountryIds: string[] = [];
 
   beforeAll(async () => {
-    // 1. Ensure Kenya country exists
-    await seedKenyaGeography();
-    const kenya = (
+    // 1. Ensure Kenya country exists (query directly first; seed only if missing)
+    let kenya = (
       await db
         .select()
         .from(countries)
         .where(eq(countries.isoCode, 'KE'))
         .limit(1)
     )[0];
+
+    if (!kenya) {
+      await seedKenyaGeography();
+      kenya = (
+        await db
+          .select()
+          .from(countries)
+          .where(eq(countries.isoCode, 'KE'))
+          .limit(1)
+      )[0];
+    }
     kenyaCountryId = kenya.id;
 
     // 2. Seed Kenya curriculum foundation
     seededData = await seedKenyaCurriculum(db);
-  });
+  }, 120000);
 
   afterAll(async () => {
     // Clean up any test records in reverse hierarchy order
