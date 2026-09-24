@@ -28,31 +28,42 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   let inactiveSchoolId: string;
 
   const cleanupResourceIds: string[] = [];
+  const createdCountryIds: string[] = [];
 
   beforeAll(async () => {
+    // Generate a unique 2-character uppercase suffix for ISO code (e.g. 'A1', 'B2', etc.)
+    const randAlpha = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+    const randNum = Math.floor(Math.random() * 10);
+    const keIso = `K${randAlpha}${randNum}`.substring(0, 3);
+    const tzIso = `T${randAlpha}${randNum}`.substring(0, 3);
+    const kePrefix = `k${Date.now().toString().slice(-4)}${randNum}`;
+    const tzPrefix = `t${Date.now().toString().slice(-4)}${randNum}`;
+
     // 1. Ensure Kenya exists
     const [ke] = await db
       .insert(countries)
       .values({
         name: `PubTest Kenya ${Date.now()}`,
-        isoCode: `K${Date.now().toString().slice(-2)}`,
-        urlPrefix: `k${Date.now().toString().slice(-3)}`,
+        isoCode: keIso,
+        urlPrefix: kePrefix,
         status: 'ACTIVE',
       })
       .returning();
     kenyaId = ke.id;
+    createdCountryIds.push(ke.id);
 
     // Ensure Tanzania (INACTIVE)
     const [tz] = await db
       .insert(countries)
       .values({
         name: `PubTest Tanzania ${Date.now()}`,
-        isoCode: `T${Date.now().toString().slice(-2)}`,
-        urlPrefix: `t${Date.now().toString().slice(-3)}`,
+        isoCode: tzIso,
+        urlPrefix: tzPrefix,
         status: 'INACTIVE',
       })
       .returning();
     tanzaniaId = tz.id;
+    createdCountryIds.push(tz.id);
 
     // 2. Setup Resource Types
     const [t1] = await db
