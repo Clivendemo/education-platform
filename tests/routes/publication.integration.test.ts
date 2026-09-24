@@ -576,7 +576,7 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
       expect(events[3].eventType).toBe('SUBMITTED');
     });
 
-    it('engine trigger trg_prevent_publication_event_update prevents mutating publication events', async () => {
+    it('engine triggers prevent mutating or deleting publication events (immutable audit ledger)', async () => {
       const { resource } = await createTestResource({
         status: 'PUBLISHED',
         versionStatus: 'PUBLISHED',
@@ -608,26 +608,8 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
         );
       }
       expect(updateError).toBe(true);
-    });
 
-    it('engine trigger trg_prevent_publication_event_delete prevents deleting publication events', async () => {
-      const { resource } = await createTestResource({
-        status: 'PUBLISHED',
-        versionStatus: 'PUBLISHED',
-        publishedAt: new Date(),
-      });
-
-      const [ev] = await db
-        .insert(publicationEvents)
-        .values({
-          resourceId: resource.id,
-          eventType: 'PUBLISHED',
-          fromStatus: 'APPROVED',
-          toStatus: 'PUBLISHED',
-          reason: 'Initial publication event',
-        })
-        .returning();
-
+      // Now verify engine trigger trg_prevent_publication_event_delete prevents deleting publication events
       let deleteError = false;
       try {
         await db
