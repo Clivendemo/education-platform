@@ -36,6 +36,13 @@
       "when": 1790223936306,
       "tag": "0004_resource_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790310000000,
+      "tag": "0005_publication_workflow",
+      "breakpoints": true
     }
   ]
 }
