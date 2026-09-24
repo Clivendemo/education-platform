@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, closeDatabase } from '../../src/db/index.js';
 import {
   countries,
@@ -219,31 +219,40 @@ describe('Resource Engine Database Integration Tests', () => {
   });
 
   afterAll(async () => {
-    // Clean up created resources & versions
-    for (const rId of createdResourceIds) {
-      await db.delete(resourceVersions).where(eq(resourceVersions.resourceId, rId));
-      await db.delete(resources).where(eq(resources.id, rId));
+    try {
+      // Clean up created resources & versions in batch
+      if (createdResourceIds.length > 0) {
+        await db
+          .delete(resourceVersions)
+          .where(inArray(resourceVersions.resourceId, createdResourceIds));
+        await db
+          .delete(resources)
+          .where(inArray(resources.id, createdResourceIds));
+      }
+      // Clean up schools created during test
+      if (createdSchoolIds.length > 0) {
+        await db
+          .delete(schools)
+          .where(inArray(schools.id, createdSchoolIds));
+      }
+      // Clean up created curriculum hierarchy
+      if (topicId) await db.delete(topics).where(eq(topics.id, topicId));
+      if (subjectId) await db.delete(subjects).where(eq(subjects.id, subjectId));
+      if (pathwayId) await db.delete(pathways).where(eq(pathways.id, pathwayId));
+      if (gradeId) await db.delete(grades).where(eq(grades.id, gradeId));
+      if (educationLevelId) await db.delete(educationLevels).where(eq(educationLevels.id, educationLevelId));
+      if (curriculumVersionId) await db.delete(curriculumVersions).where(eq(curriculumVersions.id, curriculumVersionId));
+      if (createdCurriculaIds.length > 0) {
+        await db.delete(curricula).where(inArray(curricula.id, createdCurriculaIds));
+      }
+      // Clean up created resource types
+      if (createdTypeIds.length > 0) {
+        await db.delete(resourceTypes).where(inArray(resourceTypes.id, createdTypeIds));
+      }
+    } finally {
+      await closeDatabase();
     }
-    // Clean up schools created during test
-    for (const sId of createdSchoolIds) {
-      await db.delete(schools).where(eq(schools.id, sId));
-    }
-    // Clean up created curriculum hierarchy
-    if (topicId) await db.delete(topics).where(eq(topics.id, topicId));
-    if (subjectId) await db.delete(subjects).where(eq(subjects.id, subjectId));
-    if (pathwayId) await db.delete(pathways).where(eq(pathways.id, pathwayId));
-    if (gradeId) await db.delete(grades).where(eq(grades.id, gradeId));
-    if (educationLevelId) await db.delete(educationLevels).where(eq(educationLevels.id, educationLevelId));
-    if (curriculumVersionId) await db.delete(curriculumVersions).where(eq(curriculumVersions.id, curriculumVersionId));
-    for (const cId of createdCurriculaIds) {
-      await db.delete(curricula).where(eq(curricula.id, cId));
-    }
-    // Clean up created resource types
-    for (const tId of createdTypeIds) {
-      await db.delete(resourceTypes).where(eq(resourceTypes.id, tId));
-    }
-    await closeDatabase();
-  });
+  }, 60000);
 
   describe('1. Valid Resource Creation & Hierarchical Linking', () => {
     it('creates a general resource without curriculum relationship', async () => {

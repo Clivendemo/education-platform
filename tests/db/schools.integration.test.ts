@@ -19,14 +19,10 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
   const testSchoolIds: string[] = [];
 
   beforeAll(async () => {
-    // Ensure clean state: remove any prior external test artifacts if left by interrupted runs
+    // Clean up test-specific administrative area artifacts if left by interrupted runs
     await db
       .delete(administrativeAreas)
-      .where(sql`${administrativeAreas.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
-    await db
-      .delete(administrativeAreaTypes)
-      .where(sql`${administrativeAreaTypes.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
-    await db.delete(countries).where(eq(countries.isoCode, 'TZ'));
+      .where(eq(administrativeAreas.slug, 'arusha'));
 
     // Ensure Kenya geography exists
     await seedKenyaGeography();
@@ -50,22 +46,20 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
   });
 
   afterAll(async () => {
-    // Clean up created test schools
-    if (testSchoolIds.length > 0) {
-      await db.delete(schools).where(sql`${schools.id} IN ${testSchoolIds}`);
+    try {
+      // Clean up created test schools
+      if (testSchoolIds.length > 0) {
+        await db.delete(schools).where(sql`${schools.id} IN ${testSchoolIds}`);
+      }
+
+      // Clean up test area
+      await db
+        .delete(administrativeAreas)
+        .where(eq(administrativeAreas.slug, 'arusha'));
+    } finally {
+      await closeDatabase();
     }
-
-    // Clean up any remaining Tanzania test records
-    await db
-      .delete(administrativeAreas)
-      .where(sql`${administrativeAreas.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
-    await db
-      .delete(administrativeAreaTypes)
-      .where(sql`${administrativeAreaTypes.countryId} IN (SELECT id FROM ${countries} WHERE ${countries.isoCode} = 'TZ')`);
-    await db.delete(countries).where(eq(countries.isoCode, 'TZ'));
-
-    await closeDatabase();
-  });
+  }, 30000);
 
   describe('Valid School Creation and Retrieval', () => {
     it('creates a valid school with county association and retrieves it', async () => {
@@ -189,8 +183,6 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
         ).rejects.toThrow();
       } finally {
         await db.delete(administrativeAreas).where(eq(administrativeAreas.id, arusha.id));
-        await db.delete(administrativeAreaTypes).where(eq(administrativeAreaTypes.id, tzType.id));
-        await db.delete(countries).where(eq(countries.id, tz.id));
       }
     });
 
