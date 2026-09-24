@@ -332,7 +332,7 @@ describe('Resource Engine Database Integration Tests', () => {
         .returning();
       createdResourceIds.push(res.id);
 
-      // Insert version 1
+      // Insert version 1 (PUBLISHED)
       const [v1] = await db
         .insert(resourceVersions)
         .values({
@@ -346,7 +346,7 @@ describe('Resource Engine Database Integration Tests', () => {
         })
         .returning();
 
-      // Insert version 2
+      // Insert version 2 (IN_REVIEW)
       const [v2] = await db
         .insert(resourceVersions)
         .values({
@@ -355,16 +355,17 @@ describe('Resource Engine Database Integration Tests', () => {
           versionLabel: 'v2.0',
           title: 'Mock Exam v2 (Corrected)',
           changeSummary: 'Fixed question 4 typos',
-          status: 'PUBLISHED',
+          status: 'IN_REVIEW',
           qualityLabel: 'VERIFIED',
-          publishedAt: new Date(),
         })
         .returning();
 
       expect(v1.versionNumber).toBe(1);
       expect(v2.versionNumber).toBe(2);
 
-      const versions = await resourceService.listResourceVersions(res.id);
+      const versions = await resourceService.listResourceVersions(res.id, {
+        includeUnpublished: true,
+      });
       expect(versions).toHaveLength(2);
       expect(versions[0].versionNumber).toBe(1);
       expect(versions[1].versionNumber).toBe(2);
@@ -495,14 +496,14 @@ describe('Resource Engine Database Integration Tests', () => {
       });
       expect(v1.versionNumber).toBe(1);
 
-      // Correction: instead of mutating v1, create a higher version (v2)
+      // Correction: instead of mutating v1, create a higher version (v2) in DRAFT
       const v2 = await resourceService.createResourceVersion({
         resourceId: res.id,
         versionNumber: 2,
         versionLabel: 'v2.0',
         title: 'Resource Version 2.0 (Errata Corrected)',
         changeSummary: 'Corrected errata in section 3',
-        status: 'PUBLISHED',
+        status: 'DRAFT',
       });
       expect(v2.versionNumber).toBe(2);
       expect(v2.versionNumber).toBeGreaterThan(v1.versionNumber);
@@ -513,7 +514,7 @@ describe('Resource Engine Database Integration Tests', () => {
         versionNumber: 5,
         versionLabel: 'v5.0 Major Overhaul',
         title: 'Resource Version 5.0',
-        status: 'PUBLISHED',
+        status: 'IN_REVIEW',
       });
       expect(v5.versionNumber).toBe(5);
     });
