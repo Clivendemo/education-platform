@@ -22,7 +22,7 @@ export function getDatabasePool(): pg.Pool {
       min: env.DATABASE_POOL_MIN,
       max: env.DATABASE_POOL_MAX,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 15000,
+      connectionTimeoutMillis: 30000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
     });

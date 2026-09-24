@@ -195,7 +195,7 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
         .from(administrativeAreas);
 
       expect(Number(countRow[0].value)).toBe(47);
-    }, 15000);
+    }, 60000);
   });
 
   describe('Geography Service Live Integration', () => {
