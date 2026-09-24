@@ -29,6 +29,13 @@
       "when": 1790156258892,
       "tag": "0003_curriculum_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790223936306,
+      "tag": "0004_resource_engine",
+      "breakpoints": true
     }
   ]
 }
