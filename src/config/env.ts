@@ -17,6 +17,14 @@ export const envSchema = z
     DATABASE_URL: z.string().url().optional(),
     DATABASE_POOL_MIN: z.coerce.number().int().min(0).default(2),
     DATABASE_POOL_MAX: z.coerce.number().int().min(1).default(10),
+
+    // Cloudflare R2 Object Storage configuration (Prompt 09)
+    R2_ACCOUNT_ID: z.string().optional(),
+    R2_ACCESS_KEY_ID: z.string().optional(),
+    R2_SECRET_ACCESS_KEY: z.string().optional(),
+    R2_BUCKET_NAME: z.string().min(1).default('kenya-education-platform-files'),
+    R2_ENDPOINT: z.string().url().optional(),
+    MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(52428800), // 50 MB
   })
   .superRefine((data, ctx) => {
     // Cross-field pool range validation

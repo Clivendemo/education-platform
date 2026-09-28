@@ -51,185 +51,233 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
     throw error;
   });
 
-  // 1. POST /resources/:id/submit
-  fastify.post<{ Params: { id: string } }>('/resources/:id/submit', async (request, reply) => {
-    const { id } = request.params;
-    const bodyResult = SubmitSchema.safeParse(request.body || {});
-    if (!bodyResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: bodyResult.error.errors.map((e) => e.message).join('; '),
-          requestId: request.id,
-        },
-      });
+  // Helper to register handler across multiple endpoint paths
+  const registerPostHandler = (
+    paths: string[],
+    handler: (request: any, reply: any) => Promise<any>,
+  ) => {
+    for (const path of paths) {
+      fastify.post<{ Params: { id: string } }>(path, handler);
     }
+  };
 
-    try {
-      const result = await publicationService.submitResourceForReview(id, {
-        versionId: bodyResult.data.versionId,
-      });
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
+  // 1. Submit for Review
+  // Supported paths:
+  // - /resources/:id/submit
+  // - /admin/resources/:id/submit-review (approved in docs/API_SPEC.md Section 22)
+  // - /admin/resources/:id/submit
+  registerPostHandler(
+    ['/resources/:id/submit', '/admin/resources/:id/submit-review', '/admin/resources/:id/submit'],
+    async (request, reply) => {
+      const { id } = request.params;
+      const bodyResult = SubmitSchema.safeParse(request.body || {});
+      if (!bodyResult.success) {
+        return reply.status(400).send({
           error: {
-            code: err.code,
-            message: err.message,
+            code: 'VALIDATION_ERROR',
+            message: bodyResult.error.errors.map((e) => e.message).join('; '),
             requestId: request.id,
           },
         });
       }
-      throw err;
-    }
-  });
 
-  // 2. POST /resources/:id/approve
-  fastify.post<{ Params: { id: string } }>('/resources/:id/approve', async (request, reply) => {
-    const { id } = request.params;
-    try {
-      const result = await publicationService.approveResource(id);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
+      try {
+        const result = await publicationService.submitResourceForReview(id, {
+          versionId: bodyResult.data.versionId,
+        });
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  // 2. Approve Resource
+  // Supported paths:
+  // - /resources/:id/approve
+  // - /admin/resources/:id/approve (approved in docs/API_SPEC.md Section 22)
+  registerPostHandler(
+    ['/resources/:id/approve', '/admin/resources/:id/approve'],
+    async (request, reply) => {
+      const { id } = request.params;
+      try {
+        const result = await publicationService.approveResource(id);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  // 3. Reject Resource
+  // Supported paths:
+  // - /resources/:id/reject
+  // - /admin/resources/:id/reject
+  registerPostHandler(
+    ['/resources/:id/reject', '/admin/resources/:id/reject'],
+    async (request, reply) => {
+      const { id } = request.params;
+      const bodyResult = RejectSchema.safeParse(request.body || {});
+      if (!bodyResult.success) {
+        return reply.status(400).send({
           error: {
-            code: err.code,
-            message: err.message,
+            code: 'VALIDATION_ERROR',
+            message: bodyResult.error.errors.map((e) => e.message).join('; '),
             requestId: request.id,
           },
         });
       }
-      throw err;
-    }
-  });
 
-  // 3. POST /resources/:id/reject
-  fastify.post<{ Params: { id: string } }>('/resources/:id/reject', async (request, reply) => {
-    const { id } = request.params;
-    const bodyResult = RejectSchema.safeParse(request.body || {});
-    if (!bodyResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: bodyResult.error.errors.map((e) => e.message).join('; '),
-          requestId: request.id,
-        },
-      });
-    }
+      try {
+        const result = await publicationService.rejectResource(id, bodyResult.data.reason);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
 
-    try {
-      const result = await publicationService.rejectResource(id, bodyResult.data.reason);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
+  // 4. Publish Resource Version
+  // Supported paths:
+  // - /resources/:id/publish
+  // - /admin/resources/:id/publish (approved in docs/API_SPEC.md Section 22)
+  registerPostHandler(
+    ['/resources/:id/publish', '/admin/resources/:id/publish'],
+    async (request, reply) => {
+      const { id } = request.params;
+      const bodyResult = PublishSchema.safeParse(request.body || {});
+      if (!bodyResult.success) {
+        return reply.status(400).send({
           error: {
-            code: err.code,
-            message: err.message,
+            code: 'VALIDATION_ERROR',
+            message: bodyResult.error.errors.map((e) => e.message).join('; '),
             requestId: request.id,
           },
         });
       }
-      throw err;
-    }
-  });
 
-  // 4. POST /resources/:id/publish
-  fastify.post<{ Params: { id: string } }>('/resources/:id/publish', async (request, reply) => {
-    const { id } = request.params;
-    const bodyResult = PublishSchema.safeParse(request.body || {});
-    if (!bodyResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: bodyResult.error.errors.map((e) => e.message).join('; '),
-          requestId: request.id,
-        },
-      });
-    }
+      try {
+        const result = await publicationService.publishResourceVersion(id, bodyResult.data.versionId);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
 
-    try {
-      const result = await publicationService.publishResourceVersion(id, bodyResult.data.versionId);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
+  // 5. Archive / Retire Resource
+  // Supported paths:
+  // - /resources/:id/archive
+  // - /admin/resources/:id/retire (approved in docs/API_SPEC.md Section 22)
+  // - /admin/resources/:id/archive
+  registerPostHandler(
+    ['/resources/:id/archive', '/admin/resources/:id/retire', '/admin/resources/:id/archive'],
+    async (request, reply) => {
+      const { id } = request.params;
+      const bodyResult = ArchiveSchema.safeParse(request.body || {});
+      if (!bodyResult.success) {
+        return reply.status(400).send({
           error: {
-            code: err.code,
-            message: err.message,
+            code: 'VALIDATION_ERROR',
+            message: bodyResult.error.errors.map((e) => e.message).join('; '),
             requestId: request.id,
           },
         });
       }
-      throw err;
-    }
-  });
 
-  // 5. POST /resources/:id/archive
-  fastify.post<{ Params: { id: string } }>('/resources/:id/archive', async (request, reply) => {
-    const { id } = request.params;
-    const bodyResult = ArchiveSchema.safeParse(request.body || {});
-    if (!bodyResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: bodyResult.error.errors.map((e) => e.message).join('; '),
-          requestId: request.id,
-        },
-      });
-    }
+      try {
+        const result = await publicationService.archiveResource(id, bodyResult.data.reason);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
 
-    try {
-      const result = await publicationService.archiveResource(id, bodyResult.data.reason);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
+  // 6. Return Resource to Draft
+  // Supported paths:
+  // - /resources/:id/return-to-draft
+  // - /admin/resources/:id/return-to-draft
+  registerPostHandler(
+    ['/resources/:id/return-to-draft', '/admin/resources/:id/return-to-draft'],
+    async (request, reply) => {
+      const { id } = request.params;
+      const bodyResult = ReturnToDraftSchema.safeParse(request.body || {});
+      if (!bodyResult.success) {
+        return reply.status(400).send({
           error: {
-            code: err.code,
-            message: err.message,
+            code: 'VALIDATION_ERROR',
+            message: bodyResult.error.errors.map((e) => e.message).join('; '),
             requestId: request.id,
           },
         });
       }
-      throw err;
-    }
-  });
 
-  // 6. POST /resources/:id/return-to-draft
-  fastify.post<{ Params: { id: string } }>('/resources/:id/return-to-draft', async (request, reply) => {
-    const { id } = request.params;
-    const bodyResult = ReturnToDraftSchema.safeParse(request.body || {});
-    if (!bodyResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: bodyResult.error.errors.map((e) => e.message).join('; '),
-          requestId: request.id,
-        },
-      });
-    }
-
-    try {
-      const result = await publicationService.returnResourceToDraft(id, bodyResult.data.reason);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      if (err instanceof PublicationError) {
-        return reply.status(err.statusCode).send({
-          error: {
-            code: err.code,
-            message: err.message,
-            requestId: request.id,
-          },
-        });
+      try {
+        const result = await publicationService.returnResourceToDraft(id, bodyResult.data.reason);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        if (err instanceof PublicationError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+  );
 
-  // 7. GET /resources/:id/events (Publication History)
-  fastify.get<{ Params: { id: string } }>('/resources/:id/events', async (request, reply) => {
+  // 7. GET /resources/:id/events & /admin/resources/:id/events (Publication History)
+  const getEventsHandler = async (request: any, reply: any) => {
     const { id } = request.params;
     try {
       const events = await publicationService.getPublicationHistory(id);
@@ -246,5 +294,8 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
       }
       throw err;
     }
-  });
+  };
+
+  fastify.get<{ Params: { id: string } }>('/resources/:id/events', getEventsHandler);
+  fastify.get<{ Params: { id: string } }>('/admin/resources/:id/events', getEventsHandler);
 };

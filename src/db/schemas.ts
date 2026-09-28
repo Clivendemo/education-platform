@@ -4,3 +4,4 @@ export * from './schema/schools.js';
 export * from './schema/curriculum.js';
 export * from './schema/resource.js';
 export * from './schema/publication.js';
+export * from './schema/files.js';

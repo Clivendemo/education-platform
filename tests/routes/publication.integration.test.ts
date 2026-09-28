@@ -224,8 +224,8 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
       expect(dbRes.status).toBe('APPROVED');
     });
 
-    it('mandates rejection reason when rejecting a candidate resource', async () => {
-      const { resource } = await createTestResource({
+    it('mandates rejection reason when rejecting a candidate resource and atomically changes both to REJECTED', async () => {
+      const { resource, version } = await createTestResource({
         status: 'IN_REVIEW',
         versionStatus: 'IN_REVIEW',
       });
@@ -256,9 +256,11 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
       expect(validRes.json().data.status).toBe('REJECTED');
       expect(validRes.json().data.event.reason).toBe('Formatting does not meet quality guidelines');
 
-      // Check DB sync to REJECTED
+      // Check DB atomic sync to REJECTED for BOTH resource and candidate version
       const [dbRes] = await db.select().from(resources).where(eq(resources.id, resource.id));
+      const [dbVer] = await db.select().from(resourceVersions).where(eq(resourceVersions.id, version.id));
       expect(dbRes.status).toBe('REJECTED');
+      expect(dbVer.status).toBe('REJECTED');
     });
 
     it('returns a REJECTED resource to DRAFT and synchronizes candidate version to DRAFT', async () => {
@@ -471,8 +473,8 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   });
 
   describe('4. Terminal ARCHIVED State & Immutability', () => {
-    it('transitions a PUBLISHED resource to terminal ARCHIVED', async () => {
-      const { resource } = await createTestResource({
+    it('transitions a PUBLISHED resource to terminal ARCHIVED while keeping resource_versions.status PUBLISHED', async () => {
+      const { resource, version } = await createTestResource({
         status: 'PUBLISHED',
         versionStatus: 'PUBLISHED',
         publishedAt: new Date(),
@@ -488,7 +490,11 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
       expect(res.json().data.status).toBe('ARCHIVED');
 
       const [dbRes] = await db.select().from(resources).where(eq(resources.id, resource.id));
+      const [dbVer] = await db.select().from(resourceVersions).where(eq(resourceVersions.id, version.id));
       expect(dbRes.status).toBe('ARCHIVED');
+      // Crucial requirement: Archive must NOT change resource_versions.status from PUBLISHED to ARCHIVED
+      expect(dbVer.status).toBe('PUBLISHED');
+      expect(dbVer.publishedAt).not.toBeNull();
     });
 
     it('prohibits returning terminal ARCHIVED resource to DRAFT', async () => {
@@ -622,6 +628,192 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
         );
       }
       expect(deleteError).toBe(true);
+    });
+  });
+
+  describe('6. Published_at Consistency Constraint (chk_resource_versions_published_at)', () => {
+    it('rejects PUBLISHED version when published_at is NULL', async () => {
+      const { resource } = await createTestResource();
+
+      let errorThrown = false;
+      try {
+        await db.insert(resourceVersions).values({
+          resourceId: resource.id,
+          versionNumber: 99,
+          versionLabel: 'v99.0',
+          title: 'Invalid Published Version Without Timestamp',
+          status: 'PUBLISHED',
+          publishedAt: null,
+        });
+      } catch (err: any) {
+        errorThrown = true;
+        const constraintName = err.cause?.constraint || err.constraint;
+        expect(constraintName).toBe('chk_resource_versions_published_at');
+      }
+      expect(errorThrown).toBe(true);
+    });
+
+    it('rejects non-PUBLISHED version when published_at is NOT NULL', async () => {
+      const { resource } = await createTestResource();
+
+      let errorThrown = false;
+      try {
+        await db.insert(resourceVersions).values({
+          resourceId: resource.id,
+          versionNumber: 98,
+          versionLabel: 'v98.0',
+          title: 'Invalid Draft Version With Timestamp',
+          status: 'DRAFT',
+          publishedAt: new Date(),
+        });
+      } catch (err: any) {
+        errorThrown = true;
+        const constraintName = err.cause?.constraint || err.constraint;
+        expect(constraintName).toBe('chk_resource_versions_published_at');
+      }
+      expect(errorThrown).toBe(true);
+    });
+
+    it('accepts PUBLISHED version with published_at timestamp and DRAFT with NULL', async () => {
+      const { resource } = await createTestResource();
+
+      const [pubVer] = await db
+        .insert(resourceVersions)
+        .values({
+          resourceId: resource.id,
+          versionNumber: 96,
+          versionLabel: 'v96.0',
+          title: 'Valid Published Version',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        })
+        .returning();
+
+      expect(pubVer.status).toBe('PUBLISHED');
+      expect(pubVer.publishedAt).not.toBeNull();
+    });
+  });
+
+  describe('7. Publication Event Version Match Trigger (trg_check_publication_event_version_match)', () => {
+    it('blocks publication event when resource_version_id belongs to a different resource', async () => {
+      const r1 = await createTestResource();
+      const r2 = await createTestResource();
+
+      let triggerErrorThrown = false;
+      try {
+        await db.insert(publicationEvents).values({
+          resourceId: r1.resource.id,
+          resourceVersionId: r2.version.id, // Does not belong to r1!
+          eventType: 'SUBMITTED',
+          fromStatus: 'DRAFT',
+          toStatus: 'IN_REVIEW',
+        });
+      } catch (err: any) {
+        triggerErrorThrown = true;
+        const msg = err.cause?.message || err.message;
+        expect(msg).toMatch(/does not belong to resource_id/i);
+      }
+      expect(triggerErrorThrown).toBe(true);
+    });
+
+    it('permits publication event when resource_version_id belongs to the resource or is null', async () => {
+      const { resource, version } = await createTestResource();
+
+      // With matching version
+      const [ev1] = await db
+        .insert(publicationEvents)
+        .values({
+          resourceId: resource.id,
+          resourceVersionId: version.id,
+          eventType: 'SUBMITTED',
+          fromStatus: 'DRAFT',
+          toStatus: 'IN_REVIEW',
+        })
+        .returning();
+      expect(ev1.id).toBeDefined();
+
+      // With null version
+      const [ev2] = await db
+        .insert(publicationEvents)
+        .values({
+          resourceId: resource.id,
+          resourceVersionId: null,
+          eventType: 'ARCHIVED',
+          fromStatus: 'PUBLISHED',
+          toStatus: 'ARCHIVED',
+        })
+        .returning();
+      expect(ev2.id).toBeDefined();
+    });
+  });
+
+  describe('8. Approved Admin Endpoints (docs/API_SPEC.md Section 22)', () => {
+    it('supports full publication lifecycle via approved /admin/resources/* paths', async () => {
+      const { resource, version } = await createTestResource();
+
+      // 1. Submit review via POST /api/v1/admin/resources/:id/submit-review
+      const submitRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/resources/${resource.id}/submit-review`,
+        payload: { versionId: version.id },
+      });
+      expect(submitRes.statusCode).toBe(200);
+      expect(submitRes.json().data.status).toBe('IN_REVIEW');
+
+      // 2. Approve via POST /api/v1/admin/resources/:id/approve
+      const approveRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/resources/${resource.id}/approve`,
+      });
+      expect(approveRes.statusCode).toBe(200);
+      expect(approveRes.json().data.status).toBe('APPROVED');
+
+      // 3. Publish via POST /api/v1/admin/resources/:id/publish
+      const publishRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/resources/${resource.id}/publish`,
+        payload: { versionId: version.id },
+      });
+      expect(publishRes.statusCode).toBe(200);
+      expect(publishRes.json().data.resource.status).toBe('PUBLISHED');
+
+      // 4. Retire via POST /api/v1/admin/resources/:id/retire (alias for archive)
+      const retireRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/resources/${resource.id}/retire`,
+        payload: { reason: 'Retired at end of term' },
+      });
+      expect(retireRes.statusCode).toBe(200);
+      expect(retireRes.json().data.status).toBe('ARCHIVED');
+
+      // 5. Events via GET /api/v1/admin/resources/:id/events
+      const eventsRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/resources/${resource.id}/events`,
+      });
+      expect(eventsRes.statusCode).toBe(200);
+      expect(eventsRes.json().data.length).toBeGreaterThanOrEqual(4);
+    });
+
+    it('supports rejection via POST /api/v1/admin/resources/:id/reject', async () => {
+      const { resource, version } = await createTestResource({
+        status: 'IN_REVIEW',
+        versionStatus: 'IN_REVIEW',
+      });
+
+      const rejectRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/resources/${resource.id}/reject`,
+        payload: { reason: 'Content needs editorial corrections' },
+      });
+      expect(rejectRes.statusCode).toBe(200);
+      expect(rejectRes.json().data.status).toBe('REJECTED');
+
+      // Verify DB atomic transition
+      const [dbRes] = await db.select().from(resources).where(eq(resources.id, resource.id));
+      const [dbVer] = await db.select().from(resourceVersions).where(eq(resourceVersions.id, version.id));
+      expect(dbRes.status).toBe('REJECTED');
+      expect(dbVer.status).toBe('REJECTED');
     });
   });
 });

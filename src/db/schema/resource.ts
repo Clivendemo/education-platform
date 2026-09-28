@@ -319,7 +319,7 @@ export const resourceVersions = contentSchema.table(
     ),
     check(
       'chk_resource_versions_published_at',
-      sql`(${table.status} = 'PUBLISHED' AND ${table.publishedAt} IS NOT NULL) OR (${table.status} <> 'PUBLISHED')`,
+      sql`(${table.status} = 'PUBLISHED' AND ${table.publishedAt} IS NOT NULL) OR (${table.status} <> 'PUBLISHED' AND ${table.publishedAt} IS NULL)`,
     ),
     index('idx_resource_versions_resource_id').on(table.resourceId),
     index('idx_resource_versions_status').on(table.status),
