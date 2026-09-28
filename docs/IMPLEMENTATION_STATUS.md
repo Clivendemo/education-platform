@@ -989,10 +989,10 @@ Every major implementation stage should have a Git checkpoint.
 | Database foundation      | NOT_STARTED |        |
 | Geography                | VERIFIED    | Prompt 04 accepted |
 | Schools                  | VERIFIED    | Prompt 05 implemented & verified |
-| Curriculum               | NOT_STARTED |        |
-| Resource engine          | NOT_STARTED |        |
-| Publication workflow     | NOT_STARTED |        |
-| File storage             | NOT_STARTED |        |
+| Curriculum               | VERIFIED    | Prompt 06 implemented & verified |
+| Resource engine          | VERIFIED    | Prompt 07 implemented & verified |
+| Publication workflow     | VERIFIED    | Prompt 08 implemented & verified |
+| File storage             | VERIFIED    | Prompt 09 implemented & verified |
 | Public catalogue         | NOT_STARTED |        |
 | Search                   | NOT_STARTED |        |
 | SEO                      | NOT_STARTED |        |
@@ -1024,6 +1024,59 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-09-25 — Prompt 09: File Storage (Cloudflare R2 + PostgreSQL/Neon)
+
+Status:
+VERIFIED
+
+Implemented:
+- Provider-neutral StorageProvider abstraction (PutObject, HeadObject, GetObject, DeleteObject, ObjectExists)
+- CloudflareR2StorageProvider using AWS S3 client (@aws-sdk/client-s3) with S3-compatible R2 endpoint
+- MemoryStorageProvider for offline deterministic unit/integration testing
+- UUID-derived object key generator: resources/{resource_id}/versions/{version_id}/{file_id}.ext (original filename is NEVER in R2 key)
+- Filename sanitization stripping paths, directory traversal, null bytes, control characters
+- Synchronous upload flow in FileStorageService:
+  * Local SHA-256 computation
+  * R2 putObject with sha256-checksum metadata
+  * R2 headObject verification: compares content length and round-tripped sha256-checksum metadata
+  * Compensating cleanup (R2 deleteObject) on verification mismatch or DB failure
+  * Persists as AVAILABLE only after full verification
+- Controlled file deletion interface (restricted to non-published versions)
+
+Database:
+- Migration drizzle/0006_file_storage.sql applied to managed Neon PostgreSQL
+- files.resource_files table with approved metadata names: object_key, file_extension, file_size_bytes
+- Restored storage_metadata JSONB column for provider/scanner metadata
+- Restored QUARANTINED file lifecycle status for quarantine/antivirus pipelines
+- Added check constraint chk_resource_files_storage_provider ('CLOUDFLARE_R2', 'AWS_S3', 'MEMORY')
+- Added unique constraint uq_resource_files_version_checksum (resource_version_id, checksum_sha256)
+- Constraints: chk_resource_files_file_size_bytes, chk_resource_files_file_extension, chk_resource_files_object_key, chk_resource_files_sha256, chk_resource_files_status, chk_resource_files_sequence_order, chk_resource_files_file_type, chk_resource_files_storage_provider
+- Partial unique index uq_resource_files_primary_version enforcing single primary file per version
+- Composite unique constraint uq_resource_files_version_seq
+- Unique constraint uq_resource_files_bucket_key on (storage_bucket, object_key)
+- Publication invariant PL/pgSQL triggers:
+  * trg_prevent_published_resource_file_insert
+  * trg_prevent_published_resource_file_delete
+  * trg_prevent_published_resource_file_update (checks both OLD and NEW version status; prohibits altering, deleting, moving out of, or moving into a PUBLISHED version)
+
+Tests:
+- tests/db/file-storage.trigger.test.ts: Direct SQL tests verifying triggers, legitimate DRAFT mutations, and constraints
+- tests/services/storage-provider.test.ts: Unit tests for file keys, sanitization, and storage provider semantics
+- tests/services/file-storage.service.test.ts: Synchronous upload, SHA-256 verification, compensating cleanup on corrupt headObject, compensating cleanup on DB error, and lifecycle
+
+Typecheck:
+PASS
+
+Build:
+PASS
+
+Documentation:
+- docs/FILE_STORAGE_ARCHITECTURE.md
+- docs/IMPLEMENTATION_STATUS.md updated
+
+Next step:
+- Await human review for Prompt 09.
 
 Format:
 
