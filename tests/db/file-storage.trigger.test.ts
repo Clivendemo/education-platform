@@ -21,14 +21,34 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
   const dummySha = 'a'.repeat(64);
   const dummySha2 = 'b'.repeat(64);
 
-  async function expectDbError(promise: Promise<any>, pattern?: RegExp) {
-    try {
-      await promise;
-      expect.unreachable('Expected database operation to fail but it succeeded');
-    } catch (err: any) {
-      const fullMessage = `${err.message} ${err.cause?.message || ''} ${err.cause?.detail || ''}`;
-      if (pattern) {
-        expect(fullMessage).toMatch(pattern);
+  async function expectDbError(
+    operation: Promise<any> | (() => Promise<any>),
+    pattern?: RegExp,
+  ) {
+    let attempts = 0;
+    while (attempts < 3) {
+      attempts++;
+      try {
+        if (typeof operation === 'function') {
+          await operation();
+        } else {
+          await operation;
+        }
+        expect.unreachable('Expected database operation to fail but it succeeded');
+      } catch (err: any) {
+        const fullMessage = `${err.message} ${err.cause?.message || ''} ${err.cause?.detail || ''}`;
+        if (
+          (fullMessage.includes('ECONNRESET') || fullMessage.includes('Connection terminated')) &&
+          attempts < 3 &&
+          typeof operation === 'function'
+        ) {
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+        if (pattern) {
+          expect(fullMessage).toMatch(pattern);
+        }
+        return;
       }
     }
   }
@@ -322,25 +342,27 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
 
       // 1. Attempting to UPDATE any field on this file must be blocked by trg_prevent_published_resource_file_update
       await expectDbError(
-        db
-          .update(resourceFiles)
-          .set({ originalFilename: 'modified_name.pdf' })
-          .where(eq(resourceFiles.id, fileForPub.id)),
+        () =>
+          db
+            .update(resourceFiles)
+            .set({ originalFilename: 'modified_name.pdf' })
+            .where(eq(resourceFiles.id, fileForPub.id)),
         /Cannot modify or move file belonging to a PUBLISHED resource version/i,
       );
 
       // 2. Attempting to move file from PUBLISHED to DRAFT must be blocked
       await expectDbError(
-        db
-          .update(resourceFiles)
-          .set({ resourceVersionId: draftVersionId })
-          .where(eq(resourceFiles.id, fileForPub.id)),
+        () =>
+          db
+            .update(resourceFiles)
+            .set({ resourceVersionId: draftVersionId })
+            .where(eq(resourceFiles.id, fileForPub.id)),
         /Cannot modify or move file belonging to a PUBLISHED resource version/i,
       );
 
       // 3. Attempting to DELETE file from PUBLISHED version must be blocked by trg_prevent_published_resource_file_delete
       await expectDbError(
-        db.delete(resourceFiles).where(eq(resourceFiles.id, fileForPub.id)),
+        () => db.delete(resourceFiles).where(eq(resourceFiles.id, fileForPub.id)),
         /Cannot delete file belonging to a PUBLISHED resource version/i,
       );
     });

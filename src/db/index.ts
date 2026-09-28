@@ -1,7 +1,13 @@
+import dns from 'node:dns';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { env } from '../config/env.js';
 import * as schemas from './schemas.js';
+
+// Prioritize IPv4 on Node 18+ to prevent dual-stack DNS resolution timeouts on Windows and restrictive networks
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const { Pool } = pg;
 
@@ -20,12 +26,13 @@ export function getDatabasePool(): pg.Pool {
     const isTest = env.NODE_ENV === 'test' || process.env.VITEST === 'true';
     poolInstance = new Pool({
       connectionString: env.DATABASE_URL,
-      min: isTest ? 0 : env.DATABASE_POOL_MIN,
-      max: isTest ? 5 : env.DATABASE_POOL_MAX,
-      idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 30000,
+      min: isTest ? 1 : env.DATABASE_POOL_MIN,
+      max: isTest ? 3 : env.DATABASE_POOL_MAX,
+      idleTimeoutMillis: isTest ? 60000 : 15000,
+      connectionTimeoutMillis: 45000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
+      allowExitOnIdle: true,
     });
 
     // Catch errors on idle clients to prevent unhandled process crashes
@@ -114,6 +121,11 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealthResult> {
  */
 export async function closeDatabase(): Promise<void> {
   if (poolInstance) {
+    // During Vitest test runner execution, retain the warm connection pool across sequential suites.
+    // Vitest process will exit cleanly without hanging because allowExitOnIdle: true is configured on the pool.
+    if (process.env.VITEST === 'true') {
+      return;
+    }
     const poolToClose = poolInstance;
     poolInstance = null;
     dbInstance = null;
