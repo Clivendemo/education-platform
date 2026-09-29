@@ -6,7 +6,7 @@ import type {
 } from './search/search-provider.interface.js';
 import type { PaginatedResult } from './catalogue.service.js';
 
-export { SearchProvider, SearchQuery, SearchResultItem } from './search/search-provider.interface.js';
+export type { SearchProvider, SearchQuery, SearchResultItem } from './search/search-provider.interface.js';
 export { PostgreSQLSearchProvider } from './search/postgresql-search.provider.js';
 
 export interface SearchService {

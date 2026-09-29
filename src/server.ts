@@ -29,11 +29,15 @@ async function startServer(): Promise<void> {
       app.log.info('DATABASE_URL not configured; running in standalone mode');
     }
 
+    // In the container runtime, port 8080 is reserved by nginx / control-plane-api.
+    // The dev server and application must run on port 3000.
+    const port = env.PORT === 8080 ? 3000 : env.PORT;
+
     await app.listen({
-      port: env.PORT,
+      port,
       host: env.HOST,
     });
-    app.log.info(`Server running at http://${env.HOST}:${env.PORT}`);
+    app.log.info(`Server running at http://${env.HOST}:${port}`);
   } catch (err) {
     app.log.fatal(err, 'Failed to start server');
     process.exit(1);
