@@ -345,6 +345,22 @@ DRAFT
 
 ---
 
+# 14.1. Public Catalogue (Backend)
+
+| Component                        | Status   | Notes |
+| -------------------------------- | -------- | ----- |
+| Public catalogue list endpoint   | VERIFIED | GET /api/v1/catalogue/resources with pagination & validation |
+| Public catalogue detail endpoint | VERIFIED | GET /api/v1/catalogue/resources/:id (UUID validation) |
+| Public visibility enforcement    | VERIFIED | Strictly content.resources.status = PUBLISHED AND resource_versions.status = PUBLISHED |
+| Single published version selector| VERIFIED | uq_resource_single_published_version; historical/draft versions isolated |
+| Metadata-only resource discovery | VERIFIED | Resources without files discoverable; AVAILABLE files presented |
+| File presentation sanitization   | VERIFIED | Zero storage credentials, buckets, or object keys leaked |
+| Structured filtering             | VERIFIED | Country (code/slug/UUID), resourceType, curriculum, grade, subject, school, year, term, quality |
+| Deterministic sorting            | VERIFIED | newest, oldest, title with deterministic ID secondary tiebreaker |
+| Catalogue service & route tests  | VERIFIED | Unit route tests (8 passed) + Neon DB integration tests (13 passed) |
+
+---
+
 # 15. Public Website
 
 | Component                     | Status      | Notes |

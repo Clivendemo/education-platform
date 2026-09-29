@@ -421,6 +421,49 @@ Unknown or unsupported parameters should not silently alter business logic.
 
 ---
 
+# 15.1. Public Catalogue API
+
+The Public Catalogue provides read-only anonymous discovery of strictly published educational resources.
+
+### Visibility Invariants
+1. `content.resources.status = 'PUBLISHED'`
+2. `content.resource_versions.status = 'PUBLISHED'`
+3. Exactly one published version is selected per resource (`uq_resource_single_published_version`).
+4. Historical and draft versions are excluded.
+5. Resources without attached files remain discoverable; when attached files are present, only those with `status = 'AVAILABLE'` are presented. Zero storage secrets or R2 credentials are leaked.
+
+### List Catalogue Resources
+```text
+GET /api/v1/catalogue/resources
+```
+
+Supported Query Parameters:
+* `country` (string, e.g. `ke`, `tz`, or UUID)
+* `resourceType` (string, e.g. `past-papers`, or UUID)
+* `curriculum` (string, code or UUID)
+* `curriculumVersion` (string, slug, versionCode, or UUID)
+* `educationLevel` (string, code or UUID)
+* `grade` (string, code or UUID)
+* `pathway` (string, code or UUID)
+* `subject` (string, code or UUID)
+* `topic` (string, code or UUID)
+* `school` (string, school code or UUID)
+* `academicYear` (integer, 1970–2100)
+* `term` (integer, 1, 2, or 3)
+* `quality` (`STANDARD` | `VERIFIED` | `PREMIUM`)
+* `sort` (`newest` | `oldest` | `title`, default: `newest`)
+* `page` (integer >= 1, default: 1)
+* `pageSize` (integer 1..100, default: 20)
+
+### Catalogue Resource Detail
+```text
+GET /api/v1/catalogue/resources/:id
+```
+Returns 200 with full catalogue presentation and public file metadata if published; returns 404 if unpublished or not found.
+
+
+---
+
 # 16. Resource Search
 
 Search must use the `SearchProvider` abstraction.
