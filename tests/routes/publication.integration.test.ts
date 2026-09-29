@@ -11,6 +11,7 @@ import {
 } from '../../src/db/schemas.js';
 import { DbPublicationService } from '../../src/services/publication.service.js';
 import { buildApp } from '../../src/app.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   const publicationService = new DbPublicationService(db);
@@ -40,28 +41,32 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
     const tzPrefix = `t${Date.now().toString().slice(-4)}${randNum}`;
 
     // 1. Ensure Kenya exists
-    const [ke] = await db
-      .insert(countries)
-      .values({
-        name: `PubTest Kenya ${Date.now()}`,
-        isoCode: keIso,
-        urlPrefix: kePrefix,
-        status: 'ACTIVE',
-      })
-      .returning();
+    const [ke] = await withDbRetry(async () =>
+      db
+        .insert(countries)
+        .values({
+          name: `PubTest Kenya ${Date.now()}`,
+          isoCode: keIso,
+          urlPrefix: kePrefix,
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
     kenyaId = ke.id;
     createdCountryIds.push(ke.id);
 
     // Ensure Tanzania (INACTIVE)
-    const [tz] = await db
-      .insert(countries)
-      .values({
-        name: `PubTest Tanzania ${Date.now()}`,
-        isoCode: tzIso,
-        urlPrefix: tzPrefix,
-        status: 'INACTIVE',
-      })
-      .returning();
+    const [tz] = await withDbRetry(async () =>
+      db
+        .insert(countries)
+        .values({
+          name: `PubTest Tanzania ${Date.now()}`,
+          isoCode: tzIso,
+          urlPrefix: tzPrefix,
+          status: 'INACTIVE',
+        })
+        .returning(),
+    );
     tanzaniaId = tz.id;
     createdCountryIds.push(tz.id);
 
@@ -134,30 +139,34 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
     versionStatus?: any;
     publishedAt?: Date | null;
   }) {
-    const [res] = await db
-      .insert(resources)
-      .values({
-        countryId: params?.countryId ?? kenyaId,
-        resourceTypeId: params?.resourceTypeId ?? typeId,
-        schoolId: params?.schoolId !== undefined ? params.schoolId : schoolId,
-        title: `Publication Test Resource ${Date.now()}-${Math.random()}`,
-        slug: `pub-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-        status: params?.status ?? 'DRAFT',
-      })
-      .returning();
+    const [res] = await withDbRetry(async () =>
+      db
+        .insert(resources)
+        .values({
+          countryId: params?.countryId ?? kenyaId,
+          resourceTypeId: params?.resourceTypeId ?? typeId,
+          schoolId: params?.schoolId !== undefined ? params.schoolId : schoolId,
+          title: `Publication Test Resource ${Date.now()}-${Math.random()}`,
+          slug: `pub-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          status: params?.status ?? 'DRAFT',
+        })
+        .returning(),
+    );
     cleanupResourceIds.push(res.id);
 
-    const [ver] = await db
-      .insert(resourceVersions)
-      .values({
-        resourceId: res.id,
-        versionNumber: 1,
-        versionLabel: 'v1.0',
-        title: 'Initial Version Test Title',
-        status: params?.versionStatus ?? 'DRAFT',
-        publishedAt: params?.publishedAt ?? null,
-      })
-      .returning();
+    const [ver] = await withDbRetry(async () =>
+      db
+        .insert(resourceVersions)
+        .values({
+          resourceId: res.id,
+          versionNumber: 1,
+          versionLabel: 'v1.0',
+          title: 'Initial Version Test Title',
+          status: params?.versionStatus ?? 'DRAFT',
+          publishedAt: params?.publishedAt ?? null,
+        })
+        .returning(),
+    );
 
     return { resource: res, version: ver };
   }

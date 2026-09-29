@@ -9,6 +9,7 @@ import {
 } from '../../src/db/schemas.js';
 import { seedKenyaGeography } from '../../src/db/seeds/kenya-geography.js';
 import { defaultSchoolService } from '../../src/services/school.service.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
 
@@ -21,47 +22,55 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
 
   beforeAll(async () => {
     // Ensure Kenya geography exists
-    await seedKenyaGeography();
+    await withDbRetry(async () => seedKenyaGeography());
 
     const kenya = (
-      await db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1)
+      await withDbRetry(async () =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      )
     )[0];
     kenyaCountryId = kenya.id;
 
     // Retrieve Nairobi county area
     const nairobi = (
-      await db
-        .select()
-        .from(administrativeAreas)
-        .where(
-          sql`${administrativeAreas.countryId} = ${kenyaCountryId} AND ${administrativeAreas.slug} = 'nairobi'`,
-        )
-        .limit(1)
+      await withDbRetry(async () =>
+        db
+          .select()
+          .from(administrativeAreas)
+          .where(
+            sql`${administrativeAreas.countryId} = ${kenyaCountryId} AND ${administrativeAreas.slug} = 'nairobi'`,
+          )
+          .limit(1),
+      )
     )[0];
     nairobiAreaId = nairobi.id;
 
     // Setup or retrieve Tanzania and Arusha test area for cross-country testing
-    const existingTz = await db
-      .select()
-      .from(countries)
-      .where(eq(countries.isoCode, 'TZ'))
-      .limit(1);
+    const existingTz = await withDbRetry(async () =>
+      db
+        .select()
+        .from(countries)
+        .where(eq(countries.isoCode, 'TZ'))
+        .limit(1),
+    );
 
     let tzId: string;
     if (existingTz.length > 0) {
       tzId = existingTz[0].id;
     } else {
-      const [newTz] = await db
-        .insert(countries)
-        .values({
-          name: 'Tanzania',
-          isoCode: 'TZ',
-          urlPrefix: 'tz',
-          defaultLanguageCode: 'sw',
-          currencyCode: 'TZS',
-          status: 'ACTIVE',
-        })
-        .returning();
+      const [newTz] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: 'Tanzania',
+            isoCode: 'TZ',
+            urlPrefix: 'tz',
+            defaultLanguageCode: 'sw',
+            currencyCode: 'TZS',
+            status: 'ACTIVE',
+          })
+          .returning(),
+      );
       tzId = newTz.id;
     }
 

@@ -14,6 +14,7 @@ import {
 import { seedKenyaGeography } from '../../src/db/seeds/kenya-geography.js';
 import { seedKenyaCurriculum } from '../../src/db/seeds/kenya-curriculum.js';
 import { DbCurriculumService } from '../../src/services/curriculum.service.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 const isDbAvailable = Boolean(
   process.env.DATABASE_TEST_URL || process.env.DATABASE_URL,
@@ -37,27 +38,31 @@ describe.skipIf(!isDbAvailable)('Curriculum Database Integration Tests', () => {
   beforeAll(async () => {
     // 1. Ensure Kenya country exists (query directly first; seed only if missing)
     let kenya = (
-      await db
-        .select()
-        .from(countries)
-        .where(eq(countries.isoCode, 'KE'))
-        .limit(1)
-    )[0];
-
-    if (!kenya) {
-      await seedKenyaGeography();
-      kenya = (
-        await db
+      await withDbRetry(async () =>
+        db
           .select()
           .from(countries)
           .where(eq(countries.isoCode, 'KE'))
-          .limit(1)
+          .limit(1),
+      )
+    )[0];
+
+    if (!kenya) {
+      await withDbRetry(async () => seedKenyaGeography());
+      kenya = (
+        await withDbRetry(async () =>
+          db
+            .select()
+            .from(countries)
+            .where(eq(countries.isoCode, 'KE'))
+            .limit(1),
+        )
       )[0];
     }
     kenyaCountryId = kenya.id;
 
     // 2. Seed Kenya curriculum foundation
-    seededData = await seedKenyaCurriculum(db);
+    seededData = await withDbRetry(async () => seedKenyaCurriculum(db));
   }, 120000);
 
   afterAll(async () => {

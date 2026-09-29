@@ -36,13 +36,18 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
         }
         expect.unreachable('Expected database operation to fail but it succeeded');
       } catch (err: any) {
-        const fullMessage = `${err.message} ${err.cause?.message || ''} ${err.cause?.detail || ''}`;
+        const causeErrors =
+          err.cause?.errors?.map((e: any) => `${e.message} ${e.code}`).join(' ') || '';
+        const fullMessage = `${err.message} ${err.cause?.message || ''} ${err.cause?.detail || ''} ${causeErrors} ${err.cause?.code || ''} ${err.code || ''}`;
         if (
-          (fullMessage.includes('ECONNRESET') || fullMessage.includes('Connection terminated')) &&
+          (fullMessage.includes('ECONNRESET') ||
+            fullMessage.includes('Connection terminated') ||
+            fullMessage.includes('ETIMEDOUT') ||
+            fullMessage.includes('socket hang up')) &&
           attempts < 3 &&
           typeof operation === 'function'
         ) {
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
         if (pattern) {
@@ -384,18 +389,19 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
     it('enforces partial unique index for single primary file per version (uq_resource_files_primary_version)', async () => {
       // createdFileIds[0] is already isPrimary=true in draftVersionId
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/second-primary.pdf`,
-          originalFilename: 'second_primary.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 1024,
-          checksumSha256: 'f'.repeat(64),
-          isPrimary: true, // Duplicate primary!
-          sequenceOrder: 2,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/second-primary.pdf`,
+            originalFilename: 'second_primary.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 1024,
+            checksumSha256: 'f'.repeat(64),
+            isPrimary: true, // Duplicate primary!
+            sequenceOrder: 2,
+          }),
         /uq_resource_files_primary_version|unique|duplicate/i,
       );
     });
@@ -403,70 +409,74 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
     it('enforces unique sequence_order per version (uq_resource_files_version_seq)', async () => {
       // createdFileIds[0] has sequenceOrder = 1 in draftVersionId
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/dup-seq.pdf`,
-          originalFilename: 'dup_seq.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 1024,
-          checksumSha256: '1'.repeat(64),
-          isPrimary: false,
-          sequenceOrder: 1, // Duplicate sequence order!
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/dup-seq.pdf`,
+            originalFilename: 'dup_seq.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 1024,
+            checksumSha256: '1'.repeat(64),
+            isPrimary: false,
+            sequenceOrder: 1, // Duplicate sequence order!
+          }),
         /uq_resource_files_version_seq|unique|duplicate/i,
       );
     });
 
     it('rejects non-positive byte size (chk_resource_files_file_size_bytes)', async () => {
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/zero-byte.pdf`,
-          originalFilename: 'zero.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 0,
-          checksumSha256: '2'.repeat(64),
-          sequenceOrder: 10,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/zero-byte.pdf`,
+            originalFilename: 'zero.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 0,
+            checksumSha256: '2'.repeat(64),
+            sequenceOrder: 10,
+          }),
         /chk_resource_files_file_size_bytes/i,
       );
     });
 
     it('rejects invalid SHA-256 length (chk_resource_files_sha256)', async () => {
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-sha.pdf`,
-          originalFilename: 'bad_sha.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 1024,
-          checksumSha256: 'shortsha',
-          sequenceOrder: 11,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-sha.pdf`,
+            originalFilename: 'bad_sha.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 1024,
+            checksumSha256: 'shortsha',
+            sequenceOrder: 11,
+          }),
         /chk_resource_files_sha256/i,
       );
     });
 
     it('rejects invalid status value (chk_resource_files_status)', async () => {
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-stat.pdf`,
-          originalFilename: 'bad_stat.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 1024,
-          checksumSha256: '3'.repeat(64),
-          status: 'CORRUPTED' as any,
-          sequenceOrder: 12,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-stat.pdf`,
+            originalFilename: 'bad_stat.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 1024,
+            checksumSha256: '3'.repeat(64),
+            status: 'CORRUPTED' as any,
+            sequenceOrder: 12,
+          }),
         /chk_resource_files_status/i,
       );
     });
@@ -474,35 +484,37 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
     it('enforces unique (resource_version_id, checksum_sha256) constraint (uq_resource_files_version_checksum)', async () => {
       // createdFileIds[0] has checksumSha256 = dummySha in draftVersionId
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/dup-checksum.pdf`,
-          originalFilename: 'dup_checksum.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 2048,
-          checksumSha256: dummySha, // Duplicate checksum in same version!
-          sequenceOrder: 20,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/dup-checksum.pdf`,
+            originalFilename: 'dup_checksum.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 2048,
+            checksumSha256: dummySha, // Duplicate checksum in same version!
+            sequenceOrder: 20,
+          }),
         /uq_resource_files_version_checksum|unique|duplicate/i,
       );
     });
 
     it('rejects invalid storage_provider value (chk_resource_files_storage_provider)', async () => {
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: draftVersionId,
-          storageProvider: 'INVALID_PROVIDER' as any,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-provider.pdf`,
-          originalFilename: 'bad_provider.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 1024,
-          checksumSha256: '4'.repeat(64),
-          sequenceOrder: 21,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: draftVersionId,
+            storageProvider: 'INVALID_PROVIDER' as any,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${draftVersionId}/bad-provider.pdf`,
+            originalFilename: 'bad_provider.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 1024,
+            checksumSha256: '4'.repeat(64),
+            sequenceOrder: 21,
+          }),
         /chk_resource_files_storage_provider/i,
       );
     });

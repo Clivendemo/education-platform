@@ -16,6 +16,7 @@ import {
   resourceVersions,
 } from '../../src/db/schemas.js';
 import { DbResourceService } from '../../src/services/resource.service.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Resource Engine Database Integration Tests', () => {
   let kenyaId: string;
@@ -40,43 +41,51 @@ describe('Resource Engine Database Integration Tests', () => {
 
   beforeAll(async () => {
     // 1. Setup Kenya & Tanzania
-    const existingKenya = await db
-      .select()
-      .from(countries)
-      .where(eq(countries.isoCode, 'KE'))
-      .limit(1);
+    const existingKenya = await withDbRetry(async () =>
+      db
+        .select()
+        .from(countries)
+        .where(eq(countries.isoCode, 'KE'))
+        .limit(1),
+    );
 
     if (existingKenya.length > 0) {
       kenyaId = existingKenya[0].id;
     } else {
-      const [inserted] = await db
-        .insert(countries)
-        .values({
-          name: 'Kenya',
-          isoCode: 'KE',
-          urlPrefix: 'ke',
-        })
-        .returning();
+      const [inserted] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: 'Kenya',
+            isoCode: 'KE',
+            urlPrefix: 'ke',
+          })
+          .returning(),
+      );
       kenyaId = inserted.id;
     }
 
-    const existingTz = await db
-      .select()
-      .from(countries)
-      .where(eq(countries.isoCode, 'TZ'))
-      .limit(1);
+    const existingTz = await withDbRetry(async () =>
+      db
+        .select()
+        .from(countries)
+        .where(eq(countries.isoCode, 'TZ'))
+        .limit(1),
+    );
 
     if (existingTz.length > 0) {
       tanzaniaId = existingTz[0].id;
     } else {
-      const [insertedTz] = await db
-        .insert(countries)
-        .values({
-          name: 'Tanzania',
-          isoCode: 'TZ',
-          urlPrefix: 'tz',
-        })
-        .returning();
+      const [insertedTz] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: 'Tanzania',
+            isoCode: 'TZ',
+            urlPrefix: 'tz',
+          })
+          .returning(),
+      );
       tanzaniaId = insertedTz.id;
     }
 
@@ -575,15 +584,17 @@ describe('Resource Engine Database Integration Tests', () => {
     });
 
     it('rejects version number <= 0', async () => {
-      const [res] = await db
-        .insert(resources)
-        .values({
-          countryId: kenyaId,
-          resourceTypeId: pastPaperTypeId,
-          title: '[STRUCTURAL-TEST] Zero Version Test',
-          slug: `zero-ver-${Date.now()}`,
-        })
-        .returning();
+      const [res] = await withDbRetry(async () =>
+        db
+          .insert(resources)
+          .values({
+            countryId: kenyaId,
+            resourceTypeId: pastPaperTypeId,
+            title: '[STRUCTURAL-TEST] Zero Version Test',
+            slug: `zero-ver-${Date.now()}`,
+          })
+          .returning(),
+      );
       createdResourceIds.push(res.id);
 
       await expect(
