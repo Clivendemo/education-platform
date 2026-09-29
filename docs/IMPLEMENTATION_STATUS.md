@@ -361,6 +361,20 @@ DRAFT
 
 ---
 
+# 14.2. Search (Backend)
+
+| Component                        | Status   | Notes |
+| -------------------------------- | -------- | ----- |
+| Public resource search endpoint  | VERIFIED | GET /api/v1/search/resources & GET /api/v1/search |
+| SearchProvider abstraction       | VERIFIED | SearchService -> SearchProvider -> PostgreSQLSearchProvider |
+| PostgreSQL FTS implementation    | VERIFIED | tsvector (weighted A/B/C), websearch_to_tsquery, ts_rank_cd |
+| Public visibility enforcement    | VERIFIED | Strictly PUBLISHED resources and versions; draft/historical isolated |
+| Search + catalogue filters       | VERIFIED | Combined text search + taxonomy/country/quality filters |
+| Deterministic relevance ordering | VERIFIED | ts_rank_cd DESC, id ASC |
+| Search route & integration tests | VERIFIED | Route unit tests (9 passed) + Neon DB integration tests (11 passed) |
+
+---
+
 # 15. Public Website
 
 | Component                     | Status      | Notes |

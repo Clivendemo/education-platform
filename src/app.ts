@@ -8,12 +8,14 @@ import { curriculumRoutes } from './routes/api/v1/curriculum.js';
 import { resourceRoutes } from './routes/api/v1/resources.js';
 import { publicationRoutes } from './routes/api/v1/publications.js';
 import { catalogueRoutes } from './routes/api/v1/catalogue.js';
+import { searchRoutes } from './routes/api/v1/search.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
 import type { ResourceService } from './services/resource.service.js';
 import type { PublicationService } from './services/publication.service.js';
 import type { CatalogueService } from './services/catalogue.service.js';
+import type { SearchService } from './services/search.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -27,6 +29,7 @@ export interface AppOptions extends FastifyServerOptions {
     resourceService?: ResourceService;
     publicationService?: PublicationService;
     catalogueService?: CatalogueService;
+    searchService?: SearchService;
   };
 }
 
@@ -124,6 +127,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(catalogueRoutes, {
     prefix: '/api/v1',
     catalogueService: services?.catalogueService,
+  });
+  app.register(searchRoutes, {
+    prefix: '/api/v1',
+    searchService: services?.searchService,
   });
 
   return app;

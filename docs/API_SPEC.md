@@ -466,33 +466,54 @@ Returns 200 with full catalogue presentation and public file metadata if publish
 
 # 16. Resource Search
 
-Search must use the `SearchProvider` abstraction.
+Search provides public discovery over published educational resources using the `SearchProvider` abstraction.
 
-Initial implementation:
-
+Initial backend provider:
 ```text
-PostgreSQL full-text search
+PostgreSQLSearchProvider (PostgreSQL Full-Text Search)
 ```
 
-The public API must not depend directly on PostgreSQL-specific search implementation.
+The public API and application services interact exclusively through `SearchService` and `SearchProvider`. The PostgreSQL FTS implementation is an internal provider detail.
 
-Example:
-
+### Canonical Endpoints
 ```text
+GET /api/v1/search/resources?q=photosynthesis
 GET /api/v1/search?q=photosynthesis
 ```
+*(Both endpoints route to the exact same canonical search logic.)*
 
-Search may return:
+### Query Parameters
+* `q`: **Required** string, minimum 1 character (trimmed). Missing, empty, or whitespace-only queries are rejected with `400 VALIDATION_ERROR`.
+* `country` (string, e.g. `ke`, `tz`, or UUID)
+* `resourceType` (string, slug, code, or UUID)
+* `curriculum` (string, code or UUID)
+* `curriculumVersion` (string, slug, versionCode, or UUID)
+* `educationLevel` (string, code or UUID)
+* `grade` (string, code or UUID)
+* `pathway` (string, code or UUID)
+* `subject` (string, code or UUID)
+* `topic` (string, code or UUID)
+* `school` (string, school code or UUID)
+* `academicYear` (integer, 1970–2100)
+* `term` (integer, 1, 2, or 3)
+* `quality` (`STANDARD` | `VERIFIED` | `PREMIUM`)
+* `page` (integer >= 1, default: 1)
+* `pageSize` (integer 1..100, default: 20)
 
-* resources
-* schools
-* contributors
-* collections
-* education updates
-* calendar information
-* curriculum entities
+### Public Visibility & Version Isolation Invariants
+1. `content.resources.status = 'PUBLISHED'`
+2. `content.resource_versions.status = 'PUBLISHED'`
+3. Exactly one published version participates in search (`uq_resource_single_published_version`). Unreleased draft or historical iterations are strictly isolated and not searched.
+4. Metadata-only resources (zero attached files) remain discoverable.
+5. When files are present, only files with `status = 'AVAILABLE'` are counted/projected. Zero storage buckets, object keys, storage providers, storage metadata, signed URLs, or R2 credentials are leaked.
+6. Zero R2 calls occur during search discovery.
 
-Entity types must be distinguishable.
+### Relevance Ranking & Deterministic Sorting
+* Scored via PostgreSQL Cover Density: `ts_rank_cd(document_tsvector, websearch_to_tsquery('english', :q))`.
+* Weighted document: Weight A (`resources.title`), Weight B (`resources.description`), Weight C (`subjects.name`, `topics.name`, `grades.name`, `curricula.name`, `schools.name`, `resource_types.name`).
+* Safe parsing via `websearch_to_tsquery('english', :q)` supporting boolean phrases and negation without SQL injection risk.
+* Deterministic secondary tie-breaker: `rank DESC, resources.id ASC`.
+
 
 ---
 
