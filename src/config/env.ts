@@ -25,6 +25,17 @@ export const envSchema = z
     R2_BUCKET_NAME: z.string().min(1).default('kenya-education-platform-files'),
     R2_ENDPOINT: z.string().url().optional(),
     MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(52428800), // 50 MB
+
+    // Public Canonical Domain configuration (Prompt 12 - SEO / OpenGraph)
+    // Default to localhost:3000 for development and test; strictly required in production
+    CANONICAL_DOMAIN: z
+      .string()
+      .min(1)
+      .default('http://localhost:3000')
+      .transform((val) => val.trim().replace(/\/+$/, '')),
+
+    // Platform Brand / Site Name configuration (Prompt 12 - SEO / OpenGraph)
+    SITE_NAME: z.string().min(1).default('ElimuPin'),
   })
   .superRefine((data, ctx) => {
     // Cross-field pool range validation
@@ -38,6 +49,15 @@ export const envSchema = z
 
     // Production environment requirements
     if (data.NODE_ENV === 'production') {
+      // In production, when CANONICAL_DOMAIN is provided or in active production runtime, it must not be localhost
+      if (process.env.NODE_ENV === 'production' && (!data.CANONICAL_DOMAIN || data.CANONICAL_DOMAIN.includes('localhost') || data.CANONICAL_DOMAIN.includes('127.0.0.1'))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'In production, CANONICAL_DOMAIN must be explicitly set to a valid public URL and cannot be localhost.',
+          path: ['CANONICAL_DOMAIN'],
+        });
+      }
+
       if (!data.DATABASE_URL) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

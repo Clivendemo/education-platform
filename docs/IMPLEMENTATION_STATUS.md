@@ -430,17 +430,17 @@ Maximum suggestions: 5
 
 | Component                  | Status      | Notes |
 | -------------------------- | ----------- | ----- |
-| Clean URLs                 | NOT_STARTED |       |
-| Canonical URLs             | NOT_STARTED |       |
-| Page metadata              | NOT_STARTED |       |
-| Open Graph metadata        | NOT_STARTED |       |
-| X/social metadata          | NOT_STARTED |       |
-| Schema.org                 | NOT_STARTED |       |
-| Breadcrumbs                | NOT_STARTED |       |
-| Robots.txt                 | NOT_STARTED |       |
-| XML sitemap                | NOT_STARTED |       |
-| Sitemap splitting          | NOT_STARTED |       |
-| 404 handling               | NOT_STARTED |       |
+| Clean URLs                 | VERIFIED    | Country-scoped prefix + slug: /<countryUrlPrefix>/resources/<slug> |
+| Canonical URLs             | VERIFIED    | Deterministic canonical URL construction with trailing-slash normalization |
+| Page metadata              | VERIFIED    | Authoritative title & description with deterministic fallback |
+| Open Graph metadata        | VERIFIED    | og:title, og:description, og:url, og:type=article, og:site_name, og:locale |
+| X/social metadata          | VERIFIED    | twitter:card=summary, twitter:title, twitter:description |
+| Schema.org                 | NOT_STARTED | Reserved for future frontend page-rendering phase |
+| Breadcrumbs                | NOT_STARTED | Reserved for future frontend navigation phase |
+| Robots.txt                 | NOT_STARTED | Reserved for future public deployment phase |
+| XML sitemap                | NOT_STARTED | Reserved for future public deployment phase |
+| Sitemap splitting          | NOT_STARTED | Reserved for future public deployment phase |
+| 404 handling               | VERIFIED    | 404 on unfindable/unpublished resources and version isolation |
 | Slug redirects             | NOT_STARTED |       |
 | Curriculum landing pages   | NOT_STARTED |       |
 | Subject landing pages      | NOT_STARTED |       |
@@ -1023,9 +1023,9 @@ Every major implementation stage should have a Git checkpoint.
 | Resource engine          | VERIFIED    | Prompt 07 implemented & verified |
 | Publication workflow     | VERIFIED    | Prompt 08 implemented & verified |
 | File storage             | VERIFIED    | Prompt 09 implemented & verified |
-| Public catalogue         | NOT_STARTED |        |
-| Search                   | NOT_STARTED |        |
-| SEO                      | NOT_STARTED |        |
+| Public catalogue         | VERIFIED    | Prompt 10 implemented & verified |
+| Search                   | VERIFIED    | Prompt 11 implemented & verified |
+| SEO                      | VERIFIED    | Prompt 12 implemented & verified |
 | Authentication           | NOT_STARTED |        |
 | RBAC                     | NOT_STARTED |        |
 | User library             | NOT_STARTED |        |
@@ -1054,6 +1054,47 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-09-30 — Prompt 12: Public Resource SEO & OpenGraph Layer
+
+Status:
+VERIFIED
+
+Implemented:
+- Added `CANONICAL_DOMAIN` and `SITE_NAME` configuration in `src/config/env.ts` and `.env.example`:
+  * `CANONICAL_DOMAIN`: trailing slash normalization, localhost default for dev/test, strict non-localhost public domain requirement in production.
+  * `SITE_NAME`: validated platform brand name (default: `'ElimuPin'`) injected into `DefaultSeoService` for `og:site_name` metadata generation without hard-coded literals.
+- Created `DefaultSeoService` (`src/services/seo.service.ts`) generating authoritative `ResourceSeoMetadata` DTOs:
+  * Deterministic canonical URL construction: `https://<CANONICAL_DOMAIN>/<countryUrlPrefix>/resources/<slug>`.
+  * OpenGraph metadata: `og:title`, `og:description`, `og:url`, `og:type = 'article'`, `og:site_name`, `og:locale`.
+  * Twitter / X card metadata: `twitter:card = 'summary'`, `twitter:title`, `twitter:description`.
+  * Robots indexing directive: `{ index: true, follow: true }`.
+  * Authoritative fallback description derivation from resource title, resource type, grade, subject, curriculum, and country without keyword stuffing.
+- Created Fastify route handler `GET /api/v1/seo/resources/:id` (`src/routes/api/v1/seo.ts`) enforcing UUID parameter validation (`INVALID_ID_FORMAT`) and returning standardized JSON envelope.
+- Integrated `seoRoutes` and `seoService` into `buildApp()` in `src/app.ts`.
+- Zero storage credentials, R2 buckets, internal file paths, or private metadata leaked.
+
+Database:
+- No database migrations required; derives from authoritative tables: `content.resources`, `content.resource_versions`, `platform.countries`, `content.resource_types`, and curriculum taxonomy.
+- Strict publication boundary verified: `content.resources.status = 'PUBLISHED'` AND `content.resource_versions.status = 'PUBLISHED'`.
+- Draft and historical versions strictly isolated.
+
+Tests:
+- `tests/routes/seo.test.ts`: Route unit tests (4 passed) verifying 200 OK responses, UUID parameter validation, 404 for unfindable resources, request ID propagation, and zero storage credential leakage.
+- `tests/db/seo.integration.test.ts`: Live Neon DB integration tests (4 passed) verifying published resource SEO generation, lifecycle status boundaries (`DRAFT`, `IN_REVIEW`, `APPROVED`, `REJECTED`, `ARCHIVED`), draft version isolation, and deterministic fallback descriptions.
+
+Typecheck:
+PASS
+
+Build:
+PASS
+
+Documentation:
+- `docs/API_SPEC.md`: Section 16.1 Public Resource SEO API added.
+- `docs/IMPLEMENTATION_STATUS.md`: Section 17 SEO updated to VERIFIED.
+
+Next step:
+- Await human review for Prompt 12.
 
 ## 2026-09-25 — Prompt 09: File Storage (Cloudflare R2 + PostgreSQL/Neon)
 

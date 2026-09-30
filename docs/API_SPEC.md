@@ -517,6 +517,35 @@ GET /api/v1/search?q=photosynthesis
 
 ---
 
+# 16.1. Public Resource SEO API
+
+The SEO metadata service generates authoritative, machine-readable OpenGraph and Twitter/X card metadata for publicly discoverable resources, supporting future frontend SSR, static site generation, and social share unfurling.
+
+### Canonical Endpoint
+```text
+GET /api/v1/seo/resources/:id
+```
+*(The `:id` parameter strictly accepts UUIDs matching the established resource API identifier conventions.)*
+
+### Visibility Invariants
+1. `content.resources.status = 'PUBLISHED'`
+2. `content.resource_versions.status = 'PUBLISHED'`
+3. Exactly one published version participates. Draft, in-review, approved, rejected, or archived resources return `404 RESOURCE_NOT_FOUND`.
+4. Zero storage credentials, R2 buckets, or object keys are exposed.
+
+### Deterministic Canonical URL Construction
+Canonical URLs are constructed from the authoritative configured domain (`CANONICAL_DOMAIN`), the country's unique URL prefix (`/ke/`), and the resource slug:
+```text
+https://<CANONICAL_DOMAIN>/<countryUrlPrefix>/resources/<slug>
+```
+Discovery query parameters (`?q=`, `?page=`, `?sort=`, `?subject=`) are strictly excluded from canonical identity.
+
+### Fallback Description Normalization
+When a resource or version description is not provided, a deterministic fallback description is assembled from the resource title and authoritative curriculum taxonomy (e.g. `"<Title> - <ResourceType> educational resource for <Grade> <Subject> under <Curriculum> in <Country>."`), preventing keyword stuffing while preserving educational relevance.
+
+
+---
+
 # 17. Autocomplete API
 
 ```text
