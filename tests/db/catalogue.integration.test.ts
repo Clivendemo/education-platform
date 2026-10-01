@@ -337,7 +337,7 @@ describe.skipIf(!isDbAvailable)('Public Catalogue Neon Database Integration Test
     } finally {
       await closeDatabase();
     }
-  }, 60000);
+  }, 120000);
 
   describe('1. Public Visibility Rule Matrix (Sections 3, 24, 26)', () => {
     it('exposes a PUBLISHED resource with a PUBLISHED version in public catalogue', async () => {

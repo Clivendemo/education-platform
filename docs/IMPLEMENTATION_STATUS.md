@@ -452,22 +452,22 @@ Maximum suggestions: 5
 
 # 18. Authentication
 
-| Component                     | Status      | Notes    |
-| ----------------------------- | ----------- | -------- |
-| User entity                   | NOT_STARTED |          |
-| Auth identity                 | NOT_STARTED |          |
-| Registration                  | NOT_STARTED |          |
-| Login                         | NOT_STARTED |          |
-| Logout                        | NOT_STARTED |          |
-| Password hashing              | NOT_STARTED | Argon2id |
-| Email verification            | NOT_STARTED |          |
-| Password recovery             | NOT_STARTED |          |
-| Sessions                      | NOT_STARTED |          |
-| Session revocation            | NOT_STARTED |          |
-| Session management            | NOT_STARTED |          |
-| Authentication rate limits    | NOT_STARTED |          |
-| Admin authentication controls | NOT_STARTED |          |
-| MFA architecture              | NOT_STARTED |          |
+| Component                     | Status      | Notes                                                                                       |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------------------------- |
+| User entity                   | VERIFIED    | identity.users table, UUID PK, status lifecycle, soft-deletion support (deleted_at)          |
+| Auth identity                 | VERIFIED    | identity.auth_identities table, LOCAL_PASSWORD provider, provider_subject uniqueness        |
+| Registration                  | VERIFIED    | POST /api/v1/auth/register, atomic transactional provisioning across users, identities, sessions |
+| Login                         | VERIFIED    | POST /api/v1/auth/login, generic failure mitigation, constant-time verification against timing attacks |
+| Logout                        | VERIFIED    | POST /api/v1/auth/logout, server-side session revocation & HttpOnly cookie clearing         |
+| Password hashing              | VERIFIED    | Argon2id algorithm, parameters meeting security specification                               |
+| Email verification            | NOT_STARTED | Reserved for future notification/communication phase                                        |
+| Password recovery             | NOT_STARTED | Reserved for future recovery workflow phase                                                 |
+| Sessions                      | VERIFIED    | identity.user_sessions table, 256-bit CSPRNG token in HttpOnly cookie, SHA-256 token_hash in DB |
+| Session revocation            | VERIFIED    | Server-side revocation (revoked_at), immediate invalidation                                 |
+| Session management            | NOT_STARTED | Reserved for future user session-listing management phase                                   |
+| Authentication rate limits    | NOT_STARTED | Reserved for future rate limiting infrastructure phase                                      |
+| Admin authentication controls | NOT_STARTED | Reserved for future admin governance phase                                                  |
+| MFA architecture              | NOT_STARTED | Reserved for future advanced security phase                                                 |
 
 ---
 
@@ -1026,7 +1026,7 @@ Every major implementation stage should have a Git checkpoint.
 | Public catalogue         | VERIFIED    | Prompt 10 implemented & verified |
 | Search                   | VERIFIED    | Prompt 11 implemented & verified |
 | SEO                      | VERIFIED    | Prompt 12 implemented & verified |
-| Authentication           | NOT_STARTED |        |
+| Authentication           | VERIFIED    | Prompt 13 implemented & verified |
 | RBAC                     | NOT_STARTED |        |
 | User library             | NOT_STARTED |        |
 | Free downloads           | NOT_STARTED |        |
@@ -1054,6 +1054,50 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-01 — Prompt 13: Core Authentication & Server-Side Sessions
+
+Status:
+VERIFIED
+
+Implemented:
+- Implemented core identity database architecture in PostgreSQL / Neon via migration `drizzle/0007_identity_authentication.sql`:
+  * `identity.users`: central user entity with UUID PK, lowercase email uniqueness constraint (`uq_users_active_email` on active non-deleted rows), status check constraint (`ACTIVE`, `SUSPENDED`, `DISABLED`, `PENDING_VERIFICATION`), and soft-deletion timestamp (`deleted_at`).
+  * `identity.auth_identities`: decoupled authentication credentials with `LOCAL_PASSWORD` provider, `provider_subject` unique constraint, and Argon2id `password_hash`.
+  * `identity.user_sessions`: server-side session persistence with `token_hash` unique constraint (SHA-256), `expires_at`, `revoked_at`, and `device_metadata`.
+- Created `DefaultAuthService` (`src/services/auth.service.ts`) enforcing all approved security requirements and human reviewer corrections:
+  * Atomic transactional registration: `identity.users` -> `identity.auth_identities` -> `identity.user_sessions` created in a single DB transaction.
+  * Race-safe duplicate email handling: DB uniqueness constraint is authoritative, mapping PostgreSQL code `23505` to `409 EMAIL_ALREADY_REGISTERED`.
+  * Account deletion & lifecycle status enforcement: every authenticated check verifies `deleted_at IS NULL` AND `status = 'ACTIVE'`. Logically deleted, suspended, or disabled accounts immediately reject login and invalidate active sessions.
+  * Constant-time login failure mitigation: dummy Argon2id hash verification executes when user is not found, defeating email enumeration timing side-channels.
+  * High-entropy 256-bit CSPRNG session token: browser receives token via `HttpOnly`, `SameSite=Lax`, `Path=/` cookie (`session_token`); database exclusively persists `SHA-256(token)`. No cookie signing secret required.
+  * Zero token leakage in logs: raw tokens, token hashes, and cookies are omitted from response bodies and redacted in application logs (`server.ts`).
+- Created Fastify route handlers (`src/routes/api/v1/auth.ts`):
+  * `POST /api/v1/auth/register`: 201 Created on registration with HttpOnly session cookie and standardized data envelope.
+  * `POST /api/v1/auth/login`: 200 OK with fresh session cookie; generic 401 `INVALID_CREDENTIALS` on bad credentials.
+  * `POST /api/v1/auth/logout`: 200 OK, server-side session revocation (`revoked_at`), and session cookie clearing.
+  * `GET /api/v1/auth/me`: 200 OK with current user profile for valid session cookies; 401 `UNAUTHENTICATED` otherwise. Strictly cookie-based (Bearer auth rejected per contract).
+  * Exported `createRequireAuth` preHandler hook for securing future authenticated routes.
+- Integrated `@fastify/cookie` and `authRoutes` into `buildApp()` in `src/app.ts`.
+
+Contract Reconciliation:
+- Cookie Name / Default: Standardized on default `session_token`, configurable via `SESSION_COOKIE_NAME` in `src/config/env.ts` and `.env.example`.
+- Bearer Authentication: Removed Authorization Bearer header extraction in `extractSessionToken`. Per API_SPEC Section 2 and SECURITY_RULES Section 11, authentication is strictly cookie-based (`HttpOnly`), preventing client-side token storage in JavaScript (XSS mitigation).
+- Reconciled `PENDING_VERIFICATION`: Formally documented controlled user statuses (`ACTIVE`, `SUSPENDED`, `DISABLED`, `PENDING_VERIFICATION`) in `docs/DATABASE_SPEC.md` Section 15.1, aligning the specification with database check constraint `chk_users_status` while preserving decoupled email verification on `identity.auth_identities.email_verified_at` per SECURITY_RULES Section 10.
+- Reconciled `UNAUTHENTICATED`: Adopted `UNAUTHENTICATED` as the canonical stable machine-readable error code for HTTP 401 responses across `src/services/auth.service.ts`, `src/routes/api/v1/auth.ts`, `tests/routes/auth.test.ts`, and `docs/API_SPEC.md`.
+
+Database:
+- Migration `drizzle/0007_identity_authentication.sql` applied to live Neon PostgreSQL database.
+- Integrity constraints, partial unique index on active emails, and foreign keys verified.
+
+Tests:
+- `tests/routes/auth.test.ts`: Route unit tests (12 passed) covering 201 registration, validation failures (400), duplicate email rejection (409), login flows (200/401), logout cookie clearing (200), and /me authentication (200/401).
+- `tests/db/auth.integration.test.ts`: Live Neon DB integration tests (11 passed) verifying transactional atomicity, race conditions, Argon2id verification, session hashing, session revocation, and all mandatory reviewer checks (deleted accounts, suspended accounts, disabled accounts).
+- Full regression suite: 24 test files passed, 257 tests passed.
+
+Typecheck & Build:
+PASS (zero errors)
+
 
 ## 2026-09-30 — Prompt 12: Public Resource SEO & OpenGraph Layer
 

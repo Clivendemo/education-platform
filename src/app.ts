@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fastify, { type FastifyInstance, type FastifyServerOptions, type FastifyError } from 'fastify';
+import fastifyCookie from '@fastify/cookie';
 import { healthRoutes } from './routes/api/v1/health.js';
 import { countriesRoutes } from './routes/api/v1/countries.js';
 import { geographyRoutes } from './routes/api/v1/geography.js';
@@ -10,6 +11,7 @@ import { publicationRoutes } from './routes/api/v1/publications.js';
 import { catalogueRoutes } from './routes/api/v1/catalogue.js';
 import { searchRoutes } from './routes/api/v1/search.js';
 import { seoRoutes } from './routes/api/v1/seo.js';
+import { authRoutes } from './routes/api/v1/auth.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -18,6 +20,7 @@ import type { PublicationService } from './services/publication.service.js';
 import type { CatalogueService } from './services/catalogue.service.js';
 import type { SearchService } from './services/search.service.js';
 import type { SeoService } from './services/seo.service.js';
+import type { AuthService } from './services/auth.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -33,6 +36,7 @@ export interface AppOptions extends FastifyServerOptions {
     catalogueService?: CatalogueService;
     searchService?: SearchService;
     seoService?: SeoService;
+    authService?: AuthService;
   };
 }
 
@@ -101,6 +105,9 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     });
   });
 
+  // Register cookie parser/serializer without signing secret
+  app.register(fastifyCookie);
+
   // Mount API v1 routes
   app.register(healthRoutes, { prefix: '/api/v1' });
   app.register(countriesRoutes, {
@@ -138,6 +145,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(seoRoutes, {
     prefix: '/api/v1',
     seoService: services?.seoService,
+  });
+  app.register(authRoutes, {
+    prefix: '/api/v1',
+    authService: services?.authService,
   });
 
   return app;

@@ -76,6 +76,8 @@ export const db = new Proxy({} as NodePgDatabase<typeof schemas>, {
   },
 });
 
+export type AppDatabase = NodePgDatabase<typeof schemas>;
+
 export interface DatabaseHealthResult {
   status: 'healthy' | 'unhealthy';
   latencyMs?: number;

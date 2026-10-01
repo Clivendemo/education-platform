@@ -50,6 +50,13 @@
       "when": 1790400000000,
       "tag": "0006_file_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790841005797,
+      "tag": "0007_identity_authentication",
+      "breakpoints": true
     }
   ]
 }

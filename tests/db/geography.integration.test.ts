@@ -11,14 +11,15 @@ import {
   KENYA_COUNTIES,
 } from '../../src/db/seeds/kenya-geography.js';
 import { defaultGeographyService } from '../../src/services/geography.service.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
 
 describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
   beforeAll(async () => {
     // Ensure migrations and seed are applied to the test database
-    await seedKenyaGeography();
-  });
+    await withDbRetry(() => seedKenyaGeography());
+  }, 60000);
 
   afterAll(async () => {
     await closeDatabase();
@@ -187,12 +188,14 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
 
     it('ensures seed operation is strictly idempotent without duplicating records', async () => {
       // Re-running seedKenyaGeography must succeed cleanly
-      const result = await seedKenyaGeography();
+      const result = await withDbRetry(() => seedKenyaGeography());
       expect(result.countiesCount).toBe(KENYA_COUNTIES.length);
 
-      const countRow = await db
-        .select({ value: sql`count(*)` })
-        .from(administrativeAreas);
+      const countRow = await withDbRetry(() =>
+        db
+          .select({ value: sql`count(*)` })
+          .from(administrativeAreas),
+      );
 
       expect(Number(countRow[0].value)).toBe(47);
     }, 60000);

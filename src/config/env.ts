@@ -36,6 +36,9 @@ export const envSchema = z
 
     // Platform Brand / Site Name configuration (Prompt 12 - SEO / OpenGraph)
     SITE_NAME: z.string().min(1).default('ElimuPin'),
+
+    // Authentication / Session Cookie configuration (Prompt 13)
+    SESSION_COOKIE_NAME: z.string().min(1).default('session_token'),
   })
   .superRefine((data, ctx) => {
     // Cross-field pool range validation

@@ -985,6 +985,13 @@ updated_at TIMESTAMPTZ
 deleted_at TIMESTAMPTZ NULL
 ```
 
+Controlled user status values (`chk_users_status`):
+
+* `ACTIVE`: Normal operational user account eligible for login and session validation.
+* `SUSPENDED`: Temporarily suspended account; logins rejected, active sessions invalidated.
+* `DISABLED`: Permanently deactivated or administratively closed account; logins rejected, active sessions invalidated.
+* `PENDING_VERIFICATION`: Pre-activation account state awaiting initial verification, while email verification timestamps remain decoupled on `identity.auth_identities.email_verified_at` per Security Rules Section 10.
+
 Rules:
 
 * UUID is permanent.

@@ -5,6 +5,15 @@ import { checkDatabaseHealth, closeDatabase } from './db/index.js';
 const app = buildApp({
   logger: {
     level: env.LOG_LEVEL,
+    redact: [
+      'req.headers.cookie',
+      'req.headers.authorization',
+      '*.password',
+      '*.token',
+      '*.sessionToken',
+      '*.token_hash',
+      '*.tokenHash',
+    ],
   },
 });
 

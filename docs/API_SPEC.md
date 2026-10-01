@@ -266,6 +266,13 @@ Authentication is required for operations involving:
 
 Authentication must use secure server-managed sessions.
 
+### Session Cookie Contract
+* The session token is transmitted exclusively via an `HttpOnly` cookie.
+* Cookie name: `session_token` (default, configurable via environment variable `SESSION_COOKIE_NAME`).
+* Cookie flags: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` (in production).
+* Transport policy: Session authentication is strictly cookie-based. Authorization `Bearer` headers are not accepted for web user sessions, preventing client-side token storage in JavaScript storage mechanisms (`localStorage`/`sessionStorage`) and eliminating XSS exfiltration vectors.
+* Machine-readable 401 error code: Unauthenticated requests to protected endpoints return HTTP 401 with standardized error code `UNAUTHENTICATED`.
+
 The frontend must not be trusted to determine whether a user is authenticated.
 
 ---
@@ -826,6 +833,9 @@ Bundles must not contain nested bundles.
 ---
 
 # 30. Authentication API
+
+All authenticated endpoints rely on the session cookie (`SESSION_COOKIE_NAME`, default: `session_token`).
+Unauthenticated requests to protected endpoints return `401 Unauthorized` with error code `UNAUTHENTICATED`.
 
 Registration:
 
