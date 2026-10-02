@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getDatabasePool, closeDatabase, checkDatabaseHealth } from '../../src/db/index.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 const isCI = process.env.CI === 'true';
 const hasDatabaseUrl = Boolean(process.env.DATABASE_URL);
@@ -20,11 +21,13 @@ describe('PostgreSQL Database Integration Tests', () => {
   }
 
   beforeAll(async () => {
-    const health = await checkDatabaseHealth();
-    if (health.status !== 'healthy') {
-      throw new Error(`Database connection failed: ${health.error}`);
-    }
-  });
+    await withDbRetry(async () => {
+      const health = await checkDatabaseHealth();
+      if (health.status !== 'healthy') {
+        throw new Error(`Database connection failed: ${health.error}`);
+      }
+    }, 4, 2000);
+  }, 60000);
 
   afterAll(async () => {
     await closeDatabase();
