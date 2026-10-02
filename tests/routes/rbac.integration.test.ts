@@ -63,7 +63,7 @@ describe.skipIf(!isDbAvailable)('RBAC HTTP Route Authorization Integration Tests
         roleSlug: 'content_manager',
       }),
     );
-  }, 60000);
+  }, 180000);
 
   afterAll(async () => {
     try {

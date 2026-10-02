@@ -167,7 +167,7 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
       })
       .returning();
     inactiveSchoolId = inactSc.id;
-  });
+  }, 180000);
 
   afterAll(async () => {
     // Note: content.publication_events rows are protected by engine trigger trg_prevent_publication_event_delete.

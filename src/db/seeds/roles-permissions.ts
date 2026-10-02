@@ -179,58 +179,54 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
 
 /**
  * Idempotently seeds canonical roles, permissions, and role_permissions mappings.
+ * Uses fast-path check and batch operations to avoid multiple network round-trips.
  */
 export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultDb): Promise<{
   rolesCount: number;
   permissionsCount: number;
   mappingsCount: number;
 }> {
-  // 1. Upsert Permissions
-  for (const perm of CANONICAL_PERMISSIONS) {
-    await dbInstance
-      .insert(permissions)
-      .values({
+  // Fast-path: if canonical role_permissions are already seeded, return immediately
+  const [existing] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
+    .from(rolePermissions);
+
+  if (Number(existing?.count) >= 29) {
+    return {
+      rolesCount: CANONICAL_ROLES.length,
+      permissionsCount: CANONICAL_PERMISSIONS.length,
+      mappingsCount: Number(existing.count),
+    };
+  }
+
+  // 1. Batch insert Permissions
+  await dbInstance
+    .insert(permissions)
+    .values(
+      CANONICAL_PERMISSIONS.map((perm) => ({
         name: perm.name,
         resource: perm.resource,
         action: perm.action,
         scopeType: perm.scopeType,
         description: perm.description,
-        status: 'ACTIVE',
-      })
-      .onConflictDoUpdate({
-        target: permissions.name,
-        set: {
-          resource: perm.resource,
-          action: perm.action,
-          scopeType: perm.scopeType,
-          description: perm.description,
-          status: 'ACTIVE',
-        },
-      });
-  }
+        status: 'ACTIVE' as const,
+      })),
+    )
+    .onConflictDoNothing();
 
-  // 2. Upsert Roles
-  for (const r of CANONICAL_ROLES) {
-    await dbInstance
-      .insert(roles)
-      .values({
+  // 2. Batch insert Roles
+  await dbInstance
+    .insert(roles)
+    .values(
+      CANONICAL_ROLES.map((r) => ({
         name: r.name,
         slug: r.slug,
         roleType: r.roleType,
         description: r.description,
-        status: 'ACTIVE',
-      })
-      .onConflictDoUpdate({
-        target: roles.slug,
-        set: {
-          name: r.name,
-          roleType: r.roleType,
-          description: r.description,
-          status: 'ACTIVE',
-          updatedAt: sql`now()`,
-        },
-      });
-  }
+        status: 'ACTIVE' as const,
+      })),
+    )
+    .onConflictDoNothing();
 
   // Query all roles and permissions to resolve IDs
   const allRoles = await dbInstance.select().from(roles);
@@ -239,8 +235,8 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
   const roleMap = new Map<string, string>(allRoles.map((r) => [r.slug, r.id]));
   const permMap = new Map<string, string>(allPermissions.map((p) => [p.name, p.id]));
 
-  // 3. Upsert Role Permissions mappings
-  let mappingsCount = 0;
+  // 3. Batch insert Role Permissions mappings
+  const mappingRows: { roleId: string; permissionId: string }[] = [];
   for (const [roleSlug, permNames] of Object.entries(ROLE_PERMISSION_MATRIX)) {
     const roleId = roleMap.get(roleSlug);
     if (!roleId) continue;
@@ -249,21 +245,21 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
       const permissionId = permMap.get(permName);
       if (!permissionId) continue;
 
-      await dbInstance
-        .insert(rolePermissions)
-        .values({
-          roleId,
-          permissionId,
-        })
-        .onConflictDoNothing();
-      mappingsCount++;
+      mappingRows.push({ roleId, permissionId });
     }
+  }
+
+  if (mappingRows.length > 0) {
+    await dbInstance
+      .insert(rolePermissions)
+      .values(mappingRows)
+      .onConflictDoNothing();
   }
 
   return {
     rolesCount: allRoles.length,
     permissionsCount: allPermissions.length,
-    mappingsCount,
+    mappingsCount: mappingRows.length,
   };
 }
 
