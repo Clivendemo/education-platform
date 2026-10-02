@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, closeDatabase } from '../../src/db/index.js';
 import {
+  users,
   countries,
   resourceTypes,
   schools,
@@ -10,16 +11,41 @@ import {
   publicationEvents,
 } from '../../src/db/schemas.js';
 import { DbPublicationService } from '../../src/services/publication.service.js';
+import { DefaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
+import { DefaultRbacService } from '../../src/services/rbac.service.js';
+import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { buildApp } from '../../src/app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   const publicationService = new DbPublicationService(db);
+  const authService = new DefaultAuthService(db);
+  const rbacService = new DefaultRbacService(db);
   const app = buildApp({
     services: {
       publicationService,
+      authService,
+      rbacService,
     },
   });
+
+  let authCookie = '';
+  const createdUserIds: string[] = [];
+
+  const origInject = app.inject.bind(app);
+  app.inject = ((opts: any) => {
+    if (typeof opts === 'object' && opts !== null) {
+      const headers = { ...(opts.headers || {}) };
+      if (!headers.cookie && authCookie) {
+        headers.cookie = authCookie;
+      }
+      opts = {
+        ...opts,
+        headers,
+      };
+    }
+    return origInject(opts);
+  }) as any;
 
   let kenyaId: string;
   let tanzaniaId: string;
@@ -32,6 +58,26 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   const createdCountryIds: string[] = [];
 
   beforeAll(async () => {
+    await withDbRetry(() => seedRolesAndPermissions(db));
+
+    // Register admin user and assign system_admin role for publication workflow tests
+    const adminEmail = `pub-admin-${Date.now()}@example.com`;
+    const reg = await withDbRetry(() =>
+      authService.register({
+        email: adminEmail,
+        password: 'Password123!',
+        displayName: 'Publication Test Admin',
+      }),
+    );
+    createdUserIds.push(reg.user.id);
+    authCookie = `${SESSION_COOKIE_NAME}=${reg.sessionToken}`;
+
+    await withDbRetry(() =>
+      rbacService.assignRole({
+        userId: reg.user.id,
+        roleSlug: 'system_admin',
+      }),
+    );
     // Generate a unique 2-character uppercase suffix for ISO code (e.g. 'A1', 'B2', etc.)
     const randAlpha = String.fromCharCode(65 + Math.floor(Math.random() * 26));
     const randNum = Math.floor(Math.random() * 10);
@@ -126,8 +172,16 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   afterAll(async () => {
     // Note: content.publication_events rows are protected by engine trigger trg_prevent_publication_event_delete.
     // In test teardown, we can cleanly close the connection. Test fixtures use unique IDs that do not conflict.
-    await app.close();
-    await closeDatabase();
+    try {
+      if (createdUserIds.length > 0) {
+        await withDbRetry(async () => {
+          await db.delete(users).where(inArray(users.id, createdUserIds));
+        }).catch(() => {});
+      }
+    } finally {
+      await app.close();
+      await closeDatabase();
+    }
   });
 
   // Helper to create test resource with version

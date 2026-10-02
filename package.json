@@ -15,7 +15,8 @@
     "db:check": "drizzle-kit check",
     "db:seed:geography": "tsx src/db/seeds/kenya-geography.ts",
     "db:seed:curriculum": "tsx src/db/seeds/kenya-curriculum.ts",
-    "db:seed:resources": "tsx src/db/seeds/kenya-resources.ts"
+    "db:seed:resources": "tsx src/db/seeds/kenya-resources.ts",
+    "db:seed:rbac": "tsx src/db/seeds/roles-permissions.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",

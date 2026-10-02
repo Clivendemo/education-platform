@@ -7,6 +7,8 @@ import {
   users,
   authIdentities,
   userSessions,
+  roles,
+  userRoles,
   type User,
   type UserSession,
 } from '../db/schemas.js';
@@ -157,6 +159,23 @@ export class DefaultAuthService implements AuthService {
           expiresAt,
           deviceMetadata: input.deviceMetadata ?? {},
         });
+
+        // 4. Assign default standard_user role atomically (Prompt 14 Correction 3)
+        const [standardRole] = await tx
+          .select({ id: roles.id })
+          .from(roles)
+          .where(eq(roles.slug, 'standard_user'))
+          .limit(1);
+
+        if (standardRole) {
+          await tx.insert(userRoles).values({
+            userId: user.id,
+            roleId: standardRole.id,
+            scopeType: null,
+            scopeId: null,
+            status: 'ACTIVE',
+          });
+        }
 
         return {
           user,

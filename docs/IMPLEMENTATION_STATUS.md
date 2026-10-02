@@ -475,16 +475,16 @@ Maximum suggestions: 5
 
 | Component                 | Status      | Notes |
 | ------------------------- | ----------- | ----- |
-| Roles                     | NOT_STARTED |       |
-| Permissions               | NOT_STARTED |       |
-| Role permissions          | NOT_STARTED |       |
-| User roles                | NOT_STARTED |       |
-| Multiple roles            | NOT_STARTED |       |
-| Permission scopes         | NOT_STARTED |       |
-| Role expiry               | NOT_STARTED |       |
-| Role auditing             | NOT_STARTED |       |
-| Server-side authorization | NOT_STARTED |       |
-| RBAC tests                | NOT_STARTED |       |
+| Roles                     | VERIFIED    | Prompt 14 implemented & verified; canonical and custom roles |
+| Permissions               | VERIFIED    | Prompt 14 implemented & verified; fine-grained resource.action |
+| Role permissions          | VERIFIED    | Prompt 14 implemented & verified; cascade join mappings |
+| User roles                | VERIFIED    | Prompt 14 implemented & verified; global and scoped assignments |
+| Multiple roles            | VERIFIED    | Prompt 14 implemented & verified; union permission accumulation |
+| Permission scopes         | VERIFIED    | Prompt 14 implemented & verified; hierarchical global satisfaction and strict scope boundaries |
+| Role expiry               | VERIFIED    | Prompt 14 implemented & verified; temporal boundaries with starts_at and ends_at |
+| Role auditing             | VERIFIED    | Prompt 14 implemented & verified; soft revocation status and created_by tracking |
+| Server-side authorization | VERIFIED    | Prompt 14 implemented & verified; createRequirePermission hook with generic 403 FORBIDDEN |
+| RBAC tests                | VERIFIED    | Prompt 14 implemented & verified; unit, DB integration, and route authorization test suites |
 
 ---
 
@@ -1027,7 +1027,7 @@ Every major implementation stage should have a Git checkpoint.
 | Search                   | VERIFIED    | Prompt 11 implemented & verified |
 | SEO                      | VERIFIED    | Prompt 12 implemented & verified |
 | Authentication           | VERIFIED    | Prompt 13 implemented & verified |
-| RBAC                     | NOT_STARTED |        |
+| RBAC                     | VERIFIED    | Prompt 14 implemented & verified |
 | User library             | NOT_STARTED |        |
 | Free downloads           | NOT_STARTED |        |
 | Calendar                 | NOT_STARTED |        |

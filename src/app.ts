@@ -21,6 +21,7 @@ import type { CatalogueService } from './services/catalogue.service.js';
 import type { SearchService } from './services/search.service.js';
 import type { SeoService } from './services/seo.service.js';
 import type { AuthService } from './services/auth.service.js';
+import type { RbacService } from './services/rbac.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -37,6 +38,7 @@ export interface AppOptions extends FastifyServerOptions {
     searchService?: SearchService;
     seoService?: SeoService;
     authService?: AuthService;
+    rbacService?: RbacService;
   };
 }
 
@@ -133,6 +135,8 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(publicationRoutes, {
     prefix: '/api/v1',
     publicationService: services?.publicationService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
   app.register(catalogueRoutes, {
     prefix: '/api/v1',
