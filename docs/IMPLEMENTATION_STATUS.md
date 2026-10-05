@@ -496,10 +496,10 @@ Maximum suggestions: 5
 | Preferred subjects                  | NOT_STARTED |                             |
 | Preferred grades                    | NOT_STARTED |                             |
 | Preferred pathways                  | NOT_STARTED |                             |
-| Saved resources                     | NOT_STARTED | Flat version-specific model |
+| Saved resources                     | VERIFIED    | Prompt 15 implemented & verified; flat version-specific UUID[] array with atomic deduplication |
 | Follows                             | NOT_STARTED |                             |
 | Activity                            | NOT_STARTED |                             |
-| My Library                          | NOT_STARTED |                             |
+| My Library                          | VERIFIED    | Prompt 15 implemented & verified; authenticated /api/v1/library/resources with public catalogue projection |
 | Anonymous activity                  | NOT_STARTED |                             |
 | Cross-device authenticated activity | NOT_STARTED |                             |
 
@@ -1028,7 +1028,7 @@ Every major implementation stage should have a Git checkpoint.
 | SEO                      | VERIFIED    | Prompt 12 implemented & verified |
 | Authentication           | VERIFIED    | Prompt 13 implemented & verified |
 | RBAC                     | VERIFIED    | Prompt 14 implemented & verified |
-| User library             | NOT_STARTED |        |
+| User library             | VERIFIED    | Prompt 15 implemented & verified |
 | Free downloads           | NOT_STARTED |        |
 | Calendar                 | NOT_STARTED |        |
 | Commerce                 | NOT_STARTED |        |

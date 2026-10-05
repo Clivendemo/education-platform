@@ -12,6 +12,7 @@ import { catalogueRoutes } from './routes/api/v1/catalogue.js';
 import { searchRoutes } from './routes/api/v1/search.js';
 import { seoRoutes } from './routes/api/v1/seo.js';
 import { authRoutes } from './routes/api/v1/auth.js';
+import { libraryRoutes } from './routes/api/v1/library.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -22,6 +23,7 @@ import type { SearchService } from './services/search.service.js';
 import type { SeoService } from './services/seo.service.js';
 import type { AuthService } from './services/auth.service.js';
 import type { RbacService } from './services/rbac.service.js';
+import type { LibraryService } from './services/library.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -39,6 +41,7 @@ export interface AppOptions extends FastifyServerOptions {
     seoService?: SeoService;
     authService?: AuthService;
     rbacService?: RbacService;
+    libraryService?: LibraryService;
   };
 }
 
@@ -152,6 +155,11 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   });
   app.register(authRoutes, {
     prefix: '/api/v1',
+    authService: services?.authService,
+  });
+  app.register(libraryRoutes, {
+    prefix: '/api/v1',
+    libraryService: services?.libraryService,
     authService: services?.authService,
   });
 

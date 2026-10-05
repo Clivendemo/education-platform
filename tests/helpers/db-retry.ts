@@ -20,6 +20,9 @@ export async function withDbRetry<T>(
       const isTransient =
         msg.includes('ETIMEDOUT') ||
         msg.includes('ECONNRESET') ||
+        msg.includes('ENOTFOUND') ||
+        msg.includes('EAI_AGAIN') ||
+        msg.includes('ECONNREFUSED') ||
         msg.includes('Connection terminated') ||
         msg.includes('socket hang up') ||
         msg.includes('timeout') ||
