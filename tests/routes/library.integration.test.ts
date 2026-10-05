@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { inArray, eq } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
 import { db } from '../../src/db/index.js';
 import {
@@ -39,25 +39,39 @@ describe('User Library HTTP Route Integration Tests', () => {
   const createdCountryIds: string[] = [];
 
   beforeAll(async () => {
-    // 1. Create country
-    const randAlpha = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-    const randNum = Math.floor(Math.random() * 10);
-    const isoCode = `K${randAlpha}${randNum}`.substring(0, 3);
-    const urlPrefix = `krl${Date.now().toString().slice(-4)}${randNum}`;
-
-    const [country] = await withDbRetry(async () =>
-      db
-        .insert(countries)
-        .values({
-          name: `Route Lib Country ${Date.now()}`,
-          isoCode,
-          urlPrefix,
-          status: 'ACTIVE',
-        })
-        .returning(),
+    // 1. Fetch existing active country or create collision-safe country
+    const [existingCountry] = await withDbRetry(async () =>
+      db.select().from(countries).where(eq(countries.status, 'ACTIVE')).limit(1),
     );
-    testCountryId = country.id;
-    createdCountryIds.push(country.id);
+    if (existingCountry) {
+      testCountryId = existingCountry.id;
+    } else {
+      const existingIsoCodes = await withDbRetry(async () =>
+        db.select({ isoCode: countries.isoCode }).from(countries),
+      );
+      const usedSet = new Set(existingIsoCodes.map((c) => c.isoCode.toUpperCase()));
+      let isoCode = 'ZZZ';
+      for (let i = 0; i < 26; i++) {
+        const candidate = `Z${String.fromCharCode(65 + i)}Z`;
+        if (!usedSet.has(candidate)) {
+          isoCode = candidate;
+          break;
+        }
+      }
+      const [country] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: `Route Lib Country ${Date.now()}`,
+            isoCode,
+            urlPrefix: `rl${Date.now().toString().slice(-6)}`,
+            status: 'ACTIVE',
+          })
+          .returning(),
+      );
+      testCountryId = country.id;
+      createdCountryIds.push(country.id);
+    }
 
     // 2. Fetch or create resource type
     const [existingType] = await withDbRetry(async () =>

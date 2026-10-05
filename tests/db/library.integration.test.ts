@@ -41,25 +41,39 @@ describe('User Library Neon Database Integration Tests', () => {
   const createdCountryIds: string[] = [];
 
   beforeAll(async () => {
-    // 1. Create unique country
-    const randAlpha = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-    const randNum = Math.floor(Math.random() * 10);
-    const isoCode = `L${randAlpha}${randNum}`.substring(0, 3);
-    const urlPrefix = `lib${Date.now().toString().slice(-4)}${randNum}`;
-
-    const [country] = await withDbRetry(async () =>
-      db
-        .insert(countries)
-        .values({
-          name: `Library Test Country ${Date.now()}`,
-          isoCode,
-          urlPrefix,
-          status: 'ACTIVE',
-        })
-        .returning(),
+    // 1. Fetch existing active country or create collision-safe country
+    const [existingCountry] = await withDbRetry(async () =>
+      db.select().from(countries).where(eq(countries.status, 'ACTIVE')).limit(1),
     );
-    testCountryId = country.id;
-    createdCountryIds.push(country.id);
+    if (existingCountry) {
+      testCountryId = existingCountry.id;
+    } else {
+      const existingIsoCodes = await withDbRetry(async () =>
+        db.select({ isoCode: countries.isoCode }).from(countries),
+      );
+      const usedSet = new Set(existingIsoCodes.map((c) => c.isoCode.toUpperCase()));
+      let isoCode = 'YYY';
+      for (let i = 0; i < 26; i++) {
+        const candidate = `Y${String.fromCharCode(65 + i)}Y`;
+        if (!usedSet.has(candidate)) {
+          isoCode = candidate;
+          break;
+        }
+      }
+      const [country] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: `Library Test Country ${Date.now()}`,
+            isoCode,
+            urlPrefix: `dl${Date.now().toString().slice(-6)}`,
+            status: 'ACTIVE',
+          })
+          .returning(),
+      );
+      testCountryId = country.id;
+      createdCountryIds.push(country.id);
+    }
 
     // 2. Fetch or create resource type
     const [existingType] = await withDbRetry(async () =>
