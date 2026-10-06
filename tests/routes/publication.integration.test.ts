@@ -84,43 +84,73 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
         roleSlug: 'system_admin',
       }),
     );
-    // Generate a unique 2-character uppercase suffix for ISO code (e.g. 'A1', 'B2', etc.)
-    const randAlpha = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-    const randNum = Math.floor(Math.random() * 10);
-    const keIso = `K${randAlpha}${randNum}`.substring(0, 3);
-    const tzIso = `T${randAlpha}${randNum}`.substring(0, 3);
-    const kePrefix = `k${Date.now().toString().slice(-4)}${randNum}`;
-    const tzPrefix = `t${Date.now().toString().slice(-4)}${randNum}`;
-
-    // 1. Ensure Kenya exists
-    const [ke] = await withDbRetry(async () =>
-      db
-        .insert(countries)
-        .values({
-          name: `PubTest Kenya ${Date.now()}`,
-          isoCode: keIso,
-          urlPrefix: kePrefix,
-          status: 'ACTIVE',
-        })
-        .returning(),
+    // 1. Ensure ACTIVE country exists (reuse seeded active country if present)
+    const existingCountries = await withDbRetry(() =>
+      db.select().from(countries),
     );
+    let ke = existingCountries.find((c) => c.status === 'ACTIVE');
+    if (!ke) {
+      const usedIso = new Set(existingCountries.map((c) => c.isoCode));
+      let candidateIso = 'KAA';
+      for (let i = 0; i < 26; i++) {
+        for (let j = 0; j < 26; j++) {
+          const code = `K${String.fromCharCode(65 + i)}${String.fromCharCode(65 + j)}`;
+          if (!usedIso.has(code)) {
+            candidateIso = code;
+            break;
+          }
+        }
+        if (!usedIso.has(candidateIso)) break;
+      }
+      const candidatePrefix = `k${Date.now().toString().slice(-6)}`;
+      const [newKe] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: `PubTest Kenya ${Date.now()}`,
+            isoCode: candidateIso,
+            urlPrefix: candidatePrefix,
+            status: 'ACTIVE',
+          })
+          .returning(),
+      );
+      ke = newKe;
+      createdCountryIds.push(newKe.id);
+    }
     kenyaId = ke.id;
-    createdCountryIds.push(ke.id);
 
-    // Ensure Tanzania (INACTIVE)
-    const [tz] = await withDbRetry(async () =>
-      db
-        .insert(countries)
-        .values({
-          name: `PubTest Tanzania ${Date.now()}`,
-          isoCode: tzIso,
-          urlPrefix: tzPrefix,
-          status: 'INACTIVE',
-        })
-        .returning(),
-    );
+    // Ensure INACTIVE country exists (reuse inactive country if present)
+    let tz = existingCountries.find((c) => c.status === 'INACTIVE');
+    if (!tz) {
+      const allCountries = await withDbRetry(() => db.select().from(countries));
+      const usedIso = new Set(allCountries.map((c) => c.isoCode));
+      let candidateIso = 'TAA';
+      for (let i = 0; i < 26; i++) {
+        for (let j = 0; j < 26; j++) {
+          const code = `T${String.fromCharCode(65 + i)}${String.fromCharCode(65 + j)}`;
+          if (!usedIso.has(code)) {
+            candidateIso = code;
+            break;
+          }
+        }
+        if (!usedIso.has(candidateIso)) break;
+      }
+      const candidatePrefix = `t${Date.now().toString().slice(-6)}`;
+      const [newTz] = await withDbRetry(async () =>
+        db
+          .insert(countries)
+          .values({
+            name: `PubTest Tanzania ${Date.now()}`,
+            isoCode: candidateIso,
+            urlPrefix: candidatePrefix,
+            status: 'INACTIVE',
+          })
+          .returning(),
+      );
+      tz = newTz;
+      createdCountryIds.push(newTz.id);
+    }
     tanzaniaId = tz.id;
-    createdCountryIds.push(tz.id);
 
     // 2. Setup Resource Types
     const [t1] = await withDbRetry(async () =>
