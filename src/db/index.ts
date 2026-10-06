@@ -26,9 +26,9 @@ export function getDatabasePool(): pg.Pool {
     const isTest = env.NODE_ENV === 'test' || process.env.VITEST === 'true';
     poolInstance = new Pool({
       connectionString: env.DATABASE_URL,
-      min: isTest ? 1 : env.DATABASE_POOL_MIN,
+      min: isTest ? 0 : env.DATABASE_POOL_MIN,
       max: isTest ? 3 : env.DATABASE_POOL_MAX,
-      idleTimeoutMillis: isTest ? 60000 : 15000,
+      idleTimeoutMillis: isTest ? 5000 : 15000,
       connectionTimeoutMillis: 45000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,

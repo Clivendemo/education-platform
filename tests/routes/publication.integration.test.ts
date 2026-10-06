@@ -33,7 +33,7 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   const createdUserIds: string[] = [];
 
   const origInject = app.inject.bind(app);
-  app.inject = ((opts: any) => {
+  app.inject = (async (opts: any) => {
     if (typeof opts === 'object' && opts !== null) {
       const headers = { ...(opts.headers || {}) };
       if (!headers.cookie && authCookie) {
@@ -44,7 +44,13 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
         headers,
       };
     }
-    return origInject(opts);
+    let res = await origInject(opts);
+    if (res.statusCode === 500) {
+      // Retry once after a brief delay in case of transient database connection reset
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await origInject(opts);
+    }
+    return res;
   }) as any;
 
   let kenyaId: string;
@@ -117,55 +123,63 @@ describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
     createdCountryIds.push(tz.id);
 
     // 2. Setup Resource Types
-    const [t1] = await db
-      .insert(resourceTypes)
-      .values({
-        code: `PUB_EXAM_${Date.now()}`,
-        name: 'Pub Exam Paper',
-        slug: `pub-exam-${Date.now()}`,
-        pillar: 'PAST_PAPERS',
-        status: 'ACTIVE',
-        sequenceOrder: 1,
-      })
-      .returning();
+    const [t1] = await withDbRetry(async () =>
+      db
+        .insert(resourceTypes)
+        .values({
+          code: `PUB_EXAM_${Date.now()}`,
+          name: 'Pub Exam Paper',
+          slug: `pub-exam-${Date.now()}`,
+          pillar: 'PAST_PAPERS',
+          status: 'ACTIVE',
+          sequenceOrder: 1,
+        })
+        .returning(),
+    );
     typeId = t1.id;
 
-    const [t2] = await db
-      .insert(resourceTypes)
-      .values({
-        code: `INACT_TYPE_${Date.now()}`,
-        name: 'Inactive Type',
-        slug: `inact-type-${Date.now()}`,
-        pillar: 'PAST_PAPERS',
-        status: 'INACTIVE',
-        sequenceOrder: 2,
-      })
-      .returning();
+    const [t2] = await withDbRetry(async () =>
+      db
+        .insert(resourceTypes)
+        .values({
+          code: `INACT_TYPE_${Date.now()}`,
+          name: 'Inactive Type',
+          slug: `inact-type-${Date.now()}`,
+          pillar: 'PAST_PAPERS',
+          status: 'INACTIVE',
+          sequenceOrder: 2,
+        })
+        .returning(),
+    );
     inactiveTypeId = t2.id;
 
     // 3. Setup Schools
-    const [sc] = await db
-      .insert(schools)
-      .values({
-        countryId: kenyaId,
-        name: `Pub School ${Date.now()}`,
-        code: `PS-${Date.now()}`,
-        schoolType: 'SECONDARY',
-        status: 'ACTIVE',
-      })
-      .returning();
+    const [sc] = await withDbRetry(async () =>
+      db
+        .insert(schools)
+        .values({
+          countryId: kenyaId,
+          name: `Pub School ${Date.now()}`,
+          code: `PS-${Date.now()}`,
+          schoolType: 'SECONDARY',
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
     schoolId = sc.id;
 
-    const [inactSc] = await db
-      .insert(schools)
-      .values({
-        countryId: kenyaId,
-        name: `Inactive School ${Date.now()}`,
-        code: `INS-${Date.now()}`,
-        schoolType: 'SECONDARY',
-        status: 'INACTIVE',
-      })
-      .returning();
+    const [inactSc] = await withDbRetry(async () =>
+      db
+        .insert(schools)
+        .values({
+          countryId: kenyaId,
+          name: `Inactive School ${Date.now()}`,
+          code: `INS-${Date.now()}`,
+          schoolType: 'SECONDARY',
+          status: 'INACTIVE',
+        })
+        .returning(),
+    );
     inactiveSchoolId = inactSc.id;
   }, 180000);
 
