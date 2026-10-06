@@ -518,16 +518,16 @@ Not organized through private collections
 
 # 21. Free Downloads
 
-| Component                     | Status      | Notes |
-| ----------------------------- | ----------- | ----- |
-| Download authorization        | NOT_STARTED |       |
-| Free-resource validation      | NOT_STARTED |       |
-| Signed access                 | NOT_STARTED |       |
-| CDN/storage integration       | NOT_STARTED |       |
-| Download failure handling     | NOT_STARTED |       |
-| Expired access handling       | NOT_STARTED |       |
-| Interrupted-download handling | NOT_STARTED |       |
-| Download security tests       | NOT_STARTED |       |
+| Component                     | Status   | Notes                                                              |
+| ----------------------------- | -------- | ------------------------------------------------------------------ |
+| Download authorization        | VERIFIED | Prompt 16 implemented & verified; anonymous + authenticated access |
+| Free-resource validation      | VERIFIED | Prompt 16; PostgreSQL pre-storage publication & qualityLabel checks|
+| Signed access                 | VERIFIED | Prompt 16; short-lived presigned GET URLs (300s TTL)               |
+| CDN/storage integration       | VERIFIED | Prompt 16; S3/R2 presigner abstraction with memory provider        |
+| Download failure handling     | VERIFIED | Prompt 16; zero R2 calls on rejection; controlled error codes      |
+| Expired access handling       | VERIFIED | Prompt 16; presigned URL expires after 300 seconds                 |
+| Interrupted-download handling | VERIFIED | Prompt 16; idempotent GET download signatures                      |
+| Download security tests       | VERIFIED | Prompt 16; unit, DB, and route integration tests passing           |
 
 ---
 
@@ -1029,7 +1029,7 @@ Every major implementation stage should have a Git checkpoint.
 | Authentication           | VERIFIED    | Prompt 13 implemented & verified |
 | RBAC                     | VERIFIED    | Prompt 14 implemented & verified |
 | User library             | VERIFIED    | Prompt 15 implemented & verified |
-| Free downloads           | NOT_STARTED |        |
+| Free downloads           | VERIFIED    | Prompt 16 implemented & verified |
 | Calendar                 | NOT_STARTED |        |
 | Commerce                 | NOT_STARTED |        |
 | M-Pesa                   | NOT_STARTED |        |

@@ -4,6 +4,7 @@ import type {
   PutObjectResult,
   HeadObjectResult,
   GetObjectResult,
+  GetSignedUrlOptions,
 } from './storage-provider.interface.js';
 
 interface StoredObject {
@@ -100,6 +101,19 @@ export class MemoryStorageProvider implements StorageProvider {
 
   async objectExists(key: string): Promise<boolean> {
     return this.storage.has(key);
+  }
+
+  async getSignedDownloadUrl(
+    key: string,
+    options: GetSignedUrlOptions = {},
+  ): Promise<string> {
+    const { expiresInSeconds = 300, responseContentDisposition } = options;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+    const encodedKey = encodeURIComponent(key);
+    const dispositionParam = responseContentDisposition
+      ? `&response-content-disposition=${encodeURIComponent(responseContentDisposition)}`
+      : '';
+    return `https://mock-storage.local/${this.bucketName}/${encodedKey}?expires=${encodeURIComponent(expiresAt)}&signature=mock-sig-${Date.now()}${dispositionParam}`;
   }
 
   /**

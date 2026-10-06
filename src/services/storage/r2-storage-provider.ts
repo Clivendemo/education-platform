@@ -6,6 +6,7 @@ import {
   DeleteObjectCommand,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'node:stream';
 import type {
   StorageProvider,
@@ -13,6 +14,7 @@ import type {
   PutObjectResult,
   HeadObjectResult,
   GetObjectResult,
+  GetSignedUrlOptions,
 } from './storage-provider.interface.js';
 
 export interface CloudflareR2Config {
@@ -162,5 +164,27 @@ export class CloudflareR2StorageProvider implements StorageProvider {
   async objectExists(key: string): Promise<boolean> {
     const result = await this.headObject(key);
     return result !== null;
+  }
+
+  async getSignedDownloadUrl(
+    key: string,
+    options: GetSignedUrlOptions = {},
+  ): Promise<string> {
+    const {
+      expiresInSeconds = 300,
+      responseContentDisposition,
+      responseContentType,
+    } = options;
+
+    const command = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+      ResponseContentDisposition: responseContentDisposition,
+      ResponseContentType: responseContentType,
+    });
+
+    return getSignedUrl(this.client, command, {
+      expiresIn: expiresInSeconds,
+    });
   }
 }

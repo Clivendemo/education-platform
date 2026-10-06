@@ -32,6 +32,12 @@ export interface GetObjectResult {
   metadata: Record<string, string>;
 }
 
+export interface GetSignedUrlOptions {
+  expiresInSeconds?: number;
+  responseContentDisposition?: string;
+  responseContentType?: string;
+}
+
 export interface StorageProvider {
   /**
    * Upload binary data to the storage bucket.
@@ -68,4 +74,12 @@ export interface StorageProvider {
    * Get the bucket name
    */
   getBucketName(): string;
+
+  /**
+   * Generates a short-lived presigned download URL for the target object key.
+   */
+  getSignedDownloadUrl(
+    key: string,
+    options?: GetSignedUrlOptions,
+  ): Promise<string>;
 }

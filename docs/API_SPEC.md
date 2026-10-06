@@ -689,23 +689,76 @@ Preview access must not grant download entitlement.
 
 ---
 
-# 24. Free Download
+# 24. Free Download API (Prompt 16)
 
+### Canonical Endpoint
 ```text
 POST /api/v1/resources/:id/download
 ```
 
-The backend must:
+### Parameters
+* **URL Parameter `:id`** (UUID, required): The canonical UUID identifier of the resource.
+* **Request Body** (JSON, optional):
+  ```json
+  {
+    "fileId": "uuid" // Optional: specific file attached to the active published version. If omitted, the primary available file is selected deterministically.
+  }
+  ```
 
-1. identify the resource/version
-2. verify publication state
-3. verify file readiness
-4. verify free-access status
-5. authorize the request
-6. create an appropriate short-lived access mechanism
-7. return controlled download information
+### Anonymous-Access & Authentication Behaviour
+* **Anonymous Access**: Free downloads do not require authentication or user registration. Requests without session cookies are fully permitted.
+* **Optional Authenticated Context**: If a valid session cookie (`session_token`) is present, user context is captured for operational observability.
+* **Resilient Session Handling**: If an invalid or expired session cookie is submitted, the request continues as anonymous rather than returning `401 UNAUTHENTICATED`.
 
-Permanent public storage URLs must not be returned.
+### Free vs Premium Rule
+* Resources with `qualityLabel !== 'PREMIUM'` are classified as free content and eligible for instant download.
+* Resources with `qualityLabel === 'PREMIUM'` are commercial assets. Download requests are strictly blocked with HTTP `403 FORBIDDEN` (`code: 'PREMIUM_RESOURCE_LOCKED'`). Full commercial purchase and entitlement flows are deferred to Prompt 20.
+
+### Pre-Storage Eligibility Invariants (Zero R2 Calls on Rejection)
+All checks execute in PostgreSQL before any interaction with object storage:
+1. `content.resources.status = 'PUBLISHED'` (non-published resources return `404 RESOURCE_NOT_FOUND`).
+2. `content.resource_versions.status = 'PUBLISHED'` (active published version must exist).
+3. `files.resource_files.status = 'AVAILABLE'` (quarantined, pending, archived, or failed files reject with `400 FILE_NOT_AVAILABLE`).
+4. **Cross-Version File Isolation**: The requested file must belong to the active published version. Attempting to download files belonging to draft iterations, archived versions, or other resources rejects with `404 FILE_NOT_FOUND`.
+5. **Deterministic Primary File Selection**: When `fileId` is omitted, the primary file is resolved deterministically:
+   `is_primary = true` → `file_type = 'MAIN_DOCUMENT'` → lowest `sequence_order ASC` → earliest `created_at ASC` → `id ASC` tie-breaker.
+
+### Expiration Semantics
+* Download URLs are generated using S3/R2 presigned GET signatures (`@aws-sdk/s3-request-presigner`).
+* **TTL**: Short-lived, with a default lifespan of 300 seconds (5 minutes).
+* Clients must fetch the binary directly before the timestamp in `expiresAt`.
+
+### Storage Internals Privacy Rule
+* The presigned URL contains the target cloud endpoint and signed query parameters needed to retrieve the object.
+* The API response strictly omits internal storage metadata fields: `storage_metadata`, `storage_bucket`, `object_key`, and `storage_provider` are never exposed in the response payload.
+* The response contains only the presigned `downloadUrl`, expiration timestamps, and controlled public file metadata.
+
+### Response Schema (`200 OK`)
+```json
+{
+  "data": {
+    "downloadUrl": "https://<bucket>.<r2-endpoint>/resources/...?X-Amz-Signature=...&X-Amz-Expires=300",
+    "expiresAt": "2026-10-05T08:05:00.000Z",
+    "expiresInSeconds": 300,
+    "file": {
+      "id": "3f00c951-363f-459e-a9d4-cd27cabf0140",
+      "originalFilename": "grade10-math-exam.pdf",
+      "fileType": "MAIN_DOCUMENT",
+      "mimeType": "application/pdf",
+      "fileSizeBytes": 2048576,
+      "checksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}
+```
+
+### Error Codes
+* `400 VALIDATION_ERROR`: Invalid UUID format in URL parameter or request body.
+* `400 FILE_NOT_AVAILABLE`: Target file is in `QUARANTINED`, `PENDING`, `ARCHIVED`, or `FAILED` status.
+* `403 PREMIUM_RESOURCE_LOCKED`: Resource is marked `PREMIUM` (requires commercial entitlement).
+* `404 RESOURCE_NOT_FOUND`: Resource does not exist or is not in `PUBLISHED` status.
+* `404 NO_AVAILABLE_FILES`: Published resource version has zero `AVAILABLE` files attached.
+* `404 FILE_NOT_FOUND`: Specified `fileId` does not exist or does not belong to the published version.
 
 ---
 
