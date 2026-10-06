@@ -6,7 +6,6 @@ import {
   DeleteObjectCommand,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'node:stream';
 import type {
   StorageProvider,
@@ -16,6 +15,22 @@ import type {
   GetObjectResult,
   GetSignedUrlOptions,
 } from './storage-provider.interface.js';
+
+let presignerModule: { getSignedUrl: typeof import('@aws-sdk/s3-request-presigner').getSignedUrl } | null = null;
+
+async function getPresigner(): Promise<{ getSignedUrl: typeof import('@aws-sdk/s3-request-presigner').getSignedUrl }> {
+  if (!presignerModule) {
+    try {
+      const mod = await import('@aws-sdk/s3-request-presigner');
+      presignerModule = { getSignedUrl: mod.getSignedUrl };
+    } catch {
+      throw new Error(
+        'The package "@aws-sdk/s3-request-presigner" is required to generate presigned download URLs with CloudflareR2StorageProvider. Run "npm install" to ensure all dependencies are installed.',
+      );
+    }
+  }
+  return presignerModule;
+}
 
 export interface CloudflareR2Config {
   accountId?: string;
@@ -183,7 +198,8 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       ResponseContentType: responseContentType,
     });
 
-    return getSignedUrl(this.client, command, {
+    const presigner = await getPresigner();
+    return presigner.getSignedUrl(this.client, command, {
       expiresIn: expiresInSeconds,
     });
   }

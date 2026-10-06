@@ -555,23 +555,27 @@ describe('Resource Engine Database Integration Tests', () => {
     });
 
     it('rejects duplicate version number for the same resource', async () => {
-      const [res] = await db
-        .insert(resources)
-        .values({
-          countryId: kenyaId,
-          resourceTypeId: pastPaperTypeId,
-          title: '[STRUCTURAL-TEST] Duplicate Version Test',
-          slug: `dup-ver-${Date.now()}`,
-        })
-        .returning();
+      const [res] = await withDbRetry(async () =>
+        db
+          .insert(resources)
+          .values({
+            countryId: kenyaId,
+            resourceTypeId: pastPaperTypeId,
+            title: '[STRUCTURAL-TEST] Duplicate Version Test',
+            slug: `dup-ver-${Date.now()}`,
+          })
+          .returning(),
+      );
       createdResourceIds.push(res.id);
 
-      await db.insert(resourceVersions).values({
-        resourceId: res.id,
-        versionNumber: 1,
-        versionLabel: 'v1.0',
-        title: 'Initial',
-      });
+      await withDbRetry(async () =>
+        db.insert(resourceVersions).values({
+          resourceId: res.id,
+          versionNumber: 1,
+          versionLabel: 'v1.0',
+          title: 'Initial',
+        }),
+      );
 
       await expect(
         db.insert(resourceVersions).values({
