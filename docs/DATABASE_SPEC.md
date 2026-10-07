@@ -1473,6 +1473,9 @@ created_at TIMESTAMPTZ
 updated_at TIMESTAMPTZ
 ```
 
+Note (Prompt 18 Correction 1):
+`product_type` is restricted to `RESOURCE` and `BUNDLE`. `SUBSCRIPTION` is excluded from the commerce foundation.
+
 ---
 
 ## 26.3 commerce.offers
@@ -1544,7 +1547,7 @@ Fields:
 ```text
 id UUID PK
 order_id UUID FK
-payment_provider_id UUID FK
+provider_code VARCHAR NOT NULL
 provider_reference VARCHAR NULL
 provider_transaction_id VARCHAR NULL
 amount_minor BIGINT NOT NULL
@@ -1558,6 +1561,9 @@ provider_payload JSONB NULL
 created_at TIMESTAMPTZ
 updated_at TIMESTAMPTZ
 ```
+
+Note (Prompt 18 Correction 4):
+`payment_provider_id` was removed from the foundation schema. The payment provider is identified by `provider_code VARCHAR NOT NULL`. Unique constraint `(provider_code, provider_reference)` enforces provider reference idempotency.
 
 Payment history is retained.
 
@@ -1992,12 +1998,16 @@ calendar_id UUID FK
 export_type VARCHAR NOT NULL
 status VARCHAR NOT NULL
 storage_key TEXT NULL
-file_id UUID NULL FK
 requested_at TIMESTAMPTZ NOT NULL
 completed_at TIMESTAMPTZ NULL
 expires_at TIMESTAMPTZ NULL
 error_message TEXT NULL
 ```
+
+Note (Prompt 17 Correction 1):
+`calendar.calendar_exports` does NOT maintain a `file_id` foreign key to `files.resource_files`.
+`files.resource_files` belongs strictly to the Resource → ResourceVersion domain.
+Calendar exports manage their own private storage keys and temporary lifecycle through the `StorageProvider` abstraction.
 
 Initial export:
 

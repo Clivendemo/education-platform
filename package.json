@@ -16,7 +16,9 @@
     "db:seed:geography": "tsx src/db/seeds/kenya-geography.ts",
     "db:seed:curriculum": "tsx src/db/seeds/kenya-curriculum.ts",
     "db:seed:resources": "tsx src/db/seeds/kenya-resources.ts",
-    "db:seed:rbac": "tsx src/db/seeds/roles-permissions.ts"
+    "db:seed:rbac": "tsx src/db/seeds/roles-permissions.ts",
+    "db:seed:calendar": "tsx src/db/seeds/calendar-setup.ts",
+    "db:seed:commerce": "tsx src/db/seeds/commerce-setup.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",
@@ -26,6 +28,7 @@
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
     "zod": "^3.24.2"
   },

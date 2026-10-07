@@ -14,6 +14,8 @@ import { seoRoutes } from './routes/api/v1/seo.js';
 import { authRoutes } from './routes/api/v1/auth.js';
 import { libraryRoutes } from './routes/api/v1/library.js';
 import { downloadRoutes } from './routes/api/v1/downloads.js';
+import { calendarRoutes } from './routes/api/v1/calendar.js';
+import { commerceRoutes } from './routes/api/v1/commerce.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -26,6 +28,8 @@ import type { AuthService } from './services/auth.service.js';
 import type { RbacService } from './services/rbac.service.js';
 import type { LibraryService } from './services/library.service.js';
 import type { DownloadService } from './services/download.service.js';
+import type { CalendarService } from './services/calendar/calendar.service.js';
+import type { CommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -45,6 +49,8 @@ export interface AppOptions extends FastifyServerOptions {
     rbacService?: RbacService;
     libraryService?: LibraryService;
     downloadService?: DownloadService;
+    calendarService?: CalendarService;
+    commerceService?: CommerceService;
   };
 }
 
@@ -168,6 +174,16 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(downloadRoutes, {
     prefix: '/api/v1',
     downloadService: services?.downloadService,
+    authService: services?.authService,
+  });
+  app.register(calendarRoutes, {
+    prefix: '/api/v1',
+    calendarService: services?.calendarService,
+    authService: services?.authService,
+  });
+  app.register(commerceRoutes, {
+    prefix: '/api/v1',
+    commerceService: services?.commerceService,
     authService: services?.authService,
   });
 

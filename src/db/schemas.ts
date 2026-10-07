@@ -6,3 +6,5 @@ export * from './schema/resource.js';
 export * from './schema/publication.js';
 export * from './schema/files.js';
 export * from './schema/identity.js';
+export * from './schema/calendar.js';
+export * from './schema/commerce.js';

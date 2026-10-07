@@ -533,22 +533,22 @@ Not organized through private collections
 
 # 22. Calendar
 
-| Component                  | Status      | Notes |
-| -------------------------- | ----------- | ----- |
-| Calendar entity            | NOT_STARTED |       |
-| Official calendar          | NOT_STARTED |       |
-| School calendar            | NOT_STARTED |       |
-| User calendar              | NOT_STARTED |       |
-| Anonymous session calendar | NOT_STARTED |       |
-| Calendar event types       | NOT_STARTED |       |
-| Calendar events            | NOT_STARTED |       |
-| Recurrence                 | NOT_STARTED |       |
-| Calendar templates         | NOT_STARTED |       |
-| PDF export                 | NOT_STARTED |       |
-| Export expiry              | NOT_STARTED |       |
-| Anonymous session expiry   | NOT_STARTED |       |
-| Anonymous-to-user transfer | NOT_STARTED |       |
-| Calendar tests             | NOT_STARTED |       |
+| Component                  | Status   | Notes |
+| -------------------------- | -------- | ----- |
+| Calendar entity            | VERIFIED | `calendar.calendars` table, UUID PK, 4 scopes, structural check constraints |
+| Official calendar          | VERIFIED | Platform/country/academic-year aware official calendars and public read-only access |
+| School calendar            | VERIFIED | Institutional academic calendars bound to `school_id` |
+| User calendar              | VERIFIED | Authenticated persistent personal calendars bound to `user_id` |
+| Anonymous session calendar | VERIFIED | Server-controlled `calendar_session` cookie, 7-day rolling TTL |
+| Calendar event types       | VERIFIED | `calendar.calendar_event_types` registry, 11 seeded categories |
+| Calendar events            | VERIFIED | `calendar.calendar_events` table, dates/times check constraints, chronological ordering |
+| Recurrence                 | VERIFIED | `calendar.calendar_recurrence_rules` table, structural frequency and interval definition |
+| Calendar templates         | VERIFIED | `calendar.calendar_templates` table, configurable layout JSONB |
+| PDF export                 | VERIFIED | `CalendarExportProvider` abstraction & `PdfCalendarExportProvider` (pdf-lib) |
+| Export expiry              | VERIFIED | 24-hour TTL for generated calendar export downloads |
+| Anonymous session expiry   | VERIFIED | Deterministic server-side 7-day rolling TTL; expired sessions rejected |
+| Anonymous-to-user transfer | VERIFIED | `POST /api/v1/calendar/session/transfer` atomic reassignment to authenticated user |
+| Calendar tests             | VERIFIED | 36 automated tests across DB integration, Service unit, and HTTP route integration suites |
 
 Calendar scopes:
 
@@ -565,16 +565,16 @@ ANONYMOUS_SESSION
 
 | Component              | Status      | Notes |
 | ---------------------- | ----------- | ----- |
-| Payment providers      | NOT_STARTED |       |
-| Products               | NOT_STARTED |       |
-| Offers                 | NOT_STARTED |       |
-| Orders                 | NOT_STARTED |       |
-| Order items            | NOT_STARTED |       |
-| Payments               | NOT_STARTED |       |
-| Entitlements           | NOT_STARTED |       |
-| Idempotency            | NOT_STARTED |       |
-| Multi-currency support | NOT_STARTED |       |
-| Commerce tests         | NOT_STARTED |       |
+| Payment providers      | VERIFIED    | Provider-neutral `PaymentProvider` abstraction with `SimulationPaymentProvider` foundation |
+| Products               | VERIFIED    | `commerce.products` table, UUID PK, types `RESOURCE` and `BUNDLE`, status lifecycle |
+| Offers                 | VERIFIED    | `commerce.offers` table, KES integer minor units (BIGINT), server-side time validity check |
+| Orders                 | VERIFIED    | `commerce.orders` table, authenticated user ownership, server-calculated totals, state machine |
+| Order items            | VERIFIED    | `commerce.order_items` table, immutable historical price snapshots, total integrity constraint |
+| Payments               | VERIFIED    | `commerce.payments` table, provider reference uniqueness, full amount and currency verification |
+| Entitlements           | VERIFIED    | `commerce.entitlements` table, authoritative premium access mechanism, zero `is_paid` flag |
+| Idempotency            | VERIFIED    | Idempotent order placement (`idempotency_key`) and idempotent payment processing |
+| Multi-currency support | DEFERRED    | KES only in Prompt 18 as planned; multi-currency reserved for future phase |
+| Commerce tests         | VERIFIED    | 31 automated tests across DB integration, Service unit, and HTTP route integration suites |
 
 ---
 
