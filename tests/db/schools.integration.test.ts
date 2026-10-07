@@ -128,15 +128,16 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
     try {
       // Clean up created test schools
       if (testSchoolIds.length > 0) {
-        await db.delete(schools).where(inArray(schools.id, testSchoolIds));
+        await withDbRetry(() => db.delete(schools).where(inArray(schools.id, testSchoolIds))).catch(() => {});
       }
 
       // Clean up test area if needed
       if (tanzaniaAreaId) {
-        await db
-          .delete(administrativeAreas)
-          .where(eq(administrativeAreas.id, tanzaniaAreaId))
-          .catch(() => {});
+        await withDbRetry(() =>
+          db
+            .delete(administrativeAreas)
+            .where(eq(administrativeAreas.id, tanzaniaAreaId)),
+        ).catch(() => {});
       }
     } finally {
       await closeDatabase();
@@ -145,23 +146,26 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
 
   describe('Valid School Creation and Retrieval', () => {
     it('creates a valid school with county association and retrieves it', async () => {
-      const [school] = await db
-        .insert(schools)
-        .values({
-          name: 'Nairobi School of Excellence',
-          code: 'NSE-001',
-          schoolType: 'SECONDARY',
-          status: 'ACTIVE',
-          countryId: kenyaCountryId,
-          administrativeAreaId: nairobiAreaId,
-        })
-        .returning();
+      const code = `NSE-${Date.now().toString(36).toUpperCase()}`;
+      const [school] = await withDbRetry(() =>
+        db
+          .insert(schools)
+          .values({
+            name: 'Nairobi School of Excellence',
+            code,
+            schoolType: 'SECONDARY',
+            status: 'ACTIVE',
+            countryId: kenyaCountryId,
+            administrativeAreaId: nairobiAreaId,
+          })
+          .returning(),
+      );
 
       testSchoolIds.push(school.id);
 
       expect(school.id).toBeDefined();
       expect(school.name).toBe('Nairobi School of Excellence');
-      expect(school.code).toBe('NSE-001');
+      expect(school.code).toBe(code);
       expect(school.schoolType).toBe('SECONDARY');
       expect(school.status).toBe('ACTIVE');
       expect(school.countryId).toBe(kenyaCountryId);
@@ -229,23 +233,26 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
 
   describe('School Code Uniqueness Constraints', () => {
     it('enforces uniqueness of school code within the same country', async () => {
-      const [firstSchool] = await db
-        .insert(schools)
-        .values({
-          name: 'First Unique Code Academy',
-          code: 'UQ-CODE-001',
-          schoolType: 'PRIMARY',
-          status: 'ACTIVE',
-          countryId: kenyaCountryId,
-        })
-        .returning();
+      const uqCode = `UQ-${Date.now().toString(36).toUpperCase()}`;
+      const [firstSchool] = await withDbRetry(() =>
+        db
+          .insert(schools)
+          .values({
+            name: 'First Unique Code Academy',
+            code: uqCode,
+            schoolType: 'PRIMARY',
+            status: 'ACTIVE',
+            countryId: kenyaCountryId,
+          })
+          .returning(),
+      );
       testSchoolIds.push(firstSchool.id);
 
       // Attempt to insert duplicate code in Kenya
       await expect(
         db.insert(schools).values({
           name: 'Duplicate Code Academy',
-          code: 'UQ-CODE-001',
+          code: uqCode,
           schoolType: 'JUNIOR_SCHOOL',
           status: 'ACTIVE',
           countryId: kenyaCountryId,
@@ -321,17 +328,20 @@ describe.skipIf(!isDbAvailable)('Schools Database Integration Tests', () => {
 
   describe('Inactive Schools Behaviour', () => {
     it('does not expose inactive schools through public service queries', async () => {
-      const [inactiveSchool] = await db
-        .insert(schools)
-        .values({
-          name: 'Closed Historic School',
-          code: 'CHS-999',
-          schoolType: 'SECONDARY',
-          status: 'INACTIVE',
-          countryId: kenyaCountryId,
-          administrativeAreaId: nairobiAreaId,
-        })
-        .returning();
+      const chsCode = `CHS-${Date.now().toString(36).toUpperCase()}`;
+      const [inactiveSchool] = await withDbRetry(() =>
+        db
+          .insert(schools)
+          .values({
+            name: 'Closed Historic School',
+            code: chsCode,
+            schoolType: 'SECONDARY',
+            status: 'INACTIVE',
+            countryId: kenyaCountryId,
+            administrativeAreaId: nairobiAreaId,
+          })
+          .returning(),
+      );
       testSchoolIds.push(inactiveSchool.id);
 
       // Verify direct retrieval returns null for public API

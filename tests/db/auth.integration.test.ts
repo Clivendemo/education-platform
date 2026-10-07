@@ -38,12 +38,14 @@ describe.skipIf(!isDbAvailable)('Auth Service Neon PostgreSQL Integration Tests'
       const password = 'StrongPassword123!';
       const displayName = 'Grace Ogot';
 
-      const result = await authService.register({
-        email,
-        password,
-        displayName,
-        deviceMetadata: { userAgent: 'Vitest/Test' },
-      });
+      const result = await withDbRetry(() =>
+        authService.register({
+          email,
+          password,
+          displayName,
+          deviceMetadata: { userAgent: 'Vitest/Test' },
+        }),
+      );
 
       expect(result.user).toBeDefined();
       expect(result.user.id).toBeDefined();
@@ -94,11 +96,13 @@ describe.skipIf(!isDbAvailable)('Auth Service Neon PostgreSQL Integration Tests'
       const email = `${testEmailPrefix}_dupe@example.com`;
       const password = 'Password123!';
 
-      const first = await authService.register({
-        email,
-        password,
-        displayName: 'First User',
-      });
+      const first = await withDbRetry(() =>
+        authService.register({
+          email,
+          password,
+          displayName: 'First User',
+        }),
+      );
       createdUserIds.push(first.user.id);
 
       // Register same email with uppercase variation
