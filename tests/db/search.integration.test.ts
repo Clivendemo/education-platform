@@ -575,8 +575,9 @@ describe.skipIf(!isDbAvailable)('Public Search Neon Database Integration Tests',
     });
 
     it('supports case-insensitivity, phrase matching, and negation in search queries', async () => {
+      const uniqueSuffix = Date.now().toString(36);
       const baseTerm = `Electrochemistry_${Date.now()}`;
-      const phraseTerm = `Voltaic Cell Analysis`;
+      const phraseTerm = `Voltaic Cell ${uniqueSuffix} Analysis`;
 
       const { resource } = await createTestResource({
         title: `${baseTerm}: ${phraseTerm}`,
