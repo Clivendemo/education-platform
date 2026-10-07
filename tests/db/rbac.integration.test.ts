@@ -259,14 +259,18 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
 
   describe('5. Database Integrity Constraints (Correction 5)', () => {
     it('enforces chk_user_roles_scope_consistency in PostgreSQL', async () => {
-      const [u] = await db
-        .select({ id: users.id })
-        .from(users)
-        .limit(1);
-      const [r] = await db
-        .select({ id: roles.id })
-        .from(roles)
-        .limit(1);
+      const [u] = await withDbRetry(() =>
+        db
+          .select({ id: users.id })
+          .from(users)
+          .limit(1),
+      );
+      const [r] = await withDbRetry(() =>
+        db
+          .select({ id: roles.id })
+          .from(roles)
+          .limit(1),
+      );
 
       // Inserting scope_type without scope_id should fail at DB level
       await expect(
@@ -292,14 +296,18 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
     });
 
     it('enforces chk_user_roles_dates when ends_at <= starts_at', async () => {
-      const [u] = await db
-        .select({ id: users.id })
-        .from(users)
-        .limit(1);
-      const [r] = await db
-        .select({ id: roles.id })
-        .from(roles)
-        .limit(1);
+      const [u] = await withDbRetry(() =>
+        db
+          .select({ id: users.id })
+          .from(users)
+          .limit(1),
+      );
+      const [r] = await withDbRetry(() =>
+        db
+          .select({ id: roles.id })
+          .from(roles)
+          .limit(1),
+      );
 
       const now = new Date();
       await expect(

@@ -191,10 +191,15 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
       const result = await withDbRetry(() => seedKenyaGeography());
       expect(result.countiesCount).toBe(KENYA_COUNTIES.length);
 
+      const [ke] = await withDbRetry(() =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      );
+
       const countRow = await withDbRetry(() =>
         db
           .select({ value: sql`count(*)` })
-          .from(administrativeAreas),
+          .from(administrativeAreas)
+          .where(eq(administrativeAreas.countryId, ke.id)),
       );
 
       expect(Number(countRow[0].value)).toBe(47);
@@ -219,7 +224,12 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
     });
 
     it('service lists areas with pagination metadata', async () => {
+      const [ke] = await withDbRetry(() =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      );
+
       const result = await defaultGeographyService.listAreas({
+        countryId: ke.id,
         page: 1,
         pageSize: 10,
       });

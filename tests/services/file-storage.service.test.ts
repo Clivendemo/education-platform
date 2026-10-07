@@ -12,6 +12,7 @@ import {
 import { FileStorageService } from '../../src/services/file-storage.service.js';
 import { MemoryStorageProvider } from '../../src/services/storage/memory-storage-provider.js';
 import type { HeadObjectResult } from '../../src/services/storage/storage-provider.interface.js';
+import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Prompt 09: FileStorageService Synchronous Upload & Integrity Verification', () => {
   let countryId: string;
@@ -29,80 +30,92 @@ describe('Prompt 09: FileStorageService Synchronous Upload & Integrity Verificat
     service = new FileStorageService(db, storageProvider, 5 * 1024 * 1024); // 5 MB max for test
 
     // Setup country
-    const existing = await db
-      .select()
-      .from(countries)
-      .where(eq(countries.isoCode, 'KE'))
-      .limit(1);
+    const existing = await withDbRetry(() =>
+      db
+        .select()
+        .from(countries)
+        .where(eq(countries.isoCode, 'KE'))
+        .limit(1),
+    );
 
     if (existing.length > 0) {
       countryId = existing[0].id;
     } else {
-      const [c] = await db
-        .insert(countries)
-        .values({
-          name: 'Kenya',
-          isoCode: 'KE',
-          urlPrefix: 'ke',
-        })
-        .returning();
+      const [c] = await withDbRetry(() =>
+        db
+          .insert(countries)
+          .values({
+            name: 'Kenya',
+            isoCode: 'KE',
+            urlPrefix: 'ke',
+          })
+          .returning(),
+      );
       countryId = c.id;
     }
 
     // Setup resource type
-    const [t] = await db
-      .insert(resourceTypes)
-      .values({
-        code: `FILE_SRV_TEST_${Date.now()}`,
-        name: 'Service Test Type',
-        slug: `srv-test-${Date.now()}`,
-        pillar: 'PAST_PAPERS',
-        sequenceOrder: 1,
-        status: 'ACTIVE',
-      })
-      .returning();
+    const [t] = await withDbRetry(() =>
+      db
+        .insert(resourceTypes)
+        .values({
+          code: `FILE_SRV_TEST_${Date.now()}`,
+          name: 'Service Test Type',
+          slug: `srv-test-${Date.now()}`,
+          pillar: 'PAST_PAPERS',
+          sequenceOrder: 1,
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
     typeId = t.id;
 
     // Setup resource
-    const [r] = await db
-      .insert(resources)
-      .values({
-        countryId,
-        resourceTypeId: typeId,
-        title: 'File Service Integration Test Resource',
-        slug: `file-srv-test-${Date.now()}`,
-        status: 'DRAFT',
-      })
-      .returning();
+    const [r] = await withDbRetry(() =>
+      db
+        .insert(resources)
+        .values({
+          countryId,
+          resourceTypeId: typeId,
+          title: 'File Service Integration Test Resource',
+          slug: `file-srv-test-${Date.now()}`,
+          status: 'DRAFT',
+        })
+        .returning(),
+    );
     resourceId = r.id;
 
     // Setup draft version
-    const [vDraft] = await db
-      .insert(resourceVersions)
-      .values({
-        resourceId,
-        versionNumber: 1,
-        versionLabel: 'v1.0.0',
-        title: 'Draft Resource Version',
-        status: 'DRAFT',
-      })
-      .returning();
+    const [vDraft] = await withDbRetry(() =>
+      db
+        .insert(resourceVersions)
+        .values({
+          resourceId,
+          versionNumber: 1,
+          versionLabel: 'v1.0.0',
+          title: 'Draft Resource Version',
+          status: 'DRAFT',
+        })
+        .returning(),
+    );
     draftVersionId = vDraft.id;
 
     // Setup published version
-    const [vPub] = await db
-      .insert(resourceVersions)
-      .values({
-        resourceId,
-        versionNumber: 2,
-        versionLabel: 'v2.0.0',
-        title: 'Published Resource Version',
-        status: 'PUBLISHED',
-        publishedAt: new Date(),
-      })
-      .returning();
+    const [vPub] = await withDbRetry(() =>
+      db
+        .insert(resourceVersions)
+        .values({
+          resourceId,
+          versionNumber: 2,
+          versionLabel: 'v2.0.0',
+          title: 'Published Resource Version',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        })
+        .returning(),
+    );
     publishedVersionId = vPub.id;
-  });
+  }, 60000);
 
   afterAll(async () => {
     for (const id of createdFileIds) {
