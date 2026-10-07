@@ -27,12 +27,25 @@ export function getDatabasePool(): pg.Pool {
     poolInstance = new Pool({
       connectionString: env.DATABASE_URL,
       min: isTest ? 0 : env.DATABASE_POOL_MIN,
-      max: isTest ? 3 : env.DATABASE_POOL_MAX,
-      idleTimeoutMillis: isTest ? 5000 : 15000,
+      max: isTest ? 10 : env.DATABASE_POOL_MAX,
+      idleTimeoutMillis: isTest ? 30000 : 15000,
       connectionTimeoutMillis: 45000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
       allowExitOnIdle: true,
+    });
+
+    // Attach error handler to individual clients to prevent unhandled ECONNRESET exceptions
+    poolInstance.on('connect', (client) => {
+      client.on('error', (err: Error) => {
+        const isExpected =
+          err.message.includes('Connection terminated unexpectedly') ||
+          (err as { code?: string }).code === 'ECONNRESET' ||
+          err.message.includes('socket hang up');
+        if (!isExpected) {
+          console.error('Database client error:', err.message);
+        }
+      });
     });
 
     // Catch errors on idle clients to prevent unhandled process crashes

@@ -114,15 +114,18 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
   describe('3. GLOBAL vs Scoped Permissions Semantics (Prompt 14 Correction 1)', () => {
     it('demonstrates scope isolation and hierarchical global satisfaction', async () => {
       const email = `test-scoped-${Date.now()}@example.com`;
-      const regResult = await withDbRetry(() =>
-        authService.register({
-          email,
-          password: 'SecurePassword123!',
-          displayName: 'School Reviewer',
-        }),
+      const [u] = await withDbRetry(() =>
+        db
+          .insert(users)
+          .values({
+            email,
+            displayName: 'School Reviewer',
+            status: 'ACTIVE',
+          })
+          .returning(),
       );
 
-      const userId = regResult.user.id;
+      const userId = u.id;
       createdUserIds.push(userId);
 
       const schoolAId = '00000000-0000-0000-0000-000000000001';
@@ -188,15 +191,18 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
   describe('4. Role Revocation and Expiration', () => {
     it('revokes a role and strips associated permissions immediately', async () => {
       const email = `test-revoke-${Date.now()}@example.com`;
-      const regResult = await withDbRetry(() =>
-        authService.register({
-          email,
-          password: 'SecurePassword123!',
-          displayName: 'Revocable User',
-        }),
+      const [u] = await withDbRetry(() =>
+        db
+          .insert(users)
+          .values({
+            email,
+            displayName: 'Revocable User',
+            status: 'ACTIVE',
+          })
+          .returning(),
       );
 
-      const userId = regResult.user.id;
+      const userId = u.id;
       createdUserIds.push(userId);
 
       const assignment = await withDbRetry(() =>
@@ -226,15 +232,18 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
 
     it('denies permissions when role assignment ends_at is in the past', async () => {
       const email = `test-expire-${Date.now()}@example.com`;
-      const regResult = await withDbRetry(() =>
-        authService.register({
-          email,
-          password: 'SecurePassword123!',
-          displayName: 'Expired Role User',
-        }),
+      const [u] = await withDbRetry(() =>
+        db
+          .insert(users)
+          .values({
+            email,
+            displayName: 'Expired Role User',
+            status: 'ACTIVE',
+          })
+          .returning(),
       );
 
-      const userId = regResult.user.id;
+      const userId = u.id;
       createdUserIds.push(userId);
 
       // Assign role that already expired 1 hour ago
