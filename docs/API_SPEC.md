@@ -869,7 +869,57 @@ Public:
 ```text
 GET /api/v1/bundles
 GET /api/v1/bundles/:slug
+GET /api/v1/products
+GET /api/v1/products/:id
 ```
+
+Authenticated Commerce:
+
+```text
+POST /api/v1/checkout
+GET  /api/v1/orders/:id
+GET  /api/v1/me/orders
+GET  /api/v1/me/entitlements
+POST /api/v1/payments
+GET  /api/v1/payments/:id
+POST /api/v1/payments/:id/simulate-success
+```
+
+Provider-Facing Callbacks (Prompt 19 — M-Pesa Daraja):
+
+```text
+POST /api/v1/payments/mpesa/callback
+POST /api/v1/mpesa/callback
+```
+
+### 29.1. M-Pesa Payment Provider & STK Push (Prompt 19)
+
+#### 1. STK Push Payment Initiation (`POST /api/v1/payments`)
+* Requires active authenticated user session.
+* Request Body:
+  * `orderId` (UUID, required): The target order owned by the authenticated user.
+  * `providerCode` (string, default: `SIMULATION`): Set to `MPESA` for Safaricom Daraja STK Push.
+  * `phoneNumber` (string, required when `providerCode = 'MPESA'`): Customer's Kenyan mobile number. Accepted formats: `07XXXXXXXX`, `01XXXXXXXX`, `+2547XXXXXXXX`, `+2541XXXXXXXX`, `2547XXXXXXXX`, `2541XXXXXXXX`, or formatted variations. Normalized server-side to `2547XXXXXXXX` or `2541XXXXXXXX` (12 digits).
+* Security & Invariants:
+  * Amount is strictly derived from server-authoritative order total (`order.total_minor` / 100). The client cannot alter the payable amount.
+  * Transition order status to `PROCESSING`.
+  * Creates payment record with `status = 'PENDING'`, `provider_code = 'MPESA'`, `provider_reference = CheckoutRequestID`.
+  * Returns safe payment DTO and order DTO. Upstream credentials, consumer keys, passkeys, and authorization tokens are never exposed.
+
+#### 2. Daraja Callback Handling (`POST /api/v1/payments/mpesa/callback` & `/api/v1/mpesa/callback`)
+* Unauthenticated provider-facing webhook.
+* Idempotency & Race Safety:
+  * Correlates callback by `provider_reference` (`CheckoutRequestID`) with row-level locking (`FOR UPDATE`) within a database transaction.
+  * Duplicate or retry callbacks for already `COMPLETED` payments immediately return Daraja acknowledgement without creating duplicate entitlements, orders, or mutations.
+* Server-Authoritative Validation:
+  * Strict amount verification: Callback `Amount` in KES converted to minor units must exactly match `payment.amount_minor` and `order.total_minor`.
+  * Underpayment or overpayment transitions payment to `FAILED` with no entitlements granted.
+  * User cancellation (`ResultCode = 1032`) transitions payment and order to `CANCELLED`.
+  * Provider failure (`ResultCode != 0`) transitions payment and order to `FAILED`.
+  * Successful payment confirmation (`ResultCode = 0` and verified amount) transitions payment and order to `COMPLETED` and provisionally grants entitlements for all `RESOURCE` items in the order.
+* Safe Acknowledgement:
+  * Unknown callbacks acknowledge with `{ "ResultCode": 0, "ResultDesc": "Accepted" }` without leaking record existence.
+  * Malformed payloads return `400 INVALID_CALLBACK_PAYLOAD`.
 
 Commerce relationships:
 
@@ -878,6 +928,8 @@ Product
 → Offer
 → Order
 → Payment
+→ MpesaPaymentProvider (STK Push)
+→ Callback Confirmation
 → Entitlement
 ```
 

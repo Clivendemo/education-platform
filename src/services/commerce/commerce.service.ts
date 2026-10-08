@@ -12,6 +12,8 @@ import {
 } from '../../db/schema/commerce.js';
 import type { PaymentProvider } from './payment-provider.interface.js';
 import { SimulationPaymentProvider } from './simulation-payment-provider.js';
+import { MpesaPaymentProvider } from './mpesa/mpesa-payment-provider.js';
+import { env } from '../../config/env.js';
 import {
   type ProductDto,
   type OfferDto,
@@ -29,20 +31,84 @@ import {
   UnauthorizedCommerceAccessError,
   InvalidStateTransitionError,
   PaymentAmountMismatchError,
+  PaymentProviderNotFoundError,
 } from './commerce.interface.js';
 
 export interface CommerceServiceOptions {
   db?: NodePgDatabase<typeof schemas>;
   paymentProvider?: PaymentProvider;
+  paymentProviders?: Map<string, PaymentProvider> | Record<string, PaymentProvider>;
 }
 
 export class CommerceService {
   private readonly db: NodePgDatabase<typeof schemas>;
   private readonly paymentProvider: PaymentProvider;
+  private readonly providers: Map<string, PaymentProvider> = new Map();
 
   constructor(options: CommerceServiceOptions = {}) {
     this.db = options.db ?? defaultDb;
     this.paymentProvider = options.paymentProvider ?? new SimulationPaymentProvider();
+
+    // Register primary simulation provider
+    this.registerProvider(this.paymentProvider);
+
+    // Register additional providers if provided in options
+    if (options.paymentProviders) {
+      if (options.paymentProviders instanceof Map) {
+        for (const [code, p] of options.paymentProviders.entries()) {
+          this.providers.set(code.toUpperCase(), p);
+        }
+      } else {
+        for (const [code, p] of Object.entries(options.paymentProviders)) {
+          this.providers.set(code.toUpperCase(), p);
+        }
+      }
+    }
+
+    // Auto-register M-Pesa provider if configured and not overridden
+    if (
+      !this.providers.has('MPESA') &&
+      env.MPESA_CONSUMER_KEY &&
+      env.MPESA_CONSUMER_SECRET
+    ) {
+      try {
+        this.registerProvider(
+          new MpesaPaymentProvider({
+            config: {
+              environment: env.MPESA_ENVIRONMENT,
+              consumerKey: env.MPESA_CONSUMER_KEY,
+              consumerSecret: env.MPESA_CONSUMER_SECRET,
+              shortcode: env.MPESA_SHORTCODE || '174379',
+              passkey: env.MPESA_PASSKEY || '',
+              callbackUrl: env.MPESA_CALLBACK_URL || '',
+            },
+          }),
+        );
+      } catch {
+        // Ignored if configuration is incomplete
+      }
+    }
+  }
+
+  /**
+   * Registers a payment provider.
+   */
+  registerProvider(provider: PaymentProvider): void {
+    this.providers.set(provider.providerCode.toUpperCase(), provider);
+  }
+
+  /**
+   * Retrieves a registered payment provider by its code.
+   */
+  getPaymentProvider(providerCode: string): PaymentProvider {
+    const code = providerCode.toUpperCase();
+    const provider = this.providers.get(code);
+    if (!provider) {
+      throw new PaymentProviderNotFoundError(
+        `Payment provider "${providerCode}" is not registered or supported`,
+      );
+    }
+    return provider;
   }
 
   /**
@@ -365,6 +431,7 @@ export class CommerceService {
     userId: string,
     orderId: string,
     providerCode = 'SIMULATION',
+    metadata?: Record<string, unknown>,
   ): Promise<{ payment: PaymentDto; order: OrderDto }> {
     const [ord] = await this.db
       .select()
@@ -388,12 +455,15 @@ export class CommerceService {
       throw new InvalidStateTransitionError('Cannot pay for cancelled or failed order');
     }
 
+    const provider = this.getPaymentProvider(providerCode);
+
     // Call payment provider to initiate
-    const initResult = await this.paymentProvider.createPayment({
+    const initResult = await provider.createPayment({
       orderId: ord.id,
       amountMinor: ord.totalMinor,
       currencyCode: 'KES',
       userId,
+      metadata,
     });
 
     // Update order status to PROCESSING
@@ -410,7 +480,7 @@ export class CommerceService {
       .insert(payments)
       .values({
         orderId: ord.id,
-        providerCode: initResult.providerCode || providerCode,
+        providerCode: initResult.providerCode || providerCode.toUpperCase(),
         providerReference: initResult.providerReference,
         providerTransactionId: initResult.providerTransactionId ?? null,
         amountMinor: ord.totalMinor,
@@ -563,6 +633,244 @@ export class CommerceService {
       order: orderDto,
       entitlementsGranted,
     };
+  }
+
+  /**
+   * Handles incoming M-Pesa / Daraja payment callback idempotently and race-safely.
+   * Uses row-level locking on the payment record within a database transaction.
+   * Only provisions entitlements on verified successful payment.
+   * Returns a standard Daraja acknowledgement response.
+   */
+  async handleMpesaCallback(payload: unknown): Promise<{
+    ack: { ResultCode: number; ResultDesc: string };
+    result?: { paymentId: string; status: string; entitlementsGranted: number };
+  }> {
+    const mpesaProvider = this.getPaymentProvider('MPESA') as MpesaPaymentProvider;
+    const callback = mpesaProvider.parseCallback(payload);
+
+    return await this.db.transaction(async (tx) => {
+      // 1. Locate payment row with row-level lock
+      const [paymentRecord] = await tx
+        .select()
+        .from(payments)
+        .where(
+          and(
+            eq(payments.providerCode, 'MPESA'),
+            eq(payments.providerReference, callback.checkoutRequestId),
+          ),
+        )
+        .for('update')
+        .limit(1);
+
+      // Unknown payment: return standard Daraja acknowledgement without leaking record existence
+      if (!paymentRecord) {
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+        };
+      }
+
+      // 2. Race-safe idempotency: if already COMPLETED, acknowledge without re-granting entitlements
+      if (paymentRecord.status === 'COMPLETED') {
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+          result: {
+            paymentId: paymentRecord.id,
+            status: 'COMPLETED',
+            entitlementsGranted: 0,
+          },
+        };
+      }
+
+      // If already in a terminal state (CANCELLED or FAILED), acknowledge idempotently
+      if (paymentRecord.status === 'CANCELLED' || paymentRecord.status === 'FAILED') {
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+          result: {
+            paymentId: paymentRecord.id,
+            status: paymentRecord.status,
+            entitlementsGranted: 0,
+          },
+        };
+      }
+
+      const [ord] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, paymentRecord.orderId))
+        .limit(1);
+
+      if (!ord) {
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+        };
+      }
+
+      const now = new Date();
+
+      // 3. User cancelled STK Push
+      if (callback.isCancelled) {
+        await tx
+          .update(payments)
+          .set({
+            status: 'CANCELLED',
+            failedAt: now,
+            failureReason: callback.resultDesc || 'M-Pesa transaction cancelled by user',
+            providerPayload: callback.rawPayload,
+            updatedAt: now,
+          })
+          .where(eq(payments.id, paymentRecord.id));
+
+        await tx
+          .update(orders)
+          .set({
+            status: 'CANCELLED',
+            updatedAt: now,
+          })
+          .where(eq(orders.id, ord.id));
+
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+          result: {
+            paymentId: paymentRecord.id,
+            status: 'CANCELLED',
+            entitlementsGranted: 0,
+          },
+        };
+      }
+
+      // 4. Other failed transaction
+      if (!callback.isSuccessful) {
+        await tx
+          .update(payments)
+          .set({
+            status: 'FAILED',
+            failedAt: now,
+            failureReason: callback.resultDesc || 'M-Pesa transaction failed',
+            providerPayload: callback.rawPayload,
+            updatedAt: now,
+          })
+          .where(eq(payments.id, paymentRecord.id));
+
+        await tx
+          .update(orders)
+          .set({
+            status: 'FAILED',
+            updatedAt: now,
+          })
+          .where(eq(orders.id, ord.id));
+
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+          result: {
+            paymentId: paymentRecord.id,
+            status: 'FAILED',
+            entitlementsGranted: 0,
+          },
+        };
+      }
+
+      // 5. Successful transaction confirmation: STRICT amount & currency validation
+      const callbackAmountKes = callback.amountKes;
+      const callbackMinor =
+        typeof callbackAmountKes === 'number'
+          ? BigInt(Math.round(callbackAmountKes * 100))
+          : 0n;
+
+      if (
+        callbackMinor !== paymentRecord.amountMinor ||
+        callbackMinor !== ord.totalMinor ||
+        paymentRecord.currencyCode !== 'KES' ||
+        ord.currencyCode !== 'KES'
+      ) {
+        await tx
+          .update(payments)
+          .set({
+            status: 'FAILED',
+            failedAt: now,
+            failureReason: `Payment amount or currency mismatch: callback=${callbackMinor}, payment=${paymentRecord.amountMinor}, order=${ord.totalMinor}`,
+            providerPayload: callback.rawPayload,
+            updatedAt: now,
+          })
+          .where(eq(payments.id, paymentRecord.id));
+
+        return {
+          ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+          result: {
+            paymentId: paymentRecord.id,
+            status: 'FAILED',
+            entitlementsGranted: 0,
+          },
+        };
+      }
+
+      // 6. Transition payment to COMPLETED
+      await tx
+        .update(payments)
+        .set({
+          status: 'COMPLETED',
+          completedAt: now,
+          providerTransactionId: callback.mpesaReceiptNumber || paymentRecord.providerTransactionId,
+          providerPayload: callback.rawPayload,
+          updatedAt: now,
+        })
+        .where(eq(payments.id, paymentRecord.id));
+
+      // 7. Transition order to COMPLETED
+      await tx
+        .update(orders)
+        .set({
+          status: 'COMPLETED',
+          updatedAt: now,
+        })
+        .where(eq(orders.id, ord.id));
+
+      // 8. Provision entitlements for RESOURCE products
+      const items = await tx
+        .select({
+          item: orderItems,
+          product: products,
+        })
+        .from(orderItems)
+        .innerJoin(products, eq(orderItems.productId, products.id))
+        .where(eq(orderItems.orderId, ord.id));
+
+      let entitlementsGranted = 0;
+      for (const { product } of items) {
+        if (product.productType === 'RESOURCE' && product.resourceId) {
+          const [existingActive] = await tx
+            .select()
+            .from(entitlements)
+            .where(
+              and(
+                eq(entitlements.userId, ord.userId),
+                eq(entitlements.resourceId, product.resourceId),
+                eq(entitlements.status, 'ACTIVE'),
+              ),
+            )
+            .limit(1);
+
+          if (!existingActive) {
+            await tx.insert(entitlements).values({
+              userId: ord.userId,
+              resourceId: product.resourceId,
+              sourceOrderId: ord.id,
+              status: 'ACTIVE',
+              startsAt: now,
+            });
+            entitlementsGranted++;
+          }
+        }
+      }
+
+      return {
+        ack: { ResultCode: 0, ResultDesc: 'Accepted' },
+        result: {
+          paymentId: paymentRecord.id,
+          status: 'COMPLETED',
+          entitlementsGranted,
+        },
+      };
+    });
   }
 
   /**

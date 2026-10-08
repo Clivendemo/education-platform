@@ -1562,8 +1562,15 @@ created_at TIMESTAMPTZ
 updated_at TIMESTAMPTZ
 ```
 
-Note (Prompt 18 Correction 4):
-`payment_provider_id` was removed from the foundation schema. The payment provider is identified by `provider_code VARCHAR NOT NULL`. Unique constraint `(provider_code, provider_reference)` enforces provider reference idempotency.
+Note (Prompt 18 Correction 4 & Prompt 19 M-Pesa):
+`payment_provider_id` was removed from the foundation schema. The payment provider is identified by `provider_code VARCHAR NOT NULL` (e.g. `MPESA` or `SIMULATION`). Unique constraint `(provider_code, provider_reference)` enforces provider reference idempotency.
+
+M-Pesa / Daraja Mapping (Prompt 19):
+* `provider_code`: `'MPESA'`
+* `provider_reference`: Stores Safaricom's `CheckoutRequestID` (e.g. `ws_CO_...`), unique per STK Push request.
+* `provider_transaction_id`: Stores Safaricom's `MpesaReceiptNumber` (e.g. `NLJ7RT61SV`) upon confirmed callback.
+* `provider_payload`: Stores `MerchantRequestID`, normalized phone number, and raw callback metadata items for auditability.
+* Row-level locking (`FOR UPDATE`) on `payments` table guarantees race-safe callback processing and idempotent entitlement provisioning.
 
 Payment history is retained.
 
