@@ -200,3 +200,32 @@ export class DuplicatePaymentReferenceError extends CommerceError {
     this.name = 'DuplicatePaymentReferenceError';
   }
 }
+
+export class MpesaPhoneValidationError extends CommerceError {
+  constructor(message = 'Invalid Kenyan M-Pesa phone number. Format must be a valid Kenyan mobile number (e.g. 07XXXXXXXX, 01XXXXXXXX, or 254XXXXXXXXX)') {
+    super(message, 'MPESA_PHONE_INVALID', 400);
+    this.name = 'MpesaPhoneValidationError';
+  }
+}
+
+export class MpesaProviderError extends CommerceError {
+  constructor(message = 'M-Pesa payment provider communication error') {
+    super(message, 'MPESA_PROVIDER_ERROR', 502);
+    this.name = 'MpesaProviderError';
+  }
+}
+
+export class InvalidCallbackError extends CommerceError {
+  constructor(message = 'Invalid payment callback structure') {
+    super(message, 'INVALID_CALLBACK_PAYLOAD', 400);
+    this.name = 'InvalidCallbackError';
+  }
+}
+
+export class PaymentProviderNotFoundError extends CommerceError {
+  constructor(message = 'Payment provider not found or not configured') {
+    super(message, 'PAYMENT_PROVIDER_NOT_FOUND', 400);
+    this.name = 'PaymentProviderNotFoundError';
+  }
+}
+

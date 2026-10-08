@@ -39,6 +39,15 @@ export const envSchema = z
 
     // Authentication / Session Cookie configuration (Prompt 13)
     SESSION_COOKIE_NAME: z.string().min(1).default('session_token'),
+
+    // M-Pesa / Daraja Payment Gateway configuration (Prompt 19)
+    MPESA_ENABLED: z.coerce.boolean().default(false),
+    MPESA_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
+    MPESA_CONSUMER_KEY: z.string().optional(),
+    MPESA_CONSUMER_SECRET: z.string().optional(),
+    MPESA_SHORTCODE: z.string().optional(),
+    MPESA_PASSKEY: z.string().optional(),
+    MPESA_CALLBACK_URL: z.string().url().optional(),
   })
   .superRefine((data, ctx) => {
     // Cross-field pool range validation
@@ -48,6 +57,45 @@ export const envSchema = z
         message: 'DATABASE_POOL_MIN must be less than or equal to DATABASE_POOL_MAX.',
         path: ['DATABASE_POOL_MIN'],
       });
+    }
+
+    // M-Pesa configuration validation when enabled
+    if (data.MPESA_ENABLED) {
+      if (!data.MPESA_CONSUMER_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'MPESA_CONSUMER_KEY is required when MPESA_ENABLED is true.',
+          path: ['MPESA_CONSUMER_KEY'],
+        });
+      }
+      if (!data.MPESA_CONSUMER_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'MPESA_CONSUMER_SECRET is required when MPESA_ENABLED is true.',
+          path: ['MPESA_CONSUMER_SECRET'],
+        });
+      }
+      if (!data.MPESA_SHORTCODE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'MPESA_SHORTCODE is required when MPESA_ENABLED is true.',
+          path: ['MPESA_SHORTCODE'],
+        });
+      }
+      if (!data.MPESA_PASSKEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'MPESA_PASSKEY is required when MPESA_ENABLED is true.',
+          path: ['MPESA_PASSKEY'],
+        });
+      }
+      if (!data.MPESA_CALLBACK_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'MPESA_CALLBACK_URL is required when MPESA_ENABLED is true.',
+          path: ['MPESA_CALLBACK_URL'],
+        });
+      }
     }
 
     // Production environment requirements

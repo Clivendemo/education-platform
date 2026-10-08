@@ -31,6 +31,7 @@ const CheckoutBodySchema = z.object({
 const InitiatePaymentSchema = z.object({
   orderId: z.string().uuid(),
   providerCode: z.string().max(50).default('SIMULATION'),
+  phoneNumber: z.string().max(50).optional(),
 });
 
 export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
@@ -137,6 +138,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
         user.id,
         body.orderId,
         body.providerCode,
+        body.phoneNumber ? { phoneNumber: body.phoneNumber } : undefined,
       );
       return reply.status(201).send({ data: result });
     },
@@ -175,4 +177,13 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
       return reply.status(200).send({ data: result });
     },
   );
+
+  // 10. POST /payments/mpesa/callback & POST /mpesa/callback — Safaricom Daraja STK Push Callback (Unauthenticated Provider Endpoint)
+  const handleMpesaCallback = async (request: any, reply: any) => {
+    const response = await commerceService.handleMpesaCallback(request.body);
+    return reply.status(200).send(response.ack);
+  };
+
+  fastify.post('/payments/mpesa/callback', handleMpesaCallback);
+  fastify.post('/mpesa/callback', handleMpesaCallback);
 };

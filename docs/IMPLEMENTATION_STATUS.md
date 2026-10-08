@@ -580,22 +580,22 @@ ANONYMOUS_SESSION
 
 # 24. M-Pesa
 
-| Component                     | Status      | Notes |
-| ----------------------------- | ----------- | ----- |
-| PaymentProvider interface     | NOT_STARTED |       |
-| M-Pesa adapter                | NOT_STARTED |       |
-| STK initiation                | NOT_STARTED |       |
-| Callback endpoint             | NOT_STARTED |       |
-| Callback validation           | NOT_STARTED |       |
-| Transaction verification      | NOT_STARTED |       |
-| Duplicate callback protection | NOT_STARTED |       |
-| Replay protection             | NOT_STARTED |       |
-| Amount validation             | NOT_STARTED |       |
-| Currency validation           | NOT_STARTED |       |
-| Entitlement creation          | NOT_STARTED |       |
-| Reconciliation                | NOT_STARTED |       |
-| Failure handling              | NOT_STARTED |       |
-| M-Pesa tests                  | NOT_STARTED |       |
+| Component                     | Status   | Notes |
+| ----------------------------- | -------- | ----- |
+| PaymentProvider interface     | VERIFIED | Existing provider-neutral interface preserved; `MpesaPaymentProvider` implements `PaymentProvider` alongside `SimulationPaymentProvider` |
+| M-Pesa adapter                | VERIFIED | `MpesaPaymentProvider` with `DarajaClient`, OAuth client credential caching, sandbox/production selection, timestamping & password hashing |
+| STK initiation                | VERIFIED | `POST /api/v1/payments` initiates STK Push with normalized phone number and server-authoritative order amount |
+| Callback endpoint             | VERIFIED | Unauthenticated provider-facing endpoints `POST /api/v1/payments/mpesa/callback` and `POST /api/v1/mpesa/callback` |
+| Callback validation           | VERIFIED | Strict Daraja payload parsing, validation of `CheckoutRequestID`, `ResultCode`, and `CallbackMetadata` items |
+| Transaction verification      | VERIFIED | Correlates callback with internal payment record via `CheckoutRequestID` using database row-level locking (`FOR UPDATE`) |
+| Duplicate callback protection | VERIFIED | Race-safe idempotency within transactional boundary; duplicate callbacks return Daraja acknowledgement with zero duplicate mutations |
+| Replay protection             | VERIFIED | Atomic status verification prevents replay attacks or out-of-order state transitions |
+| Amount validation             | VERIFIED | Authoritative callback KES amount verified against `payment.amount_minor` and `order.total_minor`; under/overpayments fail |
+| Currency validation           | VERIFIED | Strict KES currency verification on payment and order records |
+| Entitlement creation          | VERIFIED | Transactional provisioning of `commerce.entitlements` records for `RESOURCE` products only upon confirmed successful payment |
+| Reconciliation                | VERIFIED | Complete state machine reconciliation across `payments` and `orders` (`PENDING` -> `PROCESSING` -> `COMPLETED`/`CANCELLED`/`FAILED`) |
+| Failure handling              | VERIFIED | Safe handling of user cancellations (1032), upstream failures, network errors, amount mismatches, and unknown references |
+| M-Pesa tests                  | VERIFIED | 38 automated tests across unit (phone, client, provider), DB service integration, and HTTP route integration |
 
 ---
 
