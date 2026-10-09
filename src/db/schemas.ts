@@ -8,3 +8,4 @@ export * from './schema/files.js';
 export * from './schema/identity.js';
 export * from './schema/calendar.js';
 export * from './schema/commerce.js';
+export * from './schema/community.js';

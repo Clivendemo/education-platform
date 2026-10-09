@@ -16,6 +16,7 @@ import { libraryRoutes } from './routes/api/v1/library.js';
 import { downloadRoutes } from './routes/api/v1/downloads.js';
 import { calendarRoutes } from './routes/api/v1/calendar.js';
 import { commerceRoutes } from './routes/api/v1/commerce.js';
+import { contributorRoutes } from './routes/api/v1/contributors.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -30,6 +31,7 @@ import type { LibraryService } from './services/library.service.js';
 import type { DownloadService } from './services/download.service.js';
 import type { CalendarService } from './services/calendar/calendar.service.js';
 import type { CommerceService } from './services/commerce/commerce.service.js';
+import type { ContributorService } from './services/contributor.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -52,6 +54,7 @@ export interface AppOptions extends FastifyServerOptions {
     downloadService?: DownloadService;
     calendarService?: CalendarService;
     commerceService?: CommerceService;
+    contributorService?: ContributorService;
   };
 }
 
@@ -186,6 +189,12 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     prefix: '/api/v1',
     commerceService: services?.commerceService,
     authService: services?.authService,
+  });
+  app.register(contributorRoutes, {
+    prefix: '/api/v1',
+    contributorService: services?.contributorService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
 
   // Support unversioned /api/payments/mpesa/callback & /api/mpesa/callback

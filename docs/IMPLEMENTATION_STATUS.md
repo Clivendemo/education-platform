@@ -618,17 +618,17 @@ ANONYMOUS_SESSION
 
 | Component                | Status      | Notes |
 | ------------------------ | ----------- | ----- |
-| Contributor entity       | NOT_STARTED |       |
-| Contributor applications | NOT_STARTED |       |
-| Contributor approval     | NOT_STARTED |       |
-| Contributor profiles     | NOT_STARTED |       |
-| Contributor workspace    | NOT_STARTED |       |
-| Contributor submissions  | NOT_STARTED |       |
-| Submission files         | NOT_STARTED |       |
-| Submission processing    | NOT_STARTED |       |
-| Contributor verification | NOT_STARTED |       |
-| Admin review             | NOT_STARTED |       |
-| Contributor tests        | NOT_STARTED |       |
+| Contributor entity       | VERIFIED    | community.contributors decoupled profile linked to identity.users (Prompt 21) |
+| Contributor applications | VERIFIED    | community.contributor_applications with partial unique index blocking duplicate active applications (Prompt 21) |
+| Contributor approval     | VERIFIED    | Atomic transaction approving application, creating profile, and assigning RBAC role (Prompt 21) |
+| Contributor profiles     | VERIFIED    | Public discovery with published resource counts, private workspace projection, collision-safe slugs (Prompt 21) |
+| Contributor workspace    | VERIFIED    | Authenticated /me/contributor endpoints, lifecycle gating on profile edits and submissions (Prompt 21) |
+| Contributor submissions  | VERIFIED    | community.contributor_submissions ingestion pathway, KES pricing consistency, draft lock on submission (Prompt 21) |
+| Submission files         | NOT_STARTED | Deferred to file ingestion roadmap item |
+| Submission processing    | NOT_STARTED | Formal automated processing deferred per Prompt 21 plan boundary |
+| Contributor verification | VERIFIED    | Contributor verification_status and lifecycle suspension rules implemented and verified (Prompt 21) |
+| Admin review             | VERIFIED    | Administrative endpoints for application review, submission review, and status management (Prompt 21) |
+| Contributor tests        | VERIFIED    | 52 dedicated tests across unit, route integration, and database constraints (Prompt 21) |
 
 ---
 
@@ -823,7 +823,7 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 | User management             | NOT_STARTED |       |
 | Role management             | NOT_STARTED |       |
 | Verification management     | NOT_STARTED |       |
-| Contributor management      | NOT_STARTED |       |
+| Contributor management      | VERIFIED    | Prompt 21 administrative status and review workflows |
 | Education update management | NOT_STARTED |       |
 | Calendar management         | NOT_STARTED |       |
 | Request management          | NOT_STARTED |       |
@@ -979,7 +979,7 @@ WCAG 2.2 AA
 | Commerce tests             | NOT_STARTED |
 | M-Pesa tests               | NOT_STARTED |
 | Calendar tests             | NOT_STARTED |
-| Contributor tests          | NOT_STARTED |
+| Contributor tests          | VERIFIED    | Prompt 21; 52 service, route, and DB integration tests passing |
 | Analytics tests            | NOT_STARTED |
 | Governance tests           | NOT_STARTED |
 | SEO tests                  | NOT_STARTED |
