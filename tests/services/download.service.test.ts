@@ -449,4 +449,309 @@ describe('DownloadService Unit Tests', () => {
       expect(resultObj.file.storageProvider).toBeUndefined();
     });
   });
+
+  describe('Prompt 20: Premium Download Authorization & Entitlement Verification', () => {
+    const validUserId = '44444444-4444-4444-a444-444444444444';
+
+    it('rejects unauthenticated request for PREMIUM resource with PremiumResourceLockedError (403)', async () => {
+      const selectChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+      mockDb.select.mockReturnValue(selectChain);
+
+      const error = await service
+        .generateDownloadUrl({ resourceId: validResourceId })
+        .catch((err) => err);
+
+      expect(error).toBeInstanceOf(PremiumResourceLockedError);
+      expect(error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+      expect(error.statusCode).toBe(403);
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('rejects authenticated user with no active entitlement with PremiumResourceLockedError (403)', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      const entitlementChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([]),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(resourceChain)
+        .mockReturnValueOnce(entitlementChain);
+
+      const error = await service
+        .generateDownloadUrl({
+          resourceId: validResourceId,
+          userId: validUserId,
+        })
+        .catch((err) => err);
+
+      expect(error).toBeInstanceOf(PremiumResourceLockedError);
+      expect(error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+      expect(error.statusCode).toBe(403);
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('rejects authenticated user when entitlement query returns empty (expired/revoked/other resource)', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      const entitlementChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([]),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(resourceChain)
+        .mockReturnValueOnce(entitlementChain);
+
+      const error = await service
+        .generateDownloadUrl({
+          resourceId: validResourceId,
+          userId: validUserId,
+        })
+        .catch((err) => err);
+
+      expect(error).toBeInstanceOf(PremiumResourceLockedError);
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('allows download when authenticated user has valid active entitlement for published PREMIUM resource', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      const entitlementChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 'entitlement-uuid-1' }]),
+      };
+
+      const versionChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validVersionId,
+            status: 'PUBLISHED',
+          },
+        ]),
+      };
+
+      const fileItem = {
+        id: validFileId,
+        resourceVersionId: validVersionId,
+        objectKey: 'resources/prem/worksheet.pdf',
+        originalFilename: 'premium-worksheet.pdf',
+        fileExtension: 'pdf',
+        fileType: 'MAIN_DOCUMENT',
+        mimeType: 'application/pdf',
+        fileSizeBytes: 2048,
+        checksumSha256: 'b'.repeat(64),
+        status: 'AVAILABLE',
+      };
+
+      const filesChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([fileItem]),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(resourceChain)
+        .mockReturnValueOnce(entitlementChain)
+        .mockReturnValueOnce(versionChain)
+        .mockReturnValueOnce(filesChain);
+
+      const result = await service.generateDownloadUrl({
+        resourceId: validResourceId,
+        userId: validUserId,
+      });
+
+      expect(mockStorageProvider.getSignedDownloadUrl).toHaveBeenCalledWith(
+        'resources/prem/worksheet.pdf',
+        expect.objectContaining({
+          expiresInSeconds: 300,
+          responseContentType: 'application/pdf',
+        }),
+      );
+
+      expect(result.downloadUrl).toBe(
+        'https://mock-storage.local/signed-download-token',
+      );
+      expect(result.expiresInSeconds).toBe(300);
+      expect(result.file.originalFilename).toBe('premium-worksheet.pdf');
+    });
+
+    it('blocks download of DRAFT premium resource even if user holds entitlement (404 RESOURCE_NOT_FOUND)', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'DRAFT',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      mockDb.select.mockReturnValueOnce(resourceChain);
+
+      await expect(
+        service.generateDownloadUrl({
+          resourceId: validResourceId,
+          userId: validUserId,
+        }),
+      ).rejects.toThrow(ResourceNotFoundError);
+
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('blocks download when active published version is missing even with valid entitlement (404)', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      const entitlementChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 'entitlement-uuid-1' }]),
+      };
+
+      const versionChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([]),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(resourceChain)
+        .mockReturnValueOnce(entitlementChain)
+        .mockReturnValueOnce(versionChain);
+
+      await expect(
+        service.generateDownloadUrl({
+          resourceId: validResourceId,
+          userId: validUserId,
+        }),
+      ).rejects.toThrow(ResourceNotFoundError);
+
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('blocks download of QUARANTINED file of PREMIUM resource even with active entitlement (400)', async () => {
+      const resourceChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validResourceId,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          },
+        ]),
+      };
+
+      const entitlementChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 'entitlement-uuid-1' }]),
+      };
+
+      const versionChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: validVersionId,
+            status: 'PUBLISHED',
+          },
+        ]),
+      };
+
+      const quarantinedFile = {
+        id: validFileId,
+        resourceVersionId: validVersionId,
+        objectKey: 'resources/prem/quarantined.pdf',
+        originalFilename: 'quarantined.pdf',
+        fileExtension: 'pdf',
+        fileType: 'MAIN_DOCUMENT',
+        mimeType: 'application/pdf',
+        fileSizeBytes: 2048,
+        checksumSha256: 'c'.repeat(64),
+        status: 'QUARANTINED',
+      };
+
+      const fileChain = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([quarantinedFile]),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(resourceChain)
+        .mockReturnValueOnce(entitlementChain)
+        .mockReturnValueOnce(versionChain)
+        .mockReturnValueOnce(fileChain);
+
+      await expect(
+        service.generateDownloadUrl({
+          resourceId: validResourceId,
+          fileId: validFileId,
+          userId: validUserId,
+        }),
+      ).rejects.toThrow(FileNotAvailableError);
+
+      expect(mockStorageProvider.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+  });
 });

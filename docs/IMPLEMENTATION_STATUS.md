@@ -601,16 +601,16 @@ ANONYMOUS_SESSION
 
 # 25. Premium Downloads
 
-| Component                 | Status      | Notes |
-| ------------------------- | ----------- | ----- |
-| Entitlement check         | NOT_STARTED |       |
-| Premium authorization     | NOT_STARTED |       |
-| Protected storage         | NOT_STARTED |       |
-| Signed premium download   | NOT_STARTED |       |
-| Purchase history          | NOT_STARTED |       |
-| My Library premium access | NOT_STARTED |       |
-| Version-aware entitlement | NOT_STARTED |       |
-| Premium E2E test          | NOT_STARTED |       |
+| Component                 | Status   | Notes |
+| ------------------------- | -------- | ----- |
+| Entitlement check         | VERIFIED | Prompt 20; authoritative validation of ownership, status, resource ID, and temporal validity against `commerce.entitlements` |
+| Premium authorization     | VERIFIED | Prompt 20; authenticated endpoint verifies active entitlement; unauthenticated/unentitled access blocked with 403 `PREMIUM_RESOURCE_LOCKED` |
+| Protected storage         | VERIFIED | Prompt 20; zero storage calls on rejection; storage internal identifiers omitted from response |
+| Signed premium download   | VERIFIED | Prompt 20; short-lived presigned GET URLs (300s TTL default); available files only |
+| Purchase history          | VERIFIED | Prompt 18 / Prompt 19; authoritative orders & payments ledger |
+| My Library premium access | VERIFIED | Prompt 15 / Prompt 20; library resources and entitlements integration |
+| Version-aware entitlement | VERIFIED | Prompt 20; entitlement binds to permanent resource; version isolation and publication verified |
+| Premium E2E test          | VERIFIED | Prompt 20; unit tests, DB integration tests, and HTTP route integration tests passing |
 
 ---
 
@@ -1030,10 +1030,10 @@ Every major implementation stage should have a Git checkpoint.
 | RBAC                     | VERIFIED    | Prompt 14 implemented & verified |
 | User library             | VERIFIED    | Prompt 15 implemented & verified |
 | Free downloads           | VERIFIED    | Prompt 16 implemented & verified |
-| Calendar                 | NOT_STARTED |        |
-| Commerce                 | NOT_STARTED |        |
-| M-Pesa                   | NOT_STARTED |        |
-| Premium downloads        | NOT_STARTED |        |
+| Calendar                 | VERIFIED    | Prompt 17 implemented & verified |
+| Commerce                 | VERIFIED    | Prompt 18 implemented & verified |
+| M-Pesa                   | VERIFIED    | Prompt 19 implemented & verified |
+| Premium downloads        | VERIFIED    | Prompt 20 implemented & verified |
 | Contributors             | NOT_STARTED |        |
 | Contributor finance      | NOT_STARTED |        |
 | Education updates        | NOT_STARTED |        |
@@ -1054,6 +1054,37 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-08 — Prompt 20: Premium Downloads & Authoritative Entitlement Verification
+
+Status:
+VERIFIED
+
+Implemented:
+- Extended `DefaultDownloadService` (`src/services/download.service.ts`):
+  * Preserved anonymous downloads for eligible free resources (`qualityLabel !== 'PREMIUM'`).
+  * Enforced authentication requirement for premium resources (`qualityLabel === 'PREMIUM'`).
+  * Implemented server-side authoritative entitlement validation against `commerce.entitlements`:
+    - Ownership (`user_id = userId`)
+    - Resource specificity (`resource_id = resourceId`)
+    - Status (`status = 'ACTIVE'`)
+    - Temporal validity window (`starts_at <= now` AND `(ends_at IS NULL OR ends_at > now)`)
+    - Non-revoked state (`revoked_at IS NULL`)
+  * Pre-storage gating: unauthenticated or unentitled requests immediately reject with HTTP 403 `PREMIUM_RESOURCE_LOCKED` with zero storage provider calls.
+  * Preserved publication invariants: resource status must be `PUBLISHED` and active published version must exist (`404 RESOURCE_NOT_FOUND`).
+  * Preserved file availability check: only files with `status = 'AVAILABLE'` can be downloaded (`400 FILE_NOT_AVAILABLE`).
+  * Preserved deterministic primary file selection when `fileId` is omitted.
+  * Presigned download URLs generated with default 300-second (5 minute) TTL.
+  * Internal storage metadata (object keys, buckets, provider identifiers) strictly omitted from response payloads.
+- Route integration (`src/routes/api/v1/downloads.ts`):
+  * Session token extracted from cookie (`session_token`) via `authService.validateSession` and `request.user?.id`.
+  * Non-blocking anonymous access preserved for free resources; unauthenticated requests for premium resources safely mapped to 403 `PREMIUM_RESOURCE_LOCKED`.
+- Tests:
+  * `tests/services/download.service.test.ts`: Added unit tests covering unauthenticated premium download rejection, unentitled rejection, expired/revoked entitlement rejection, valid active entitlement download, draft resource rejection, and quarantined file rejection.
+  * `tests/db/downloads.integration.test.ts`: Added database integration tests with live PostgreSQL verifying entitlement lifecycle, temporal validity, and publication constraints.
+  * `tests/routes/downloads.integration.test.ts`: Added route integration tests verifying unauthenticated access (403), unentitled access (403), expired entitlement (403), resource-specific isolation (403), valid entitlement download (200 OK), explicit file download (200 OK), and storage credential privacy.
+- Typecheck, Lint & Build:
+  * PASS (zero errors)
 
 ## 2026-10-01 — Prompt 13: Core Authentication & Server-Side Sessions
 
