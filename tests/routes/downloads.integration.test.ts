@@ -9,6 +9,7 @@ import {
   resources,
   resourceVersions,
   resourceFiles,
+  entitlements,
 } from '../../src/db/schemas.js';
 import {
   defaultAuthService,
@@ -40,13 +41,23 @@ describe('Free Downloads HTTP Route Integration Tests', () => {
   let quarantinedFileId: string;
 
   let premiumResourceId: string;
+  let premiumVersionId: string;
+  let premiumFileId: string;
   let draftResourceId: string;
 
   let otherResourceId: string;
   let otherFileId: string;
 
   let authenticatedCookie: string;
+  let entitledUserCookie: string;
+  let entitledUserId: string;
+  let unentitledUserCookie: string;
+  let unentitledUserId: string;
+  let expiredEntitledUserCookie: string;
+  let expiredEntitledUserId: string;
+
   const createdUserIds: string[] = [];
+  const createdEntitlementIds: string[] = [];
 
   beforeAll(async () => {
     // 1. Fetch or create country
@@ -235,16 +246,114 @@ describe('Free Downloads HTTP Route Integration Tests', () => {
     );
     premiumResourceId = premRes.id;
 
+    const [premVer] = await withDbRetry(async () =>
+      db
+        .insert(resourceVersions)
+        .values({
+          resourceId: premiumResourceId,
+          versionNumber: 1,
+          versionLabel: 'v1.0.0',
+          title: 'Premium Version',
+          status: 'DRAFT',
+        })
+        .returning(),
+    );
+    premiumVersionId = premVer.id;
+
+    const [premFile] = await withDbRetry(async () =>
+      db
+        .insert(resourceFiles)
+        .values({
+          resourceVersionId: premiumVersionId,
+          storageProvider: 'CLOUDFLARE_R2',
+          storageBucket: 'route-dl-bucket',
+          objectKey: `resources/${premiumResourceId}/prem-guide-${Date.now()}.pdf`,
+          originalFilename: 'cbc-premium-guide.pdf',
+          fileExtension: 'pdf',
+          fileType: 'MAIN_DOCUMENT',
+          mimeType: 'application/pdf',
+          fileSizeBytes: 2048,
+          checksumSha256: '9'.repeat(64),
+          status: 'AVAILABLE',
+          isPrimary: true,
+          sequenceOrder: 1,
+        })
+        .returning(),
+    );
+    premiumFileId = premFile.id;
+
     await withDbRetry(async () =>
-      db.insert(resourceVersions).values({
-        resourceId: premiumResourceId,
-        versionNumber: 1,
-        versionLabel: 'v1.0.0',
-        title: 'Premium Version',
-        status: 'PUBLISHED',
-        publishedAt: new Date(),
+      db
+        .update(resourceVersions)
+        .set({ status: 'PUBLISHED', publishedAt: new Date() })
+        .where(eq(resourceVersions.id, premiumVersionId)),
+    );
+
+    // Register user WITH entitlement
+    const regEntitled = await withDbRetry(async () =>
+      authService.register({
+        email: `entitled-user-${Date.now()}@example.com`,
+        password: 'Password123!',
+        displayName: 'Entitled Tester',
       }),
     );
+    entitledUserId = regEntitled.user.id;
+    createdUserIds.push(entitledUserId);
+    entitledUserCookie = `${SESSION_COOKIE_NAME}=${regEntitled.sessionToken}`;
+
+    // Register user WITHOUT entitlement
+    const regUnentitled = await withDbRetry(async () =>
+      authService.register({
+        email: `unentitled-user-${Date.now()}@example.com`,
+        password: 'Password123!',
+        displayName: 'Unentitled Tester',
+      }),
+    );
+    unentitledUserId = regUnentitled.user.id;
+    createdUserIds.push(unentitledUserId);
+    unentitledUserCookie = `${SESSION_COOKIE_NAME}=${regUnentitled.sessionToken}`;
+
+    // Register user WITH expired entitlement
+    const regExpired = await withDbRetry(async () =>
+      authService.register({
+        email: `expired-user-${Date.now()}@example.com`,
+        password: 'Password123!',
+        displayName: 'Expired Tester',
+      }),
+    );
+    expiredEntitledUserId = regExpired.user.id;
+    createdUserIds.push(expiredEntitledUserId);
+    expiredEntitledUserCookie = `${SESSION_COOKIE_NAME}=${regExpired.sessionToken}`;
+
+    // Provision active entitlement for entitledUserId on premiumResourceId
+    const [actEnt] = await withDbRetry(async () =>
+      db
+        .insert(entitlements)
+        .values({
+          userId: entitledUserId,
+          resourceId: premiumResourceId,
+          status: 'ACTIVE',
+          startsAt: new Date(Date.now() - 3600 * 1000),
+          endsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        })
+        .returning(),
+    );
+    createdEntitlementIds.push(actEnt.id);
+
+    // Provision expired entitlement for expiredEntitledUserId on premiumResourceId
+    const [expEnt] = await withDbRetry(async () =>
+      db
+        .insert(entitlements)
+        .values({
+          userId: expiredEntitledUserId,
+          resourceId: premiumResourceId,
+          status: 'EXPIRED',
+          startsAt: new Date(Date.now() - 10 * 24 * 3600 * 1000),
+          endsAt: new Date(Date.now() - 24 * 3600 * 1000),
+        })
+        .returning(),
+    );
+    createdEntitlementIds.push(expEnt.id);
 
     // 6. Create DRAFT resource
     const [drRes] = await withDbRetry(async () =>
@@ -323,6 +432,11 @@ describe('Free Downloads HTTP Route Integration Tests', () => {
 
   afterAll(async () => {
     try {
+      if (createdEntitlementIds.length > 0) {
+        await withDbRetry(async () => {
+          await db.delete(entitlements).where(inArray(entitlements.id, createdEntitlementIds));
+        }).catch(() => {});
+      }
       if (createdUserIds.length > 0) {
         await withDbRetry(async () => {
           await db.delete(users).where(inArray(users.id, createdUserIds));
@@ -476,6 +590,132 @@ describe('Free Downloads HTTP Route Integration Tests', () => {
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.body);
       expect(body.error.code).toBe('FILE_NOT_AVAILABLE');
+    });
+  });
+
+  describe('4. Prompt 20: Premium Download Route Authorization', () => {
+    let secondPremiumResourceId: string;
+
+    beforeAll(async () => {
+      // Create a second premium resource that entitledUser does NOT own
+      const [p2] = await withDbRetry(async () =>
+        db
+          .insert(resources)
+          .values({
+            countryId: testCountryId,
+            resourceTypeId: testTypeId,
+            title: `Second Premium Resource ${Date.now()}`,
+            slug: `second-prem-${Date.now()}`,
+            status: 'PUBLISHED',
+            qualityLabel: 'PREMIUM',
+          })
+          .returning(),
+      );
+      secondPremiumResourceId = p2.id;
+
+      await withDbRetry(async () =>
+        db.insert(resourceVersions).values({
+          resourceId: secondPremiumResourceId,
+          versionNumber: 1,
+          versionLabel: 'v1.0.0',
+          title: 'V1',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        }),
+      );
+    });
+
+    it('blocks unauthenticated user from downloading PREMIUM resource (403 PREMIUM_RESOURCE_LOCKED)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${premiumResourceId}/download`,
+      });
+
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks authenticated user without entitlement from downloading PREMIUM resource (403)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${premiumResourceId}/download`,
+        headers: {
+          cookie: unentitledUserCookie,
+        },
+      });
+
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks authenticated user with EXPIRED entitlement from downloading PREMIUM resource (403)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${premiumResourceId}/download`,
+        headers: {
+          cookie: expiredEntitledUserCookie,
+        },
+      });
+
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks user when entitlement is for a different resource (resource-specific access check 403)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${secondPremiumResourceId}/download`,
+        headers: {
+          cookie: entitledUserCookie,
+        },
+      });
+
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('allows authenticated user with valid active entitlement to download published premium resource', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${premiumResourceId}/download`,
+        headers: {
+          cookie: entitledUserCookie,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.data.downloadUrl).toBeDefined();
+      expect(body.data.expiresInSeconds).toBe(300);
+      expect(body.data.file.id).toBe(premiumFileId);
+      expect(body.data.file.originalFilename).toBe('cbc-premium-guide.pdf');
+
+      // Security check: internal storage credentials strictly omitted
+      expect(body.data.objectKey).toBeUndefined();
+      expect(body.data.storageBucket).toBeUndefined();
+      expect(body.data.storageProvider).toBeUndefined();
+    });
+
+    it('allows entitled user to download explicit available file of premium resource', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/resources/${premiumResourceId}/download`,
+        headers: {
+          cookie: entitledUserCookie,
+        },
+        payload: {
+          fileId: premiumFileId,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.data.downloadUrl).toBeDefined();
+      expect(body.data.file.id).toBe(premiumFileId);
     });
   });
 });

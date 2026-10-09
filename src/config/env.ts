@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
-// Load environment variables from .env file if available
-dotenv.config();
+// Load environment variables from .env file if available (allowing .env overrides)
+dotenv.config({ override: true });
 
 const ACCEPTABLE_PRODUCTION_SSL_MODES = ['require', 'verify-ca', 'verify-full'];
 

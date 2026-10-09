@@ -69,22 +69,26 @@ export const downloadRoutes: FastifyPluginAsync<DownloadRoutesOptions> = async (
     const params = ResourceIdParamSchema.parse(request.params);
     const body = DownloadBodySchema.parse(request.body || undefined);
 
-    // Optional authentication handling (Prompt 16 Correction 3):
-    // Anonymous visitors are fully permitted.
+    // Optional authentication handling (Prompt 16 Correction 3 & Prompt 20):
+    // Anonymous visitors are fully permitted for free resources.
     // If a session cookie is present and valid, capture the authenticated user context.
     // If a session cookie is invalid/expired, treat as anonymous without returning 401.
-    let authenticatedUserId: string | undefined;
-    const cookieHeader = request.headers.cookie;
-    if (cookieHeader) {
-      const rawToken = request.cookies?.[SESSION_COOKIE_NAME];
-      if (rawToken) {
-        try {
-          const sessionResult = await authService.validateSession(rawToken);
-          if (sessionResult) {
-            authenticatedUserId = sessionResult.user.id;
+    let authenticatedUserId: string | undefined = (request as any).user?.id;
+    if (!authenticatedUserId) {
+      const cookieHeader = request.headers.cookie;
+      if (cookieHeader) {
+        const rawToken =
+          request.cookies?.[SESSION_COOKIE_NAME] ||
+          cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`))?.[1];
+        if (rawToken) {
+          try {
+            const sessionResult = await authService.validateSession(rawToken.trim());
+            if (sessionResult) {
+              authenticatedUserId = sessionResult.user.id;
+            }
+          } catch {
+            // Non-blocking: continue as anonymous
           }
-        } catch {
-          // Non-blocking: continue as anonymous
         }
       }
     }

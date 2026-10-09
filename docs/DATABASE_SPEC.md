@@ -1602,8 +1602,15 @@ Rules:
 
 * Entitlement follows permanent resource identity.
 * Resource version changes do not automatically invalidate ownership.
-* Revocation must be auditable.
-* Download authorization must verify entitlement server-side.
+* Revocation must be auditable (`revoked_at` and `revoked_by`).
+* Download authorization (Prompt 20) verifies entitlement server-side against this table:
+  - `user_id = user.id`
+  - `resource_id = resource.id`
+  - `status = 'ACTIVE'`
+  - `starts_at <= CURRENT_TIMESTAMP`
+  - `ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP`
+  - `revoked_at IS NULL`
+* Zero `is_paid` column on `content.resources`: `commerce.entitlements` remains the sole authoritative source of truth.
 
 ---
 

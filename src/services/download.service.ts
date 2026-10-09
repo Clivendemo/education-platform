@@ -1,9 +1,10 @@
-import { eq, and, asc, desc, sql } from 'drizzle-orm';
+import { eq, and, asc, desc, sql, lte, or, isNull, gt } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { db } from '../db/index.js';
 import { env } from '../config/env.js';
 import { resources, resourceVersions } from '../db/schema/resource.js';
 import { resourceFiles } from '../db/schema/files.js';
+import { entitlements } from '../db/schema/commerce.js';
 import type { StorageProvider } from './storage/storage-provider.interface.js';
 import { CloudflareR2StorageProvider } from './storage/r2-storage-provider.js';
 import { MemoryStorageProvider } from './storage/memory-storage-provider.js';
@@ -105,7 +106,7 @@ export class DefaultDownloadService implements DownloadService {
   async generateDownloadUrl(
     request: DownloadFileRequest,
   ): Promise<DownloadFileResponse> {
-    const { resourceId, fileId } = request;
+    const { resourceId, fileId, userId } = request;
 
     // 1. UUID validation
     if (!resourceId || !UUID_REGEX.test(resourceId)) {
@@ -142,12 +143,39 @@ export class DefaultDownloadService implements DownloadService {
       );
     }
 
-    // Prompt 16 Free vs Premium Rule:
-    // Resources with qualityLabel === 'PREMIUM' require purchase/entitlement, which is deferred to Prompt 20.
+    // Prompt 16 & Prompt 20 Free vs Premium Rule:
+    // Resources with qualityLabel !== 'PREMIUM' are free to download anonymously or authenticated.
+    // Resources with qualityLabel === 'PREMIUM' strictly require authentication and active entitlement.
     if (resourceRecord.qualityLabel === 'PREMIUM') {
-      throw new PremiumResourceLockedError(
-        'This resource is premium content and requires purchase or entitlement.',
-      );
+      if (!userId) {
+        throw new PremiumResourceLockedError(
+          'This resource is premium content and requires purchase or entitlement.',
+        );
+      }
+
+      const now = new Date();
+      const [validEntitlement] = await this.db
+        .select({
+          id: entitlements.id,
+        })
+        .from(entitlements)
+        .where(
+          and(
+            eq(entitlements.userId, userId),
+            eq(entitlements.resourceId, resourceId),
+            eq(entitlements.status, 'ACTIVE'),
+            lte(entitlements.startsAt, now),
+            or(isNull(entitlements.endsAt), gt(entitlements.endsAt, now)),
+            isNull(entitlements.revokedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!validEntitlement) {
+        throw new PremiumResourceLockedError(
+          'This resource is premium content and requires purchase or entitlement.',
+        );
+      }
     }
 
     // 3. Find the single active published version

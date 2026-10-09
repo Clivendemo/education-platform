@@ -7,6 +7,8 @@ import {
   resources,
   resourceVersions,
   resourceFiles,
+  users,
+  entitlements,
 } from '../../src/db/schemas.js';
 import {
   DefaultDownloadService,
@@ -32,6 +34,13 @@ describe('Free Downloads Database Integration Tests', () => {
   let quarantinedFileId: string;
 
   let premiumResourceId: string;
+  let premiumVersionId: string;
+  let premiumFileId: string;
+  let premiumQuarantinedFileId: string;
+
+  let entitledUserId: string;
+  let unentitledUserId: string;
+  let otherUserId: string;
 
   let draftResourceId: string;
   let draftVersionId: string;
@@ -42,6 +51,8 @@ describe('Free Downloads Database Integration Tests', () => {
 
   const createdCountryIds: string[] = [];
   const createdResourceIds: string[] = [];
+  const createdUserIds: string[] = [];
+  const createdEntitlementIds: string[] = [];
 
   beforeAll(async () => {
     // 1. Fetch existing active country or create collision-safe country
@@ -227,7 +238,7 @@ describe('Free Downloads Database Integration Tests', () => {
     premiumResourceId = premRes.id;
     createdResourceIds.push(premRes.id);
 
-    await withDbRetry(async () =>
+    const [premVer] = await withDbRetry(async () =>
       db
         .insert(resourceVersions)
         .values({
@@ -235,11 +246,102 @@ describe('Free Downloads Database Integration Tests', () => {
           versionNumber: 1,
           versionLabel: 'v1.0.0',
           title: 'Premium Version 1.0.0',
-          status: 'PUBLISHED',
-          publishedAt: new Date(),
+          status: 'DRAFT',
         })
         .returning(),
     );
+    premiumVersionId = premVer.id;
+
+    const [premFile] = await withDbRetry(async () =>
+      db
+        .insert(resourceFiles)
+        .values({
+          resourceVersionId: premiumVersionId,
+          storageProvider: 'CLOUDFLARE_R2',
+          storageBucket: 'dl-test-bucket',
+          objectKey: `resources/${premiumResourceId}/prem-doc-${Date.now()}.pdf`,
+          originalFilename: 'premium-past-paper.pdf',
+          fileExtension: 'pdf',
+          fileType: 'MAIN_DOCUMENT',
+          mimeType: 'application/pdf',
+          fileSizeBytes: 2048,
+          checksumSha256: '8'.repeat(64),
+          status: 'AVAILABLE',
+          isPrimary: true,
+          sequenceOrder: 1,
+        })
+        .returning(),
+    );
+    premiumFileId = premFile.id;
+
+    const [premQFile] = await withDbRetry(async () =>
+      db
+        .insert(resourceFiles)
+        .values({
+          resourceVersionId: premiumVersionId,
+          storageProvider: 'CLOUDFLARE_R2',
+          storageBucket: 'dl-test-bucket',
+          objectKey: `resources/${premiumResourceId}/prem-q-${Date.now()}.pdf`,
+          originalFilename: 'quarantined-premium.pdf',
+          fileExtension: 'pdf',
+          fileType: 'SUPPLEMENTARY',
+          mimeType: 'application/pdf',
+          fileSizeBytes: 1024,
+          checksumSha256: '7'.repeat(64),
+          status: 'QUARANTINED',
+          isPrimary: false,
+          sequenceOrder: 2,
+        })
+        .returning(),
+    );
+    premiumQuarantinedFileId = premQFile.id;
+
+    await withDbRetry(async () =>
+      db
+        .update(resourceVersions)
+        .set({ status: 'PUBLISHED', publishedAt: new Date() })
+        .where(eq(resourceVersions.id, premiumVersionId)),
+    );
+
+    // Create test users for premium download verification
+    const [u1] = await withDbRetry(async () =>
+      db
+        .insert(users)
+        .values({
+          email: `entitled-user-${Date.now()}@example.com`,
+          displayName: 'Entitled Tester',
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
+    entitledUserId = u1.id;
+    createdUserIds.push(u1.id);
+
+    const [u2] = await withDbRetry(async () =>
+      db
+        .insert(users)
+        .values({
+          email: `unentitled-user-${Date.now()}@example.com`,
+          displayName: 'Unentitled Tester',
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
+    unentitledUserId = u2.id;
+    createdUserIds.push(u2.id);
+
+    const [u3] = await withDbRetry(async () =>
+      db
+        .insert(users)
+        .values({
+          email: `other-user-${Date.now()}@example.com`,
+          displayName: 'Other Tester',
+          status: 'ACTIVE',
+        })
+        .returning(),
+    );
+    otherUserId = u3.id;
+    createdUserIds.push(u3.id);
 
     // 5. Create DRAFT resource
     const [drRes] = await withDbRetry(async () =>
@@ -415,6 +517,175 @@ describe('Free Downloads Database Integration Tests', () => {
     it('blocks draft resource download with ResourceNotFoundError (404)', async () => {
       await expect(
         service.generateDownloadUrl({ resourceId: draftResourceId }),
+      ).rejects.toThrow(ResourceNotFoundError);
+    });
+  });
+
+  describe('Prompt 20: Premium Downloads & Authoritative Entitlement Verification', () => {
+    beforeAll(async () => {
+      // 1. Insert active entitlement for entitledUserId on premiumResourceId
+      const [e1] = await withDbRetry(async () =>
+        db
+          .insert(entitlements)
+          .values({
+            userId: entitledUserId,
+            resourceId: premiumResourceId,
+            status: 'ACTIVE',
+            startsAt: new Date(Date.now() - 3600 * 1000), // 1 hour ago
+            endsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000), // 30 days future
+          })
+          .returning(),
+      );
+      createdEntitlementIds.push(e1.id);
+
+      // 2. Insert expired entitlement for otherUserId on premiumResourceId
+      const [e2] = await withDbRetry(async () =>
+        db
+          .insert(entitlements)
+          .values({
+            userId: otherUserId,
+            resourceId: premiumResourceId,
+            status: 'EXPIRED',
+            startsAt: new Date(Date.now() - 10 * 24 * 3600 * 1000),
+            endsAt: new Date(Date.now() - 24 * 3600 * 1000), // Expired 1 day ago
+          })
+          .returning(),
+      );
+      createdEntitlementIds.push(e2.id);
+
+      // 3. Insert entitlement for entitledUserId on a different resource (freeResourceId)
+      const [e3] = await withDbRetry(async () =>
+        db
+          .insert(entitlements)
+          .values({
+            userId: entitledUserId,
+            resourceId: freeResourceId,
+            status: 'ACTIVE',
+            startsAt: new Date(Date.now() - 3600 * 1000),
+          })
+          .returning(),
+      );
+      createdEntitlementIds.push(e3.id);
+    });
+
+    afterAll(async () => {
+      try {
+        for (const entId of createdEntitlementIds) {
+          await withDbRetry(async () => {
+            await db.delete(entitlements).where(eq(entitlements.id, entId));
+          }).catch(() => {});
+        }
+        for (const uid of createdUserIds) {
+          await withDbRetry(async () => {
+            await db.delete(users).where(eq(users.id, uid));
+          }).catch(() => {});
+        }
+      } catch {
+        // Ignored
+      }
+    });
+
+    it('blocks unauthenticated request (no userId) with PremiumResourceLockedError (403)', async () => {
+      const err = await service
+        .generateDownloadUrl({ resourceId: premiumResourceId })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(PremiumResourceLockedError);
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks authenticated user with NO entitlement with PremiumResourceLockedError (403)', async () => {
+      const err = await service
+        .generateDownloadUrl({
+          resourceId: premiumResourceId,
+          userId: unentitledUserId,
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(PremiumResourceLockedError);
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks user with EXPIRED entitlement with PremiumResourceLockedError (403)', async () => {
+      const err = await service
+        .generateDownloadUrl({
+          resourceId: premiumResourceId,
+          userId: otherUserId,
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(PremiumResourceLockedError);
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('blocks user when entitlement is for a different resource with PremiumResourceLockedError (403)', async () => {
+      const err = await service
+        .generateDownloadUrl({
+          resourceId: premiumResourceId,
+          userId: unentitledUserId,
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(PremiumResourceLockedError);
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe('PREMIUM_RESOURCE_LOCKED');
+    });
+
+    it('allows download when user has valid active entitlement for published PREMIUM resource', async () => {
+      const res = await service.generateDownloadUrl({
+        resourceId: premiumResourceId,
+        userId: entitledUserId,
+      });
+
+      expect(res.downloadUrl).toContain('https://mock-storage.local/dl-test-bucket');
+      expect(res.expiresInSeconds).toBe(300);
+      expect(res.file.id).toBe(premiumFileId);
+      expect(res.file.originalFilename).toBe('premium-past-paper.pdf');
+    });
+
+    it('allows download of specific file when user has valid active entitlement', async () => {
+      const res = await service.generateDownloadUrl({
+        resourceId: premiumResourceId,
+        fileId: premiumFileId,
+        userId: entitledUserId,
+      });
+
+      expect(res.downloadUrl).toContain('https://mock-storage.local/dl-test-bucket');
+      expect(res.file.id).toBe(premiumFileId);
+    });
+
+    it('blocks download of QUARANTINED file of PREMIUM resource even when user is entitled (400)', async () => {
+      await expect(
+        service.generateDownloadUrl({
+          resourceId: premiumResourceId,
+          fileId: premiumQuarantinedFileId,
+          userId: entitledUserId,
+        }),
+      ).rejects.toThrow(FileNotAvailableError);
+    });
+
+    it('blocks download of DRAFT resource even when user has active entitlement record (404)', async () => {
+      const [draftEnt] = await withDbRetry(async () =>
+        db
+          .insert(entitlements)
+          .values({
+            userId: entitledUserId,
+            resourceId: draftResourceId,
+            status: 'ACTIVE',
+            startsAt: new Date(),
+          })
+          .returning(),
+      );
+      createdEntitlementIds.push(draftEnt.id);
+
+      await expect(
+        service.generateDownloadUrl({
+          resourceId: draftResourceId,
+          userId: entitledUserId,
+        }),
       ).rejects.toThrow(ResourceNotFoundError);
     });
   });

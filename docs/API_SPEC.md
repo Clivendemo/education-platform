@@ -711,16 +711,17 @@ POST /api/v1/resources/:id/download
 * **Resilient Session Handling**: If an invalid or expired session cookie is submitted, the request continues as anonymous rather than returning `401 UNAUTHENTICATED`.
 
 ### Free vs Premium Rule
-* Resources with `qualityLabel !== 'PREMIUM'` are classified as free content and eligible for instant download.
-* Resources with `qualityLabel === 'PREMIUM'` are commercial assets. Download requests are strictly blocked with HTTP `403 FORBIDDEN` (`code: 'PREMIUM_RESOURCE_LOCKED'`). Full commercial purchase and entitlement flows are deferred to Prompt 20.
+* Resources with `qualityLabel !== 'PREMIUM'` are classified as free content and eligible for instant download anonymously or authenticated.
+* Resources with `qualityLabel === 'PREMIUM'` are commercial assets. Download requests strictly require authenticated user context and an authoritative active entitlement record in `commerce.entitlements` (Prompt 20). Requests by unauthenticated visitors or authenticated users lacking an active valid entitlement are strictly blocked with HTTP `403 FORBIDDEN` (`code: 'PREMIUM_RESOURCE_LOCKED'`).
 
 ### Pre-Storage Eligibility Invariants (Zero R2 Calls on Rejection)
 All checks execute in PostgreSQL before any interaction with object storage:
 1. `content.resources.status = 'PUBLISHED'` (non-published resources return `404 RESOURCE_NOT_FOUND`).
-2. `content.resource_versions.status = 'PUBLISHED'` (active published version must exist).
-3. `files.resource_files.status = 'AVAILABLE'` (quarantined, pending, archived, or failed files reject with `400 FILE_NOT_AVAILABLE`).
-4. **Cross-Version File Isolation**: The requested file must belong to the active published version. Attempting to download files belonging to draft iterations, archived versions, or other resources rejects with `404 FILE_NOT_FOUND`.
-5. **Deterministic Primary File Selection**: When `fileId` is omitted, the primary file is resolved deterministically:
+2. Entitlement verification for `PREMIUM` resources: Authoritative active, non-expired, non-revoked entitlement record in `commerce.entitlements` matching the requesting `user_id` and `resource_id` (returns `403 PREMIUM_RESOURCE_LOCKED` on failure).
+3. `content.resource_versions.status = 'PUBLISHED'` (active published version must exist; returns `404 RESOURCE_NOT_FOUND` if absent).
+4. `files.resource_files.status = 'AVAILABLE'` (quarantined, pending, archived, or failed files reject with `400 FILE_NOT_AVAILABLE`).
+5. **Cross-Version File Isolation**: The requested file must belong to the active published version. Attempting to download files belonging to draft iterations, archived versions, or other resources rejects with `404 FILE_NOT_FOUND`.
+6. **Deterministic Primary File Selection**: When `fileId` is omitted, the primary file is resolved deterministically:
    `is_primary = true` → `file_type = 'MAIN_DOCUMENT'` → lowest `sequence_order ASC` → earliest `created_at ASC` → `id ASC` tie-breaker.
 
 ### Expiration Semantics
@@ -755,30 +756,51 @@ All checks execute in PostgreSQL before any interaction with object storage:
 ### Error Codes
 * `400 VALIDATION_ERROR`: Invalid UUID format in URL parameter or request body.
 * `400 FILE_NOT_AVAILABLE`: Target file is in `QUARANTINED`, `PENDING`, `ARCHIVED`, or `FAILED` status.
-* `403 PREMIUM_RESOURCE_LOCKED`: Resource is marked `PREMIUM` (requires commercial entitlement).
-* `404 RESOURCE_NOT_FOUND`: Resource does not exist or is not in `PUBLISHED` status.
+* `403 PREMIUM_RESOURCE_LOCKED`: Resource is marked `PREMIUM` and the request is unauthenticated or user lacks a valid active entitlement.
+* `404 RESOURCE_NOT_FOUND`: Resource does not exist or is not in `PUBLISHED` status (or has no active published version).
 * `404 NO_AVAILABLE_FILES`: Published resource version has zero `AVAILABLE` files attached.
 * `404 FILE_NOT_FOUND`: Specified `fileId` does not exist or does not belong to the published version.
 
 ---
 
-# 25. Premium Download
+# 25. Premium Download (Prompt 20)
 
-Premium downloads follow:
+### Architecture & Security Invariants
+Premium downloads strictly enforce the authoritative commercial entitlement model:
 
 ```text
-Resource
-→ Product
-→ Offer
-→ Order
-→ Payment
-→ Entitlement
-→ Download authorization
+Resource (quality_label = 'PREMIUM')
+→ Product (type = 'RESOURCE', status = 'ACTIVE')
+→ Offer (status = 'ACTIVE', time-valid)
+→ Order (status = 'COMPLETED', owned by user)
+→ Payment (status = 'COMPLETED', verified amount)
+→ Entitlement (status = 'ACTIVE', starts_at <= now, ends_at > now, revoked_at IS NULL)
+→ Download Authorization (POST /api/v1/resources/:id/download)
 ```
 
-The frontend must never decide whether a user owns a premium resource.
-
-The backend must verify entitlement.
+1. **Server-Authoritative Access**:
+   * The client or payment callback never directly authorises download access.
+   * Access is solely verified against `commerce.entitlements` records created via successful transactional payment reconciliation.
+   * Failed, pending, or cancelled orders/payments never unlock downloads.
+2. **Authentication Requirement**:
+   * Premium resources strictly require a valid authenticated session cookie (`session_token`).
+   * Anonymous visitors or requests with invalid/expired session cookies are blocked with HTTP `403 FORBIDDEN` (`code: 'PREMIUM_RESOURCE_LOCKED'`).
+3. **Entitlement Validity Validation**:
+   * Checks `user_id = user.id` (ownership).
+   * Checks `resource_id = resource.id` (resource-specific access; access to resource A does not grant access to resource B).
+   * Checks `status = 'ACTIVE'`.
+   * Checks `starts_at <= now` and `(ends_at IS NULL OR ends_at > now)`.
+   * Checks `revoked_at IS NULL`.
+4. **Lifecycle & File Invariants**:
+   * The resource must remain `PUBLISHED` (unpublished/draft resources return `404 RESOURCE_NOT_FOUND` even if entitled).
+   * An active `PUBLISHED` version must exist (returns `404 RESOURCE_NOT_FOUND`).
+   * Only files with `AVAILABLE` status are accessible (`400 FILE_NOT_AVAILABLE` for quarantined files).
+   * Deterministic primary-file selection is preserved when `fileId` is omitted.
+5. **Zero Storage Provider Calls on Rejection**:
+   * Any validation failure terminates the request immediately in PostgreSQL without contacting the storage provider (R2 / S3).
+   * Signed download URLs are only generated after authorization succeeds, using the established 300-second (5 minute) TTL.
+6. **No Structural Drift**:
+   * No `is_paid` flag on resources; `commerce.entitlements` remains the sole source of truth.
 
 ---
 

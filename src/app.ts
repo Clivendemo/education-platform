@@ -30,6 +30,7 @@ import type { LibraryService } from './services/library.service.js';
 import type { DownloadService } from './services/download.service.js';
 import type { CalendarService } from './services/calendar/calendar.service.js';
 import type { CommerceService } from './services/commerce/commerce.service.js';
+import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
@@ -186,6 +187,20 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     commerceService: services?.commerceService,
     authService: services?.authService,
   });
+
+  // Support unversioned /api/payments/mpesa/callback & /api/mpesa/callback
+  app.register(
+    async (sub) => {
+      const handleCallback = async (request: any, reply: any) => {
+        const cs = services?.commerceService ?? defaultCommerceService;
+        const response = await cs.handleMpesaCallback(request.body);
+        return reply.status(200).send(response.ack);
+      };
+      sub.post('/payments/mpesa/callback', handleCallback);
+      sub.post('/mpesa/callback', handleCallback);
+    },
+    { prefix: '/api' },
+  );
 
   return app;
 }
