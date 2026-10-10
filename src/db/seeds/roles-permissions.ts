@@ -181,6 +181,20 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Manage contributor verification, lifecycle suspension, and administrative oversight.',
   },
+  {
+    name: 'contributor.earnings.view',
+    resource: 'contributor',
+    action: 'earnings_view',
+    scopeType: 'GLOBAL',
+    description: 'View private contributor earnings and financial ledger.',
+  },
+  {
+    name: 'contributor.finance.manage',
+    resource: 'contributor',
+    action: 'finance_manage',
+    scopeType: 'GLOBAL',
+    description: 'Manage contributor revenue rules, audit earnings, and administrative financial oversight.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -202,6 +216,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'contributor.submit',
     'contributor.application.review',
     'contributor.manage',
+    'contributor.earnings.view',
+    'contributor.finance.manage',
   ],
   content_manager: [
     'resource.read',
@@ -234,6 +250,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'contributor.profile.read',
     'contributor.profile.update',
     'contributor.submit',
+    'contributor.earnings.view',
   ],
   standard_user: [
     'resource.read',
@@ -261,7 +278,13 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(roles.slug, 'contributor'))
     .limit(1);
 
-  if (Number(existing?.count) >= 42 && contributorRole) {
+  const [financePerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'contributor.finance.manage'))
+    .limit(1);
+
+  if (Number(existing?.count) >= 45 && contributorRole && financePerm) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

@@ -636,13 +636,13 @@ ANONYMOUS_SESSION
 
 | Component                 | Status      | Notes |
 | ------------------------- | ----------- | ----- |
-| Revenue rules             | NOT_STARTED |       |
-| Earnings                  | NOT_STARTED |       |
-| Payouts                   | NOT_STARTED |       |
-| Historical revenue values | NOT_STARTED |       |
-| Financial access control  | NOT_STARTED |       |
-| Financial audit logging   | NOT_STARTED |       |
-| Contributor finance tests | NOT_STARTED |       |
+| Revenue rules             | VERIFIED    | Prompt 22; `community.contributor_revenue_rules`, 70/30 canonical rule (7000 bps), effective-date selection, overlap prevention |
+| Earnings                  | VERIFIED    | Prompt 22; `community.contributor_earnings` append-only ledger, zero-sum invariant ($P + C = G$), 7-day maturity lifecycle (`PENDING` -> `AVAILABLE`) |
+| Payouts                   | NOT_STARTED | Explicitly excluded from Prompt 22; automated M-Pesa B2C / bank payouts reserved for future phase |
+| Historical revenue values | VERIFIED    | Prompt 22; immutable historical records with PostgreSQL trigger preventing deletions and tampering |
+| Financial access control  | VERIFIED    | Prompt 22; `contributor.earnings.view` (contributor isolation) & `contributor.finance.manage` (admin control), IDOR protection |
+| Financial audit logging   | VERIFIED    | Prompt 22; transactional integration with order payments, unique attribution `(order_item_id, contributor_id)`, immutable ledger |
+| Contributor finance tests | VERIFIED    | Prompt 22; 27 dedicated tests across unit, DB trigger constraints, and HTTP route integration suites |
 
 ---
 

@@ -5,6 +5,8 @@ import {
   text,
   timestamp,
   bigint,
+  integer,
+  numeric,
   unique,
   check,
   index,
@@ -13,6 +15,7 @@ import {
 import { communitySchema } from '../logical-schemas.js';
 import { users } from './identity.js';
 import { resources } from './resource.js';
+import { orders, orderItems } from './commerce.js';
 
 /**
  * Controlled Contributor Statuses (docs/DATABASE_SPEC.md Section 30.1)
@@ -63,6 +66,29 @@ export const CONTRIBUTOR_SUBMISSION_STATUSES = [
 ] as const;
 export type ContributorSubmissionStatus =
   (typeof CONTRIBUTOR_SUBMISSION_STATUSES)[number];
+
+/**
+ * Controlled Contributor Revenue Rule Statuses (docs/DATABASE_SPEC.md Section 30.6)
+ */
+export const CONTRIBUTOR_REVENUE_RULE_STATUSES = [
+  'ACTIVE',
+  'INACTIVE',
+  'RETIRED',
+] as const;
+export type ContributorRevenueRuleStatus =
+  (typeof CONTRIBUTOR_REVENUE_RULE_STATUSES)[number];
+
+/**
+ * Controlled Contributor Earning Statuses (docs/DATABASE_SPEC.md Section 30.7)
+ */
+export const CONTRIBUTOR_EARNING_STATUSES = [
+  'PENDING',
+  'AVAILABLE',
+  'PAID',
+  'CANCELLED',
+] as const;
+export type ContributorEarningStatus =
+  (typeof CONTRIBUTOR_EARNING_STATUSES)[number];
 
 /**
  * community.contributors
@@ -213,6 +239,133 @@ export const contributorSubmissions = communitySchema.table(
 );
 
 /**
+ * community.contributor_revenue_rules
+ * Historical and time-bound commission rules (Prompt 22 / docs/DATABASE_SPEC.md Section 30.6).
+ */
+export const contributorRevenueRules = communitySchema.table(
+  'contributor_revenue_rules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: varchar('name', { length: 100 }).notNull(),
+    contributorShareBasisPoints: integer('contributor_share_basis_points')
+      .notNull()
+      .default(7000),
+    percentage: numeric('percentage', { precision: 7, scale: 4 })
+      .notNull()
+      .default('70.0000'),
+    currencyCode: varchar('currency_code', { length: 3 })
+      .notNull()
+      .default('KES'),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      'chk_revenue_rules_status',
+      sql`${table.status} IN ('ACTIVE', 'INACTIVE', 'RETIRED')`,
+    ),
+    check(
+      'chk_revenue_rules_currency',
+      sql`${table.currencyCode} = 'KES'`,
+    ),
+    check(
+      'chk_revenue_rules_bps',
+      sql`${table.contributorShareBasisPoints} >= 0 AND ${table.contributorShareBasisPoints} <= 10000`,
+    ),
+    check(
+      'chk_revenue_rules_pct',
+      sql`${table.percentage} >= 0 AND ${table.percentage} <= 100`,
+    ),
+    check(
+      'chk_revenue_rules_dates',
+      sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} >= ${table.effectiveFrom}`,
+    ),
+    index('idx_revenue_rules_status').on(table.status, table.effectiveFrom),
+  ],
+);
+
+/**
+ * community.contributor_earnings
+ * Append-only immutable financial ledger of earnings attributed to contributors (Prompt 22 / docs/DATABASE_SPEC.md Section 30.7).
+ */
+export const contributorEarnings = communitySchema.table(
+  'contributor_earnings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    contributorId: uuid('contributor_id')
+      .notNull()
+      .references(() => contributors.id, { onDelete: 'restrict' }),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    orderItemId: uuid('order_item_id')
+      .notNull()
+      .references(() => orderItems.id, { onDelete: 'restrict' }),
+    resourceId: uuid('resource_id')
+      .notNull()
+      .references(() => resources.id, { onDelete: 'restrict' }),
+    revenueRuleId: uuid('revenue_rule_id')
+      .notNull()
+      .references(() => contributorRevenueRules.id, { onDelete: 'restrict' }),
+    grossAmountMinor: bigint('gross_amount_minor', { mode: 'bigint' }).notNull(),
+    platformAmountMinor: bigint('platform_amount_minor', { mode: 'bigint' }).notNull(),
+    contributorAmountMinor: bigint('contributor_amount_minor', { mode: 'bigint' }).notNull(),
+    currencyCode: varchar('currency_code', { length: 3 })
+      .notNull()
+      .default('KES'),
+    status: varchar('status', { length: 20 }).notNull().default('PENDING'),
+    maturesAt: timestamp('matures_at', { withTimezone: true }).notNull(),
+    maturedAt: timestamp('matured_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique('uq_earnings_order_item_contributor').on(
+      table.orderItemId,
+      table.contributorId,
+    ),
+    check(
+      'chk_earnings_status',
+      sql`${table.status} IN ('PENDING', 'AVAILABLE', 'PAID', 'CANCELLED')`,
+    ),
+    check(
+      'chk_earnings_currency',
+      sql`${table.currencyCode} = 'KES'`,
+    ),
+    check(
+      'chk_earnings_amounts_positive',
+      sql`${table.grossAmountMinor} >= 0 AND ${table.platformAmountMinor} >= 0 AND ${table.contributorAmountMinor} >= 0`,
+    ),
+    check(
+      'chk_earnings_zero_sum',
+      sql`${table.grossAmountMinor} = (${table.platformAmountMinor} + ${table.contributorAmountMinor})`,
+    ),
+    check(
+      'chk_earnings_maturity',
+      sql`(${table.status} = 'PENDING') OR (${table.status} = 'AVAILABLE' AND ${table.maturedAt} IS NOT NULL) OR (${table.status} IN ('PAID', 'CANCELLED'))`,
+    ),
+    index('idx_earnings_contributor_status').on(table.contributorId, table.status),
+    index('idx_earnings_order_id').on(table.orderId),
+    index('idx_earnings_resource_id').on(table.resourceId),
+    index('idx_earnings_status_matures_at').on(table.status, table.maturesAt),
+    index('idx_earnings_created_at').on(table.createdAt),
+  ],
+);
+
+/**
  * Relations
  */
 export const contributorsRelations = relations(contributors, ({ one, many }) => ({
@@ -226,6 +379,7 @@ export const contributorsRelations = relations(contributors, ({ one, many }) => 
   }),
   submissions: many(contributorSubmissions),
   resources: many(resources),
+  earnings: many(contributorEarnings),
 }));
 
 export const contributorApplicationsRelations = relations(
@@ -260,6 +414,39 @@ export const contributorSubmissionsRelations = relations(
   }),
 );
 
+export const contributorRevenueRulesRelations = relations(
+  contributorRevenueRules,
+  ({ many }) => ({
+    earnings: many(contributorEarnings),
+  }),
+);
+
+export const contributorEarningsRelations = relations(
+  contributorEarnings,
+  ({ one }) => ({
+    contributor: one(contributors, {
+      fields: [contributorEarnings.contributorId],
+      references: [contributors.id],
+    }),
+    order: one(orders, {
+      fields: [contributorEarnings.orderId],
+      references: [orders.id],
+    }),
+    orderItem: one(orderItems, {
+      fields: [contributorEarnings.orderItemId],
+      references: [orderItems.id],
+    }),
+    resource: one(resources, {
+      fields: [contributorEarnings.resourceId],
+      references: [resources.id],
+    }),
+    revenueRule: one(contributorRevenueRules, {
+      fields: [contributorEarnings.revenueRuleId],
+      references: [contributorRevenueRules.id],
+    }),
+  }),
+);
+
 export type Contributor = typeof contributors.$inferSelect;
 export type NewContributor = typeof contributors.$inferInsert;
 export type ContributorApplication =
@@ -270,3 +457,11 @@ export type ContributorSubmission =
   typeof contributorSubmissions.$inferSelect;
 export type NewContributorSubmission =
   typeof contributorSubmissions.$inferInsert;
+export type ContributorRevenueRule =
+  typeof contributorRevenueRules.$inferSelect;
+export type NewContributorRevenueRule =
+  typeof contributorRevenueRules.$inferInsert;
+export type ContributorEarning =
+  typeof contributorEarnings.$inferSelect;
+export type NewContributorEarning =
+  typeof contributorEarnings.$inferInsert;

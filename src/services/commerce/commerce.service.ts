@@ -13,6 +13,10 @@ import {
 import type { PaymentProvider } from './payment-provider.interface.js';
 import { SimulationPaymentProvider } from './simulation-payment-provider.js';
 import { MpesaPaymentProvider } from './mpesa/mpesa-payment-provider.js';
+import {
+  type ContributorFinanceService,
+  defaultContributorFinanceService,
+} from '../contributor-finance.service.js';
 import { env } from '../../config/env.js';
 import {
   type ProductDto,
@@ -38,16 +42,20 @@ export interface CommerceServiceOptions {
   db?: NodePgDatabase<typeof schemas>;
   paymentProvider?: PaymentProvider;
   paymentProviders?: Map<string, PaymentProvider> | Record<string, PaymentProvider>;
+  contributorFinanceService?: ContributorFinanceService;
 }
 
 export class CommerceService {
   private readonly db: NodePgDatabase<typeof schemas>;
   private readonly paymentProvider: PaymentProvider;
+  private readonly contributorFinanceService: ContributorFinanceService;
   private readonly providers: Map<string, PaymentProvider> = new Map();
 
   constructor(options: CommerceServiceOptions = {}) {
     this.db = options.db ?? defaultDb;
     this.paymentProvider = options.paymentProvider ?? new SimulationPaymentProvider();
+    this.contributorFinanceService =
+      options.contributorFinanceService ?? defaultContributorFinanceService;
 
     // Register primary simulation provider
     this.registerProvider(this.paymentProvider);
@@ -560,79 +568,84 @@ export class CommerceService {
 
     const now = new Date();
 
-    // 1. Mark payment COMPLETED
-    const [updatedPayment] = await this.db
-      .update(payments)
-      .set({
-        status: 'COMPLETED',
-        completedAt: now,
-        providerTransactionId: input.providerTransactionId ?? paymentRecord.providerTransactionId,
-        providerPayload: input.payload ?? paymentRecord.providerPayload,
-        updatedAt: now,
-      })
-      .where(eq(payments.id, paymentRecord.id))
-      .returning();
+    return await this.db.transaction(async (tx) => {
+      // 1. Mark payment COMPLETED
+      const [updatedPayment] = await tx
+        .update(payments)
+        .set({
+          status: 'COMPLETED',
+          completedAt: now,
+          providerTransactionId: input.providerTransactionId ?? paymentRecord.providerTransactionId,
+          providerPayload: input.payload ?? paymentRecord.providerPayload,
+          updatedAt: now,
+        })
+        .where(eq(payments.id, paymentRecord.id))
+        .returning();
 
-    // 2. Mark order COMPLETED
-    const [updatedOrder] = await this.db
-      .update(orders)
-      .set({
-        status: 'COMPLETED',
-        updatedAt: now,
-      })
-      .where(eq(orders.id, ord.id))
-      .returning();
+      // 2. Mark order COMPLETED
+      const [updatedOrder] = await tx
+        .update(orders)
+        .set({
+          status: 'COMPLETED',
+          updatedAt: now,
+        })
+        .where(eq(orders.id, ord.id))
+        .returning();
 
-    // 3. Provision entitlements for RESOURCE products (Correction 5)
-    const items = await this.db
-      .select({
-        item: orderItems,
-        product: products,
-      })
-      .from(orderItems)
-      .innerJoin(products, eq(orderItems.productId, products.id))
-      .where(eq(orderItems.orderId, ord.id));
+      // 3. Provision entitlements for RESOURCE products (Correction 5)
+      const items = await tx
+        .select({
+          item: orderItems,
+          product: products,
+        })
+        .from(orderItems)
+        .innerJoin(products, eq(orderItems.productId, products.id))
+        .where(eq(orderItems.orderId, ord.id));
 
-    let entitlementsGranted = 0;
+      let entitlementsGranted = 0;
 
-    for (const { product } of items) {
-      if (product.productType === 'RESOURCE' && product.resourceId) {
-        // Check if user already holds an active entitlement for this resource
-        const [existingActive] = await this.db
-          .select()
-          .from(entitlements)
-          .where(
-            and(
-              eq(entitlements.userId, ord.userId),
-              eq(entitlements.resourceId, product.resourceId),
-              eq(entitlements.status, 'ACTIVE'),
-            ),
-          )
-          .limit(1);
+      for (const { product } of items) {
+        if (product.productType === 'RESOURCE' && product.resourceId) {
+          // Check if user already holds an active entitlement for this resource
+          const [existingActive] = await tx
+            .select()
+            .from(entitlements)
+            .where(
+              and(
+                eq(entitlements.userId, ord.userId),
+                eq(entitlements.resourceId, product.resourceId),
+                eq(entitlements.status, 'ACTIVE'),
+              ),
+            )
+            .limit(1);
 
-        if (!existingActive) {
-          await this.db.insert(entitlements).values({
-            userId: ord.userId,
-            resourceId: product.resourceId,
-            sourceOrderId: ord.id,
-            status: 'ACTIVE',
-            startsAt: now,
-          });
-          entitlementsGranted++;
+          if (!existingActive) {
+            await tx.insert(entitlements).values({
+              userId: ord.userId,
+              resourceId: product.resourceId,
+              sourceOrderId: ord.id,
+              status: 'ACTIVE',
+              startsAt: now,
+            });
+            entitlementsGranted++;
+          }
         }
       }
-    }
 
-    const orderDto = {
-      ...this.mapOrder(updatedOrder),
-      items: await this.getOrderItems(updatedOrder.id),
-    };
+      // 4. Record contributor earnings for eligible resources (Prompt 22)
+      await this.contributorFinanceService.recordOrderEarnings(tx, ord.id, now);
 
-    return {
-      payment: this.mapPayment(updatedPayment),
-      order: orderDto,
-      entitlementsGranted,
-    };
+      const orderDto = {
+        ...this.mapOrder(updatedOrder),
+        items: await this.getOrderItems(updatedOrder.id),
+      };
+
+      return {
+        payment: this.mapPayment(updatedPayment),
+        order: orderDto,
+        entitlementsGranted,
+      };
+    });
   }
 
   /**
@@ -861,6 +874,9 @@ export class CommerceService {
           }
         }
       }
+
+      // 9. Record contributor earnings for eligible resources (Prompt 22)
+      await this.contributorFinanceService.recordOrderEarnings(tx, ord.id, now);
 
       return {
         ack: { ResultCode: 0, ResultDesc: 'Accepted' },

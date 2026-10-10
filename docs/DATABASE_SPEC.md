@@ -1750,18 +1750,27 @@ Contributor verification is separate from resource verification.
 Fields:
 
 ```text
-id UUID PK
-name VARCHAR NOT NULL
-percentage NUMERIC(7,4) NULL
-fixed_amount_minor BIGINT NULL
-currency_code VARCHAR NULL
-effective_from TIMESTAMPTZ NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+name VARCHAR(100) NOT NULL
+contributor_share_basis_points INTEGER NOT NULL DEFAULT 7000
+percentage NUMERIC(7,4) NOT NULL DEFAULT 70.0000
+currency_code VARCHAR(3) NOT NULL DEFAULT 'KES'
+effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW()
 effective_to TIMESTAMPTZ NULL
-status VARCHAR NOT NULL
-created_at TIMESTAMPTZ
+status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ```
 
-Revenue rules are historical.
+Constraints & Indexes:
+* `chk_revenue_rules_status`: CHECK (status IN ('ACTIVE', 'INACTIVE', 'RETIRED'))
+* `chk_revenue_rules_currency`: CHECK (currency_code = 'KES')
+* `chk_revenue_rules_bps`: CHECK (contributor_share_basis_points >= 0 AND contributor_share_basis_points <= 10000)
+* `chk_revenue_rules_pct`: CHECK (percentage >= 0 AND percentage <= 100)
+* `chk_revenue_rules_dates`: CHECK (effective_to IS NULL OR effective_to >= effective_from)
+* Indexes: `idx_revenue_rules_status` ON (status, effective_from)
+
+Revenue rules are effective-dated and historical. Overlapping active rules are prevented.
 
 ---
 
@@ -1770,20 +1779,33 @@ Revenue rules are historical.
 Fields:
 
 ```text
-id UUID PK
-contributor_id UUID FK
-order_id UUID NULL FK
-resource_id UUID NULL FK
+id UUID PK DEFAULT gen_random_uuid()
+contributor_id UUID NOT NULL FK (REFERENCES community.contributors(id) ON DELETE RESTRICT)
+order_id UUID NOT NULL FK (REFERENCES commerce.orders(id) ON DELETE RESTRICT)
+order_item_id UUID NOT NULL FK (REFERENCES commerce.order_items(id) ON DELETE RESTRICT)
+resource_id UUID NOT NULL FK (REFERENCES content.resources(id) ON DELETE RESTRICT)
+revenue_rule_id UUID NOT NULL FK (REFERENCES community.contributor_revenue_rules(id) ON DELETE RESTRICT)
 gross_amount_minor BIGINT NOT NULL
 platform_amount_minor BIGINT NOT NULL
 contributor_amount_minor BIGINT NOT NULL
-currency_code VARCHAR NOT NULL
-revenue_rule_id UUID NULL FK
-status VARCHAR NOT NULL
-created_at TIMESTAMPTZ
+currency_code VARCHAR(3) NOT NULL DEFAULT 'KES'
+status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+maturesAt TIMESTAMPTZ NOT NULL
+maturedAt TIMESTAMPTZ NULL
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ```
 
-Historical financial values must remain unchanged.
+Constraints & Protections:
+* `chk_earnings_status`: CHECK (status IN ('PENDING', 'AVAILABLE', 'PAID', 'CANCELLED'))
+* `chk_earnings_currency`: CHECK (currency_code = 'KES')
+* `chk_earnings_amounts_positive`: CHECK (gross_amount_minor >= 0 AND platform_amount_minor >= 0 AND contributor_amount_minor >= 0)
+* `chk_earnings_zero_sum`: CHECK (gross_amount_minor = (platform_amount_minor + contributor_amount_minor))
+* `chk_earnings_maturity`: CHECK ((status = 'PENDING') OR (status = 'AVAILABLE' AND matured_at IS NOT NULL) OR (status IN ('PAID', 'CANCELLED')))
+* Unique Constraint: `uq_earnings_order_item_contributor` UNIQUE (order_item_id, contributor_id) (guarantees idempotent attribution across duplicate callbacks)
+* Indexes: `idx_earnings_contributor_status`, `idx_earnings_order_id`, `idx_earnings_resource_id`, `idx_earnings_status_matures_at`, `idx_earnings_created_at`
+* Append-Only Protection: Trigger `trg_earnings_tampering` prevents all deletions and prevents updates to financial facts. Only valid status transitions (`PENDING -> AVAILABLE/CANCELLED`, `AVAILABLE -> PAID/CANCELLED`) are permitted.
+* 7-Day Maturity: Matures from `PENDING` to `AVAILABLE` after 7 days from payment completion. Historical financial values are strictly immutable.
 
 ---
 

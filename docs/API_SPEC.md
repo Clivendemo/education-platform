@@ -1439,16 +1439,74 @@ Response: 200 { data: ContributorPrivateDto }
 
 # 49. Contributor Financial API
 
-Authenticated contributor:
+Financial information requires strict authentication, permission checking, and tenant isolation. IDOR is prevented by deriving contributor identity directly from the authenticated session.
+
+### 49.1 Contributor Workspace Endpoints
 
 ```text
 GET /api/v1/me/contributor/earnings
-GET /api/v1/me/contributor/payouts
+Auth: Required (Permission: contributor.earnings.view)
+Query: ?status=PENDING&from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z&page=1&limit=20
+Response: 200 {
+  data: [
+    {
+      id: "uuid",
+      contributorId: "uuid",
+      orderId: "uuid",
+      orderItemId: "uuid",
+      resourceId: "uuid",
+      revenueRuleId: "uuid",
+      grossAmountMinor: "50000",
+      platformAmountMinor: "15000",
+      contributorAmountMinor: "35000",
+      currencyCode: "KES",
+      status: "PENDING" | "AVAILABLE" | "PAID" | "CANCELLED",
+      maturesAt: "2026-10-17T10:00:00.000Z",
+      maturedAt: "2026-10-17T10:00:00.000Z" | null,
+      createdAt: "2026-10-10T10:00:00.000Z"
+    }
+  ],
+  summary: {
+    lifetimeGrossMinor: "50000",
+    lifetimeContributorMinor: "35000",
+    pendingMinor: "35000",
+    availableMinor: "0",
+    paidMinor: "0"
+  },
+  pagination: { page: 1, limit: 20, total: 1, totalPages: 1 }
+}
 ```
 
-Financial information must have strict authorization.
+### 49.2 Administrative Governance Endpoints
 
-Historical earnings must preserve the revenue rule/value applicable at the time.
+```text
+GET /api/v1/admin/contributor-earnings
+Auth: Required (Permission: contributor.finance.manage)
+Query: ?contributorId=uuid&orderId=uuid&status=PENDING&from=isoDate&to=isoDate&page=1&limit=20
+Response: 200 { data: ContributorEarningDto[], summary, pagination }
+
+GET /api/v1/admin/contributor-revenue-rules
+Auth: Required (Permission: contributor.finance.manage)
+Response: 200 { data: ContributorRevenueRuleDto[] }
+
+POST /api/v1/admin/contributor-revenue-rules
+Auth: Required (Permission: contributor.finance.manage)
+Body: {
+  name: string,
+  contributorShareBasisPoints?: number, -- e.g. 7000
+  percentage?: number,                 -- e.g. 70.0
+  effectiveFrom?: string,              -- ISO datetime (default: now)
+  effectiveTo?: string | null,         -- ISO datetime or null
+  status?: 'ACTIVE' | 'INACTIVE'
+}
+Response: 201 { data: ContributorRevenueRuleDto }
+Errors: 409 OVERLAPPING_REVENUE_RULE (if active rule overlaps an existing active range)
+
+POST /api/v1/admin/contributor-earnings/mature
+Auth: Required (Permission: contributor.finance.manage)
+Body: { asOf?: string }
+Response: 200 { data: { maturedCount: number } }
+```
 
 ---
 

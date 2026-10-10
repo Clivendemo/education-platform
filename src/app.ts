@@ -32,6 +32,7 @@ import type { DownloadService } from './services/download.service.js';
 import type { CalendarService } from './services/calendar/calendar.service.js';
 import type { CommerceService } from './services/commerce/commerce.service.js';
 import type { ContributorService } from './services/contributor.service.js';
+import type { ContributorFinanceService } from './services/contributor-finance.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -55,6 +56,7 @@ export interface AppOptions extends FastifyServerOptions {
     calendarService?: CalendarService;
     commerceService?: CommerceService;
     contributorService?: ContributorService;
+    contributorFinanceService?: ContributorFinanceService;
   };
 }
 
@@ -193,6 +195,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(contributorRoutes, {
     prefix: '/api/v1',
     contributorService: services?.contributorService,
+    contributorFinanceService: services?.contributorFinanceService,
     authService: services?.authService,
     rbacService: services?.rbacService,
   });

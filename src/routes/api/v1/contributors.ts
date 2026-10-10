@@ -10,6 +10,11 @@ import {
   type ContributorApplicationStatus,
 } from '../../../services/contributor.service.js';
 import {
+  defaultContributorFinanceService,
+  type ContributorFinanceService,
+  ContributorFinanceError,
+} from '../../../services/contributor-finance.service.js';
+import {
   defaultAuthService,
   type AuthService,
 } from '../../../services/auth.service.js';
@@ -22,6 +27,7 @@ import { createRequirePermission } from '../../hooks/authorize.js';
 
 export interface ContributorRoutesOptions {
   contributorService?: ContributorService;
+  contributorFinanceService?: ContributorFinanceService;
   authService?: AuthService;
   rbacService?: RbacService;
 }
@@ -77,6 +83,30 @@ const AdminContributorStatusBodySchema = z.object({
   reason: z.string().optional(),
 });
 
+const EarningsQuerySchema = PaginationQuerySchema.extend({
+  status: z.enum(['PENDING', 'AVAILABLE', 'PAID', 'CANCELLED']).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+});
+
+const AdminEarningsQuerySchema = EarningsQuerySchema.extend({
+  contributorId: z.string().uuid().optional(),
+  orderId: z.string().uuid().optional(),
+});
+
+const CreateRevenueRuleBodySchema = z.object({
+  name: z.string().min(1).max(100),
+  contributorShareBasisPoints: z.number().int().min(0).max(10000).optional(),
+  percentage: z.number().min(0).max(100).optional(),
+  effectiveFrom: z.string().datetime().optional(),
+  effectiveTo: z.string().datetime().optional().nullable(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+});
+
+const MatureEarningsBodySchema = z.object({
+  asOf: z.string().datetime().optional(),
+});
+
 // ----------------------------------------------------------------------------
 // Fastify Plugin
 // ----------------------------------------------------------------------------
@@ -86,6 +116,8 @@ export const contributorRoutes: FastifyPluginAsync<ContributorRoutesOptions> = a
   opts,
 ) => {
   const service = opts.contributorService || defaultContributorService;
+  const financeService =
+    opts.contributorFinanceService || defaultContributorFinanceService;
   const authService = opts.authService || defaultAuthService;
   const rbacService = opts.rbacService || defaultRbacService;
 
@@ -95,7 +127,7 @@ export const contributorRoutes: FastifyPluginAsync<ContributorRoutesOptions> = a
 
   // Error Handler
   fastify.setErrorHandler((error, request, reply) => {
-    if (error instanceof ContributorError) {
+    if (error instanceof ContributorError || error instanceof ContributorFinanceError) {
       return reply.status(error.statusCode).send({
         error: {
           code: error.code,
@@ -185,6 +217,24 @@ export const contributorRoutes: FastifyPluginAsync<ContributorRoutesOptions> = a
       const body = UpdateProfileBodySchema.parse(request.body);
       const updated = await service.updateMyProfile(request.user!.id, body);
       return reply.status(200).send({ data: updated });
+    },
+  );
+
+  // GET /api/v1/me/contributor/earnings
+  fastify.get(
+    '/me/contributor/earnings',
+    { preHandler: [requireAuth, requirePermission('contributor.earnings.view')] },
+    async (request, reply) => {
+      const profile = await service.getMyProfile(request.user!.id);
+      const query = EarningsQuerySchema.parse(request.query);
+      const result = await financeService.getContributorEarnings(profile.id, {
+        page: query.page,
+        limit: query.limit,
+        status: query.status,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+      });
+      return reply.status(200).send(result);
     },
   );
 
@@ -337,6 +387,74 @@ export const contributorRoutes: FastifyPluginAsync<ContributorRoutesOptions> = a
         body.reason,
       );
       return reply.status(200).send({ data: updated });
+    },
+  );
+
+  // ==========================================================================
+  // Administrative Finance Endpoints (Prompt 22)
+  // ==========================================================================
+
+  // GET /api/v1/admin/contributor-earnings
+  fastify.get(
+    '/admin/contributor-earnings',
+    { preHandler: [requireAuth, requirePermission('contributor.finance.manage')] },
+    async (request, reply) => {
+      const query = AdminEarningsQuerySchema.parse(request.query);
+      const result = await financeService.getAdminEarnings({
+        contributorId: query.contributorId,
+        orderId: query.orderId,
+        page: query.page,
+        limit: query.limit,
+        status: query.status,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+      });
+      return reply.status(200).send(result);
+    },
+  );
+
+  // GET /api/v1/admin/contributor-revenue-rules
+  fastify.get(
+    '/admin/contributor-revenue-rules',
+    { preHandler: [requireAuth, requirePermission('contributor.finance.manage')] },
+    async (_request, reply) => {
+      const rules = await financeService.listRevenueRules();
+      return reply.status(200).send({ data: rules });
+    },
+  );
+
+  // POST /api/v1/admin/contributor-revenue-rules
+  fastify.post(
+    '/admin/contributor-revenue-rules',
+    { preHandler: [requireAuth, requirePermission('contributor.finance.manage')] },
+    async (request, reply) => {
+      const body = CreateRevenueRuleBodySchema.parse(request.body);
+      const rule = await financeService.createRevenueRule({
+        name: body.name,
+        contributorShareBasisPoints: body.contributorShareBasisPoints,
+        percentage: body.percentage,
+        effectiveFrom: body.effectiveFrom ? new Date(body.effectiveFrom) : undefined,
+        effectiveTo:
+          body.effectiveTo === null
+            ? null
+            : body.effectiveTo
+              ? new Date(body.effectiveTo)
+              : undefined,
+        status: body.status,
+      });
+      return reply.status(201).send({ data: rule });
+    },
+  );
+
+  // POST /api/v1/admin/contributor-earnings/mature
+  fastify.post(
+    '/admin/contributor-earnings/mature',
+    { preHandler: [requireAuth, requirePermission('contributor.finance.manage')] },
+    async (request, reply) => {
+      const body = MatureEarningsBodySchema.parse(request.body ?? {});
+      const asOf = body.asOf ? new Date(body.asOf) : new Date();
+      const result = await financeService.matureEligibleEarnings(asOf);
+      return reply.status(200).send({ data: result });
     },
   );
 };
