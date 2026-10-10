@@ -1622,17 +1622,27 @@ Fields:
 
 ```text
 id UUID PK
-user_id UUID FK
-display_name VARCHAR NOT NULL
+user_id UUID FK (REFERENCES identity.users(id) ON DELETE RESTRICT)
+display_name VARCHAR(100) NOT NULL
 bio TEXT NULL
-profile_slug VARCHAR NOT NULL
-verification_status VARCHAR NOT NULL
-status VARCHAR NOT NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+profile_slug VARCHAR(100) NOT NULL
+verification_status VARCHAR(30) NOT NULL DEFAULT 'UNVERIFIED'
+status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
+created_at TIMESTAMPTZ DEFAULT NOW()
+updated_at TIMESTAMPTZ DEFAULT NOW()
 suspended_at TIMESTAMPTZ NULL
-suspended_by UUID NULL
+suspended_by UUID NULL (REFERENCES identity.users(id) ON DELETE SET NULL)
 ```
+
+Constraints & Indexes:
+* `uq_contributors_user_id`: UNIQUE (user_id)
+* `uq_contributors_profile_slug`: UNIQUE (profile_slug)
+* `chk_contributors_status`: CHECK (status IN ('ACTIVE', 'PENDING_APPROVAL', 'SUSPENDED', 'INACTIVE'))
+* `chk_contributors_verification`: CHECK (verification_status IN ('UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED'))
+* `chk_contributors_display_name`: CHECK (length(trim(display_name)) > 0 AND length(display_name) <= 100)
+* `chk_contributors_slug`: CHECK (length(trim(profile_slug)) > 0 AND profile_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$')
+* `chk_contributors_suspension`: CHECK ((status = 'SUSPENDED' AND suspended_at IS NOT NULL) OR (status != 'SUSPENDED'))
+* Indexes: `idx_contributors_status`, `idx_contributors_verification`
 
 Contributor profile is separate from user profile.
 
@@ -1644,14 +1654,22 @@ Fields:
 
 ```text
 id UUID PK
-user_id UUID FK
-application_text TEXT NULL
-status VARCHAR NOT NULL
+user_id UUID FK (REFERENCES identity.users(id) ON DELETE RESTRICT)
+application_text TEXT NOT NULL
+status VARCHAR(30) NOT NULL DEFAULT 'SUBMITTED'
 review_notes TEXT NULL
-submitted_at TIMESTAMPTZ
+submitted_at TIMESTAMPTZ DEFAULT NOW()
 reviewed_at TIMESTAMPTZ NULL
-reviewed_by UUID NULL
+reviewed_by UUID NULL (REFERENCES identity.users(id) ON DELETE SET NULL)
 ```
+
+Constraints & Indexes:
+* `chk_contributor_app_status`: CHECK (status IN ('SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED'))
+* `chk_contributor_app_text`: CHECK (length(trim(application_text)) > 0)
+* `chk_contributor_app_review`: CHECK ((status IN ('APPROVED', 'REJECTED') AND reviewed_at IS NOT NULL AND reviewed_by IS NOT NULL) OR (status IN ('SUBMITTED', 'UNDER_REVIEW')))
+* `chk_contributor_app_rejection_notes`: CHECK ((status = 'REJECTED' AND review_notes IS NOT NULL AND length(trim(review_notes)) > 0) OR (status != 'REJECTED'))
+* Partial unique index: `uq_contributor_active_application` ON (user_id) WHERE status IN ('SUBMITTED', 'UNDER_REVIEW')
+* Indexes: `idx_contributor_apps_user_id`, `idx_contributor_apps_status`
 
 ---
 
@@ -1661,19 +1679,25 @@ Fields:
 
 ```text
 id UUID PK
-contributor_id UUID FK
-title VARCHAR NOT NULL
+contributor_id UUID FK (REFERENCES community.contributors(id) ON DELETE RESTRICT)
+title VARCHAR(255) NOT NULL
 description TEXT NULL
 proposed_price_minor BIGINT NULL
-proposed_currency_code VARCHAR NULL
-status VARCHAR NOT NULL
-resource_id UUID NULL FK
-submitted_at TIMESTAMPTZ
+proposed_currency_code VARCHAR(3) NULL
+status VARCHAR(30) NOT NULL DEFAULT 'DRAFT'
+resource_id UUID NULL FK (REFERENCES content.resources(id) ON DELETE SET NULL)
+submitted_at TIMESTAMPTZ NULL
 reviewed_at TIMESTAMPTZ NULL
-reviewed_by UUID NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+reviewed_by UUID NULL (REFERENCES identity.users(id) ON DELETE SET NULL)
+created_at TIMESTAMPTZ DEFAULT NOW()
+updated_at TIMESTAMPTZ DEFAULT NOW()
 ```
+
+Constraints & Indexes:
+* `chk_contributor_subs_status`: CHECK (status IN ('DRAFT', 'SUBMITTED', 'PROCESSING', 'REVIEW', 'APPROVED', 'REJECTED', 'PUBLISHED'))
+* `chk_contributor_subs_title`: CHECK (length(trim(title)) > 0)
+* `chk_contributor_subs_pricing`: CHECK ((proposed_price_minor IS NULL AND proposed_currency_code IS NULL) OR (proposed_price_minor >= 0 AND proposed_currency_code = 'KES'))
+* Indexes: `idx_contributor_subs_contributor_id`, `idx_contributor_subs_status`, `idx_contributor_subs_resource_id`
 
 Workflow:
 

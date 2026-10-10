@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { sql } from 'drizzle-orm';
+import { sql, eq } from 'drizzle-orm';
 import { db as defaultDb, closeDatabase, type AppDatabase } from '../index.js';
 import {
   roles,
@@ -52,6 +52,12 @@ export const CANONICAL_ROLES: SeedRoleDefinition[] = [
     slug: 'standard_user',
     roleType: 'SYSTEM',
     description: 'Baseline public learner or registered member; access to personal library and public materials.',
+  },
+  {
+    name: 'Educational Contributor',
+    slug: 'contributor',
+    roleType: 'ORGANIZATIONAL',
+    description: 'Approved educator or author permitted to submit educational resources for editorial review.',
   },
 ];
 
@@ -133,6 +139,48 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Assign or revoke roles and scopes on user accounts.',
   },
+  {
+    name: 'contributor.apply',
+    resource: 'contributor',
+    action: 'apply',
+    scopeType: 'GLOBAL',
+    description: 'Submit an application to become an educational contributor.',
+  },
+  {
+    name: 'contributor.profile.read',
+    resource: 'contributor',
+    action: 'profile_read',
+    scopeType: 'GLOBAL',
+    description: 'View private contributor profile and workspace dashboard.',
+  },
+  {
+    name: 'contributor.profile.update',
+    resource: 'contributor',
+    action: 'profile_update',
+    scopeType: 'GLOBAL',
+    description: 'Update own contributor public bio and display name.',
+  },
+  {
+    name: 'contributor.submit',
+    resource: 'contributor',
+    action: 'submit',
+    scopeType: 'GLOBAL',
+    description: 'Create and submit candidate resources for editorial review.',
+  },
+  {
+    name: 'contributor.application.review',
+    resource: 'contributor',
+    action: 'application_review',
+    scopeType: 'GLOBAL',
+    description: 'Review, approve, or reject contributor applications and candidate submissions.',
+  },
+  {
+    name: 'contributor.manage',
+    resource: 'contributor',
+    action: 'manage',
+    scopeType: 'GLOBAL',
+    description: 'Manage contributor verification, lifecycle suspension, and administrative oversight.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -148,6 +196,12 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.archive',
     'user.read',
     'user.manage_roles',
+    'contributor.apply',
+    'contributor.profile.read',
+    'contributor.profile.update',
+    'contributor.submit',
+    'contributor.application.review',
+    'contributor.manage',
   ],
   content_manager: [
     'resource.read',
@@ -159,12 +213,15 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.reject',
     'resource.publish',
     'resource.archive',
+    'contributor.application.review',
+    'contributor.manage',
   ],
   content_reviewer: [
     'resource.read',
     'resource.review',
     'resource.approve',
     'resource.reject',
+    'contributor.application.review',
   ],
   verified_teacher: [
     'resource.read',
@@ -172,8 +229,15 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.update',
     'resource.submit',
   ],
+  contributor: [
+    'resource.read',
+    'contributor.profile.read',
+    'contributor.profile.update',
+    'contributor.submit',
+  ],
   standard_user: [
     'resource.read',
+    'contributor.apply',
   ],
 };
 
@@ -186,12 +250,18 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
   permissionsCount: number;
   mappingsCount: number;
 }> {
-  // Fast-path: if canonical role_permissions are already seeded, return immediately
+  // Fast-path: if canonical role_permissions are already seeded including contributor, return immediately
   const [existing] = await dbInstance
     .select({ count: sql<string>`count(*)` })
     .from(rolePermissions);
 
-  if (Number(existing?.count) >= 29) {
+  const [contributorRole] = await dbInstance
+    .select({ id: roles.id })
+    .from(roles)
+    .where(eq(roles.slug, 'contributor'))
+    .limit(1);
+
+  if (Number(existing?.count) >= 42 && contributorRole) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

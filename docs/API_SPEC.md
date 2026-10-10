@@ -1326,50 +1326,114 @@ Temporary generated files must use controlled storage and expiry.
 
 # 47. Contributors
 
-Public:
+Public Discovery:
 
 ```text
 GET /api/v1/contributors
+Query: ?page=1&limit=20
+Response: 200 { data: ContributorPublicDto[], pagination: { page, limit, total, totalPages } }
+
 GET /api/v1/contributors/:slug
+Response: 200 { data: ContributorPublicDto } | 404 (if not found or status !== 'ACTIVE')
+
 GET /api/v1/contributors/:slug/resources
+Query: ?page=1&limit=20
+Response: 200 { data: Resource[], pagination: { page, limit, total, totalPages } } | 404
 ```
 
-Contributor application:
+Contributor Application Workflow:
 
 ```text
 POST /api/v1/contributor-applications
+Auth: Required (Standard User)
+Body: { applicationText: string }
+Response: 201 { data: ContributorApplicationDto } | 409 DUPLICATE_APPLICATION (if active app already pending)
 ```
 
-Contributor workspace:
+Contributor Workspace:
 
 ```text
 GET /api/v1/me/contributor
+Auth: Required
+Response: 200 { data: ContributorPrivateDto } | 404 NOT_A_CONTRIBUTOR
+
+PATCH /api/v1/me/contributor
+Auth: Required (Permission: contributor.profile.update)
+Body: { displayName?: string, bio?: string | null }
+Response: 200 { data: ContributorPrivateDto } | 403 CONTRIBUTOR_SUSPENDED
+
 GET /api/v1/me/contributor/submissions
+Auth: Required (Permission: contributor.submit)
+Query: ?page=1&limit=20
+Response: 200 { data: ContributorSubmissionDto[], pagination }
+
 POST /api/v1/me/contributor/submissions
+Auth: Required (Permission: contributor.submit)
+Body: { title: string, description?: string | null, proposedPriceMinor?: number | null, proposedCurrencyCode?: 'KES' | null, resourceId?: string | null }
+Response: 201 { data: ContributorSubmissionDto } | 403 CONTRIBUTOR_SUSPENDED
+
 GET /api/v1/me/contributor/submissions/:id
+Auth: Required (Permission: contributor.submit)
+Response: 200 { data: ContributorSubmissionDto } | 404 SUBMISSION_NOT_FOUND (isolated to owning contributor)
+
+PATCH /api/v1/me/contributor/submissions/:id
+Auth: Required (Permission: contributor.submit)
+Body: { title?: string, description?: string | null, proposedPriceMinor?: number | null, proposedCurrencyCode?: 'KES' | null }
+Response: 200 { data: ContributorSubmissionDto } | 400 SUBMISSION_LOCKED (if status !== 'DRAFT')
+
+POST /api/v1/me/contributor/submissions/:id/submit
+Auth: Required (Permission: contributor.submit)
+Response: 200 { data: ContributorSubmissionDto (status: 'SUBMITTED') } | 400 SUBMISSION_LOCKED
 ```
 
-Contributor access requires appropriate role/relationship.
+Contributor access requires appropriate role and active lifecycle standing.
 
 ---
 
-# 48. Contributor Submissions
+# 48. Contributor Submissions & Editorial Review
 
 Submission workflow:
 
 ```text
 Application
-→ Review
-→ Approval
-→ Workspace
-→ Submission
-→ Processing
-→ Review
-→ Approval
-→ Resource
+→ Review & Approval (creates profile, assigns 'contributor' role)
+→ Workspace Draft
+→ Submission (DRAFT → SUBMITTED)
+→ Editorial Review (APPROVE / REJECT)
+→ Controlled Resource Linking (resources.contributor_id)
+→ Editorial Publication (PublicationService only)
 ```
 
 A contributor must not be able to directly publish content.
+
+Administrative Review Endpoints:
+
+```text
+GET /api/v1/admin/contributor-applications
+Auth: Required (Permission: contributor.application.review)
+Query: ?status=SUBMITTED&page=1&limit=20
+Response: 200 { data: ContributorApplicationDto[], pagination }
+
+POST /api/v1/admin/contributor-applications/:id/review
+Auth: Required (Permission: contributor.application.review)
+Body: { action: 'APPROVE' | 'REJECT', notes?: string }
+Response: 200 { data: { application, contributor? } }
+
+POST /api/v1/admin/contributor-submissions/:id/review
+Auth: Required (Permission: contributor.application.review)
+Body: { action: 'APPROVE' | 'REJECT', notes?: string }
+Response: 200 { data: ContributorSubmissionDto }
+
+GET /api/v1/admin/contributors
+Auth: Required (Permission: contributor.manage)
+Query: ?status=ACTIVE&page=1&limit=20
+Response: 200 { data: ContributorPrivateDto[], pagination }
+
+PATCH /api/v1/admin/contributors/:id/status
+Auth: Required (Permission: contributor.manage)
+Body: { status: 'ACTIVE' | 'PENDING_APPROVAL' | 'SUSPENDED' | 'INACTIVE', reason?: string }
+Response: 200 { data: ContributorPrivateDto }
+```
 
 ---
 

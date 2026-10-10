@@ -22,6 +22,7 @@ import {
   subjects,
   topics,
 } from './curriculum.js';
+import { contributors } from './community.js';
 
 /**
  * 8 Approved MVP Content Pillars
@@ -168,6 +169,9 @@ export const resources = contentSchema.table(
     sourceReference: varchar('source_reference', { length: 255 }),
     academicYear: integer('academic_year'),
     term: integer('term'),
+    contributorId: uuid('contributor_id').references(() => contributors.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -268,6 +272,7 @@ export const resources = contentSchema.table(
     index('idx_resources_subject_id').on(table.subjectId),
     index('idx_resources_topic_id').on(table.topicId),
     index('idx_resources_academic_year').on(table.academicYear),
+    index('idx_resources_contributor_id').on(table.contributorId),
   ],
 );
 
