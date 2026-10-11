@@ -518,15 +518,22 @@ describe('Contributor System HTTP Route Integration Tests', () => {
     });
 
     it('lists public contributors with published resource count', async () => {
-      const res = await app.inject({
-        method: 'GET',
-        url: '/api/v1/contributors',
-      });
+      let found: any = undefined;
+      let page = 1;
+      while (!found && page <= 5) {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/v1/contributors?page=${page}&limit=100`,
+        });
 
-      expect(res.statusCode).toBe(200);
-      const json = res.json();
-      expect(Array.isArray(json.data)).toBe(true);
-      const found = json.data.find((c: any) => c.profileSlug === createdContributorSlug);
+        expect(res.statusCode).toBe(200);
+        const json = res.json();
+        expect(Array.isArray(json.data)).toBe(true);
+        found = json.data.find((c: any) => c.profileSlug === createdContributorSlug);
+        if (json.data.length < 100) break;
+        page++;
+      }
+
       expect(found).toBeDefined();
       expect(found.publishedResourcesCount).toBeGreaterThanOrEqual(1);
 
