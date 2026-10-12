@@ -650,16 +650,16 @@ ANONYMOUS_SESSION
 
 | Component                | Status      | Notes |
 | ------------------------ | ----------- | ----- |
-| Education updates        | NOT_STARTED |       |
-| Update categories        | NOT_STARTED |       |
-| Curriculum relationships | NOT_STARTED |       |
-| Resource relationships   | NOT_STARTED |       |
-| Draft workflow           | NOT_STARTED |       |
-| Review workflow          | NOT_STARTED |       |
-| Publication              | NOT_STARTED |       |
-| Archive                  | NOT_STARTED |       |
-| SEO                      | NOT_STARTED |       |
-| Search integration       | NOT_STARTED |       |
+| Education updates        | VERIFIED    | Prompt 23; `content.education_updates` dedicated entity, nullable country_id for regional updates, unique slugs |
+| Update categories        | VERIFIED    | Prompt 23; `content.education_update_categories` classification with seed data |
+| Curriculum relationships | VERIFIED    | Prompt 23; `content.education_update_curricula` junction table with country-consistency validation |
+| Resource relationships   | VERIFIED    | Prompt 23; `content.education_update_resources` junction table with public draft leakage prevention |
+| Draft workflow           | VERIFIED    | Prompt 23; initial status strictly `DRAFT`, required content validation before publish |
+| Review workflow          | NOT_STARTED | Not in Prompt 23 scope; updates managed by content_manager and system_admin |
+| Publication              | VERIFIED    | Prompt 23; `POST /admin/updates/:id/publish`, sets `published_at` on first publish and preserves on edit |
+| Archive                  | VERIFIED    | Prompt 23; `POST /admin/updates/:id/archive`, terminal state, hides immediately from public |
+| SEO                      | VERIFIED    | Prompt 23; canonical URLs (country & regional), OpenGraph article, Twitter summary, robots meta |
+| Search integration       | VERIFIED    | Prompt 23; title and summary search in public and administrative listing endpoints |
 
 Education Updates remain a dedicated entity.
 
@@ -1034,9 +1034,9 @@ Every major implementation stage should have a Git checkpoint.
 | Commerce                 | VERIFIED    | Prompt 18 implemented & verified |
 | M-Pesa                   | VERIFIED    | Prompt 19 implemented & verified |
 | Premium downloads        | VERIFIED    | Prompt 20 implemented & verified |
-| Contributors             | NOT_STARTED |        |
-| Contributor finance      | NOT_STARTED |        |
-| Education updates        | NOT_STARTED |        |
+| Contributors             | VERIFIED    | Prompt 21 implemented & verified |
+| Contributor finance      | VERIFIED    | Prompt 22 implemented & verified |
+| Education updates        | VERIFIED    | Prompt 23 implemented & verified |
 | Quality governance       | NOT_STARTED |        |
 | Feedback                 | NOT_STARTED |        |
 | Notifications            | NOT_STARTED |        |

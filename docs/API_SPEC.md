@@ -1518,6 +1518,7 @@ Public:
 
 ```text
 GET /api/v1/updates
+GET /api/v1/updates/categories
 GET /api/v1/updates/:slug
 GET /api/v1/updates/:slug/related
 ```
@@ -1529,6 +1530,8 @@ POST /api/v1/admin/updates
 PATCH /api/v1/admin/updates/:id
 POST /api/v1/admin/updates/:id/publish
 POST /api/v1/admin/updates/:id/archive
+GET /api/v1/admin/updates
+GET /api/v1/admin/updates/:id
 ```
 
 Education Updates must not be forced into the Resource entity.

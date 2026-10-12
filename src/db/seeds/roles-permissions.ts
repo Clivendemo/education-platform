@@ -195,6 +195,41 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Manage contributor revenue rules, audit earnings, and administrative financial oversight.',
   },
+  {
+    name: 'update.create',
+    resource: 'update',
+    action: 'create',
+    scopeType: 'GLOBAL',
+    description: 'Create draft education updates and circulars.',
+  },
+  {
+    name: 'update.edit',
+    resource: 'update',
+    action: 'edit',
+    scopeType: 'GLOBAL',
+    description: 'Modify draft or published education updates.',
+  },
+  {
+    name: 'update.publish',
+    resource: 'update',
+    action: 'publish',
+    scopeType: 'GLOBAL',
+    description: 'Release education updates to the public portal.',
+  },
+  {
+    name: 'update.archive',
+    resource: 'update',
+    action: 'archive',
+    scopeType: 'GLOBAL',
+    description: 'Archive education updates, removing them from public access.',
+  },
+  {
+    name: 'update.read',
+    resource: 'update',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View drafts and administrative details of education updates.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -218,6 +253,11 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'contributor.manage',
     'contributor.earnings.view',
     'contributor.finance.manage',
+    'update.create',
+    'update.edit',
+    'update.publish',
+    'update.archive',
+    'update.read',
   ],
   content_manager: [
     'resource.read',
@@ -231,6 +271,11 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.archive',
     'contributor.application.review',
     'contributor.manage',
+    'update.create',
+    'update.edit',
+    'update.publish',
+    'update.archive',
+    'update.read',
   ],
   content_reviewer: [
     'resource.read',
@@ -284,7 +329,13 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'contributor.finance.manage'))
     .limit(1);
 
-  if (Number(existing?.count) >= 45 && contributorRole && financePerm) {
+  const [updatePerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'update.publish'))
+    .limit(1);
+
+  if (Number(existing?.count) >= 55 && contributorRole && financePerm && updatePerm) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

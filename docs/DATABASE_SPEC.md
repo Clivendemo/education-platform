@@ -1838,6 +1838,8 @@ Fields:
 
 ```text
 id UUID PK
+country_id UUID NULL FK platform.countries(id)
+category_id UUID NULL FK content.education_update_categories(id)
 title VARCHAR NOT NULL
 slug VARCHAR NOT NULL
 summary TEXT NULL

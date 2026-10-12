@@ -9,3 +9,4 @@ export * from './schema/identity.js';
 export * from './schema/calendar.js';
 export * from './schema/commerce.js';
 export * from './schema/community.js';
+export * from './schema/updates.js';
