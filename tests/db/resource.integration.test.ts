@@ -639,14 +639,16 @@ describe('Resource Engine Database Integration Tests', () => {
 
     it('rejects cross-country curriculum relationship: Kenya resource with Tanzania curriculum', async () => {
       // Create Tanzania curriculum
-      const [tzCur] = await db
-        .insert(curricula)
-        .values({
-          countryId: tanzaniaId,
-          name: `TZ Curriculum ${Date.now()}`,
-          slug: `tz-curr-${Date.now()}`,
-        })
-        .returning();
+      const [tzCur] = await withDbRetry(() =>
+        db
+          .insert(curricula)
+          .values({
+            countryId: tanzaniaId,
+            name: `TZ Curriculum ${Date.now()}`,
+            slug: `tz-curr-${Date.now()}`,
+          })
+          .returning(),
+      );
       createdCurriculaIds.push(tzCur.id);
 
       await expect(
@@ -661,26 +663,30 @@ describe('Resource Engine Database Integration Tests', () => {
     });
 
     it('enforces RESTRICT on deleting a school referenced by a resource', async () => {
-      const [tempSchool] = await db
-        .insert(schools)
-        .values({
-          countryId: kenyaId,
-          name: `Deletable School ${Date.now()}`,
-          schoolType: 'PRIMARY',
-        })
-        .returning();
+      const [tempSchool] = await withDbRetry(() =>
+        db
+          .insert(schools)
+          .values({
+            countryId: kenyaId,
+            name: `Deletable School ${Date.now()}`,
+            schoolType: 'PRIMARY',
+          })
+          .returning(),
+      );
       createdSchoolIds.push(tempSchool.id);
 
-      const [depRes] = await db
-        .insert(resources)
-        .values({
-          countryId: kenyaId,
-          resourceTypeId: pastPaperTypeId,
-          schoolId: tempSchool.id,
-          title: '[STRUCTURAL-TEST] School Dependent Resource',
-          slug: `dep-sch-${Date.now()}`,
-        })
-        .returning();
+      const [depRes] = await withDbRetry(() =>
+        db
+          .insert(resources)
+          .values({
+            countryId: kenyaId,
+            resourceTypeId: pastPaperTypeId,
+            schoolId: tempSchool.id,
+            title: '[STRUCTURAL-TEST] School Dependent Resource',
+            slug: `dep-sch-${Date.now()}`,
+          })
+          .returning(),
+      );
       createdResourceIds.push(depRes.id);
 
       // Attempting to delete the school must fail due to RESTRICT

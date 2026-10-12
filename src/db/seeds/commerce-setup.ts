@@ -4,6 +4,15 @@ import { getDb, closeDatabase } from '../index.js';
 import * as schemas from '../schemas.js';
 
 export async function setupCommerceSchema(db: NodePgDatabase<typeof schemas>): Promise<void> {
+  // Fast path: if commerce schema tables already exist, skip redundant DDL executions
+  const check = await db.execute(sql`
+    SELECT 1 FROM information_schema.tables 
+    WHERE table_schema = 'commerce' AND table_name = 'orders' LIMIT 1
+  `);
+  if (check.rows.length > 0) {
+    return;
+  }
+
   // 1. Create commerce logical schema
   await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "commerce"`);
 

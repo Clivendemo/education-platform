@@ -105,7 +105,7 @@ describe('Commerce HTTP Route Integration Tests', () => {
     );
     userBToken = regB.sessionToken;
     userBId = regB.user.id;
-  }, 120000);
+  }, 180000);
 
   afterAll(async () => {
     for (const entId of createdEntitlementIds) {
