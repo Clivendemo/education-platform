@@ -1,4 +1,4 @@
-import { eq, and, sql, isNull, gt, lte, or } from 'drizzle-orm';
+import { eq, and, sql, isNull, gt, lte, or, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { db as defaultDb } from '../../db/index.js';
 import * as schemas from '../../db/schemas.js';
@@ -195,29 +195,36 @@ export class CommerceService {
       .from(products)
       .where(eq(products.status, 'ACTIVE'));
 
-    const result: ProductDto[] = [];
-
-    for (const p of activeProductRows) {
-      // Find active offers valid right now
-      const activeOffers = await this.db
-        .select()
-        .from(offers)
-        .where(
-          and(
-            eq(offers.productId, p.id),
-            eq(offers.commercialStatus, 'ACTIVE'),
-            or(isNull(offers.startsAt), lte(offers.startsAt, now)),
-            or(isNull(offers.endsAt), gt(offers.endsAt, now)),
-          ),
-        );
-
-      result.push({
-        ...this.mapProduct(p),
-        activeOffers: activeOffers.map((o) => this.mapOffer(o)),
-      });
+    if (activeProductRows.length === 0) {
+      return [];
     }
 
-    return result;
+    const productIds = activeProductRows.map((p) => p.id);
+
+    // Batch fetch active offers across all products in a single query (eliminating N+1)
+    const activeOffers = await this.db
+      .select()
+      .from(offers)
+      .where(
+        and(
+          inArray(offers.productId, productIds),
+          eq(offers.commercialStatus, 'ACTIVE'),
+          or(isNull(offers.startsAt), lte(offers.startsAt, now)),
+          or(isNull(offers.endsAt), gt(offers.endsAt, now)),
+        ),
+      );
+
+    const offersByProduct = new Map<string, typeof activeOffers>();
+    for (const off of activeOffers) {
+      const list = offersByProduct.get(off.productId) || [];
+      list.push(off);
+      offersByProduct.set(off.productId, list);
+    }
+
+    return activeProductRows.map((p) => ({
+      ...this.mapProduct(p),
+      activeOffers: (offersByProduct.get(p.id) || []).map((o) => this.mapOffer(o)),
+    }));
   }
 
   /**
