@@ -1538,33 +1538,83 @@ Education Updates must not be forced into the Resource entity.
 
 ---
 
-# 51. Quality and Verification
+# 51. Quality and Verification (Prompt 24)
 
-Public resource quality information may be returned with resource data.
-
-Example:
+### Public Resource Quality Projection
+Public endpoints (`/api/v1/resources/:id`, `/api/v1/catalogue`, `/api/v1/search`) return high-level pedagogical verification information without leaking internal review notes, reviewer identities, or audit histories:
 
 ```json
 {
   "quality": {
     "label": "VERIFIED",
-    "displayMark": "✓"
+    "displayMark": "✓",
+    "isVerified": true,
+    "verifiedAt": "2026-10-12T08:00:00.000Z"
   }
 }
 ```
 
-Detailed internal review information must not be exposed.
+* `STANDARD`: Baseline unverified educational content (free download).
+* `PREMIUM`: Monetized educational asset requiring active entitlement (download gated). A resource may be both Premium and Verified (`isVerified: true`, `displayMark: "✓"`, commercial tier `PREMIUM`).
+* Direct assignment of `VERIFIED` on create/update endpoints is strictly prohibited.
+* No numerical ratings, public comments, or review scores.
 
-Admin:
+### Administrative Quality Governance Endpoints
 
 ```text
-GET /api/v1/admin/resources/:id/quality
+GET  /api/v1/admin/quality/check-types
+GET  /api/v1/admin/resources/:id/quality
 POST /api/v1/admin/resources/:id/quality-checks
 POST /api/v1/admin/resources/:id/verify
 POST /api/v1/admin/resources/:id/revoke-verification
 ```
 
-No numerical quality ratings.
+#### 1. GET /api/v1/admin/quality/check-types
+* **Permission:** `quality.read`
+* **Query:** `countryId` (optional UUID), `includeInactive` (optional boolean)
+* **Returns:** List of active quality evaluation criteria based on country inheritance.
+
+#### 2. GET /api/v1/admin/resources/:id/quality
+* **Permission:** `quality.read`
+* **Query:** `versionId` (optional UUID)
+* **Returns:** Active verification record, current evaluation per check type, complete evaluation audit history, and verification/revocation history.
+
+#### 3. POST /api/v1/admin/resources/:id/quality-checks
+* **Permission:** `quality.check.create` (`content_reviewer`, `content_manager`, `system_admin`)
+* **Request:**
+  ```json
+  {
+    "versionId": "uuid",
+    "checkTypeCode": "CURRICULUM_ALIGNMENT",
+    "status": "PASSED",
+    "notes": "Verified against 2024 Grade 8 syllabus."
+  }
+  ```
+* **Returns:** Recorded evaluation entry (201 Created).
+
+#### 4. POST /api/v1/admin/resources/:id/verify
+* **Permission:** `quality.verify` (`content_manager`, `system_admin`)
+* **Request:**
+  ```json
+  {
+    "versionId": "uuid",
+    "notes": "All mandatory criteria verified."
+  }
+  ```
+* **Preconditions:** Version must be in `IN_REVIEW`, `APPROVED`, or `PUBLISHED`. Every mandatory criterion must have latest evaluation `PASSED`.
+* **Errors:** `422 UNPROCESSABLE_ENTITY` (`VERIFICATION_REQUIREMENTS_NOT_MET`) if any mandatory criterion is missing or not passed; `409 CONFLICT` (`ALREADY_VERIFIED`) if version is already actively verified.
+
+#### 5. POST /api/v1/admin/resources/:id/revoke-verification
+* **Permission:** `quality.revoke` (`content_manager`, `system_admin`)
+* **Request:**
+  ```json
+  {
+    "versionId": "uuid",
+    "reason": "Outdated syllabus reference discovered in practice test."
+  }
+  ```
+* **Preconditions:** Mandatory non-empty reason (`REASON_REQUIRED`).
+* **Effect:** Transitions active verification to `REVOKED`, preserving complete audit history. Does not alter publication status.
 
 ---
 

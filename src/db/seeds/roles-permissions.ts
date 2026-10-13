@@ -230,6 +230,41 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'View drafts and administrative details of education updates.',
   },
+  {
+    name: 'quality.check.create',
+    resource: 'quality',
+    action: 'check_create',
+    scopeType: 'GLOBAL',
+    description: 'Record evaluations for resource quality criteria.',
+  },
+  {
+    name: 'quality.verify',
+    resource: 'quality',
+    action: 'verify',
+    scopeType: 'GLOBAL',
+    description: 'Grant official pedagogical verification to a resource version.',
+  },
+  {
+    name: 'quality.revoke',
+    resource: 'quality',
+    action: 'revoke',
+    scopeType: 'GLOBAL',
+    description: 'Revoke verification from a previously verified resource version.',
+  },
+  {
+    name: 'quality.check_types.manage',
+    resource: 'quality',
+    action: 'manage_types',
+    scopeType: 'GLOBAL',
+    description: 'Manage quality check types and rubrics.',
+  },
+  {
+    name: 'quality.read',
+    resource: 'quality',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View quality checks, verifications, and audit history.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -258,6 +293,11 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'update.publish',
     'update.archive',
     'update.read',
+    'quality.check.create',
+    'quality.verify',
+    'quality.revoke',
+    'quality.check_types.manage',
+    'quality.read',
   ],
   content_manager: [
     'resource.read',
@@ -276,6 +316,10 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'update.publish',
     'update.archive',
     'update.read',
+    'quality.check.create',
+    'quality.verify',
+    'quality.revoke',
+    'quality.read',
   ],
   content_reviewer: [
     'resource.read',
@@ -283,6 +327,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.approve',
     'resource.reject',
     'contributor.application.review',
+    'quality.check.create',
+    'quality.read',
   ],
   verified_teacher: [
     'resource.read',
@@ -335,7 +381,13 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'update.publish'))
     .limit(1);
 
-  if (Number(existing?.count) >= 55 && contributorRole && financePerm && updatePerm) {
+  const [qualityPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'quality.verify'))
+    .limit(1);
+
+  if (Number(existing?.count) >= 65 && contributorRole && financePerm && updatePerm && qualityPerm) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

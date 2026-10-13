@@ -14,6 +14,7 @@ import {
   resources,
   resourceVersions,
   resourceFiles,
+  resourceVerifications,
 } from '../../db/schemas.js';
 import type { PaginatedResult } from '../catalogue.service.js';
 import type {
@@ -198,8 +199,20 @@ export class PostgreSQLSearchProvider implements SearchProvider {
       conditions.push(eq(resources.term, query.term));
     }
 
-    // Filter by Quality Label
-    if (query.quality) {
+    // Filter by Quality Label (Prompt 24 / Technical Correction A)
+    if (query.quality === 'VERIFIED') {
+      const verifiedFilter = or(
+        eq(resources.qualityLabel, 'VERIFIED'),
+        sql`EXISTS (
+          SELECT 1 FROM "governance"."resource_verifications" rv
+          WHERE rv."resource_version_id" = ${resourceVersions.id}
+          AND rv."verification_status" = 'VERIFIED'
+        )`,
+      );
+      if (verifiedFilter) {
+        conditions.push(verifiedFilter);
+      }
+    } else if (query.quality) {
       conditions.push(eq(resources.qualityLabel, query.quality));
     }
 
@@ -365,17 +378,47 @@ export class PostgreSQLSearchProvider implements SearchProvider {
       }
     }
 
+    // Batch fetch active verifications for search result items (Technical Correction A)
+    const activeVerifications = versionIds.length > 0
+      ? await this.db
+          .select({
+            resourceVersionId: resourceVerifications.resourceVersionId,
+            verifiedAt: resourceVerifications.verifiedAt,
+          })
+          .from(resourceVerifications)
+          .where(
+            and(
+              inArray(resourceVerifications.resourceVersionId, versionIds),
+              eq(resourceVerifications.verificationStatus, 'VERIFIED'),
+            ),
+          )
+      : [];
+
+    const verificationByVersionId = new Map(
+      activeVerifications.map((v) => [v.resourceVersionId, v]),
+    );
+
     const items: SearchResultItem[] = rows.map((row) => {
       const versionFiles = filesByVersionId.get(row.publishedVersionId) || [];
       const primaryFileRow =
         versionFiles.find((f) => f.isPrimary) || versionFiles[0] || null;
+
+      const verification = verificationByVersionId.get(row.publishedVersionId);
+      const isVerified = !!verification || row.resourceQualityLabel === 'VERIFIED';
+      const isPremium = row.resourceQualityLabel === 'PREMIUM';
 
       return {
         id: row.resourceId,
         title: row.resourceTitle,
         slug: row.resourceSlug,
         description: row.resourceDescription,
-        qualityLabel: row.resourceQualityLabel,
+        qualityLabel: isPremium ? 'PREMIUM' : (isVerified ? 'VERIFIED' : row.resourceQualityLabel),
+        quality: {
+          label: isVerified ? 'VERIFIED' : row.resourceQualityLabel,
+          displayMark: isVerified ? '✓' : (isPremium ? '⭐' : null),
+          isVerified,
+          verifiedAt: verification ? verification.verifiedAt.toISOString() : null,
+        },
         searchScore: row.searchScore ? Number(row.searchScore) : undefined,
         resourceType: {
           id: row.typeId,

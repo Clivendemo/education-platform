@@ -21,6 +21,15 @@ export interface ResourceTypeResult {
   updatedAt: string;
 }
 
+export class DirectVerifiedAssignmentError extends Error {
+  constructor() {
+    super(
+      'Direct assignment of VERIFIED quality label is prohibited. Pedagogical verification must be granted through the quality governance review workflow.',
+    );
+    this.name = 'DirectVerifiedAssignmentError';
+  }
+}
+
 export interface ResourceVersionResult {
   id: string;
   resourceId: string;
@@ -499,6 +508,10 @@ export class DbResourceService implements ResourceService {
       versionNum = highestVersion.length > 0 ? highestVersion[0].versionNumber + 1 : 1;
     }
 
+    if (input.qualityLabel === 'VERIFIED') {
+      throw new DirectVerifiedAssignmentError();
+    }
+
     const versionLabel = input.versionLabel || `v${versionNum}.0`;
     const status = input.status || 'DRAFT';
     const qualityLabel = input.qualityLabel || 'STANDARD';
@@ -562,6 +575,10 @@ export class DbResourceService implements ResourceService {
       throw new Error(
         'Published resource versions are immutable and cannot be modified. Corrections must be created as a new version with a higher version number.',
       );
+    }
+
+    if (updates.qualityLabel === 'VERIFIED') {
+      throw new DirectVerifiedAssignmentError();
     }
 
     const nextStatus = updates.status ?? existing.status;

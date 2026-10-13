@@ -1,4 +1,4 @@
-import { eq, and, or, count, desc, asc, sql } from 'drizzle-orm';
+import { eq, and, or, count, desc, asc, sql, inArray } from 'drizzle-orm';
 import { db as defaultDb } from '../db/index.js';
 import {
   countries,
@@ -14,6 +14,7 @@ import {
   resources,
   resourceVersions,
   resourceFiles,
+  resourceVerifications,
 } from '../db/schemas.js';
 
 type Database = typeof defaultDb;
@@ -37,6 +38,12 @@ export interface CatalogueResourceSummary {
   slug: string;
   description: string | null;
   qualityLabel: string;
+  quality?: {
+    label: string;
+    displayMark: string | null;
+    isVerified: boolean;
+    verifiedAt: string | null;
+  };
   resourceType: {
     id: string;
     code: string;
@@ -308,8 +315,20 @@ export class DbCatalogueService implements CatalogueService {
       conditions.push(eq(resources.term, params.term));
     }
 
-    // Filter by Quality Label
-    if (params.quality) {
+    // Filter by Quality Label (Prompt 24 / Technical Correction A)
+    if (params.quality === 'VERIFIED') {
+      const verifiedFilter = or(
+        eq(resources.qualityLabel, 'VERIFIED'),
+        sql`EXISTS (
+          SELECT 1 FROM "governance"."resource_verifications" rv
+          WHERE rv."resource_version_id" = ${resourceVersions.id}
+          AND rv."verification_status" = 'VERIFIED'
+        )`,
+      );
+      if (verifiedFilter) {
+        conditions.push(verifiedFilter);
+      }
+    } else if (params.quality) {
       conditions.push(eq(resources.qualityLabel, params.quality));
     }
 
@@ -491,17 +510,47 @@ export class DbCatalogueService implements CatalogueService {
       filesByVersionId.set(file.resourceVersionId, list);
     }
 
+    // Batch fetch active verifications for published versions in page (Technical Correction A)
+    const activeVerifications = versionIds.length > 0
+      ? await this.db
+          .select({
+            resourceVersionId: resourceVerifications.resourceVersionId,
+            verifiedAt: resourceVerifications.verifiedAt,
+          })
+          .from(resourceVerifications)
+          .where(
+            and(
+              inArray(resourceVerifications.resourceVersionId, versionIds),
+              eq(resourceVerifications.verificationStatus, 'VERIFIED'),
+            ),
+          )
+      : [];
+
+    const verificationByVersionId = new Map(
+      activeVerifications.map((v) => [v.resourceVersionId, v]),
+    );
+
     const data: CatalogueResourceSummary[] = rows.map((row) => {
       const versionFiles = filesByVersionId.get(row.versionId) || [];
       const primary =
         versionFiles.find((f) => f.isPrimary) || versionFiles[0] || null;
+
+      const verification = verificationByVersionId.get(row.versionId);
+      const isVerified = !!verification || row.resourceQualityLabel === 'VERIFIED';
+      const isPremium = row.resourceQualityLabel === 'PREMIUM';
 
       return {
         id: row.resourceId,
         title: row.resourceTitle,
         slug: row.resourceSlug,
         description: row.resourceDescription,
-        qualityLabel: row.resourceQualityLabel,
+        qualityLabel: isPremium ? 'PREMIUM' : (isVerified ? 'VERIFIED' : row.resourceQualityLabel),
+        quality: {
+          label: isVerified ? 'VERIFIED' : row.resourceQualityLabel,
+          displayMark: isVerified ? '✓' : (isPremium ? '⭐' : null),
+          isVerified,
+          verifiedAt: verification ? verification.verifiedAt.toISOString() : null,
+        },
         resourceType: {
           id: row.typeId,
           code: row.typeCode,
@@ -733,12 +782,35 @@ export class DbCatalogueService implements CatalogueService {
 
     const primary = files.find((f: { isPrimary: boolean }) => f.isPrimary) || files[0] || null;
 
+    // Fetch active verification for the published version (Technical Correction A)
+    const [verification] = await this.db
+      .select({
+        verifiedAt: resourceVerifications.verifiedAt,
+      })
+      .from(resourceVerifications)
+      .where(
+        and(
+          eq(resourceVerifications.resourceVersionId, row.versionId),
+          eq(resourceVerifications.verificationStatus, 'VERIFIED'),
+        ),
+      )
+      .limit(1);
+
+    const isVerified = !!verification || row.resourceQualityLabel === 'VERIFIED';
+    const isPremium = row.resourceQualityLabel === 'PREMIUM';
+
     return {
       id: row.resourceId,
       title: row.resourceTitle,
       slug: row.resourceSlug,
       description: row.resourceDescription,
-      qualityLabel: row.resourceQualityLabel,
+      qualityLabel: isPremium ? 'PREMIUM' : (isVerified ? 'VERIFIED' : row.resourceQualityLabel),
+      quality: {
+        label: isVerified ? 'VERIFIED' : row.resourceQualityLabel,
+        displayMark: isVerified ? '✓' : (isPremium ? '⭐' : null),
+        isVerified,
+        verifiedAt: verification ? verification.verifiedAt.toISOString() : null,
+      },
       sourceName: row.sourceName,
       sourceReference: row.sourceReference,
       resourceType: {

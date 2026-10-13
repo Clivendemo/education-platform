@@ -671,17 +671,17 @@ They must not be converted into Resources.
 
 | Component               | Status      | Notes |
 | ----------------------- | ----------- | ----- |
-| Quality labels          | NOT_STARTED |       |
-| Quality check types     | NOT_STARTED |       |
-| Resource quality checks | NOT_STARTED |       |
-| Verification workflow   | NOT_STARTED |       |
-| Verification history    | NOT_STARTED |       |
-| Verification revocation | NOT_STARTED |       |
-| Governance reviews      | NOT_STARTED |       |
-| Audit logs              | NOT_STARTED |       |
-| Retention policies      | NOT_STARTED |       |
-| Retention actions       | NOT_STARTED |       |
-| Governance tests        | NOT_STARTED |       |
+| Quality labels          | VERIFIED    | Decoupled: STANDARD, PREMIUM (commercial), VERIFIED (pedagogical) |
+| Quality check types     | VERIFIED    | 7 canonical criteria seeded; country inheritance supported |
+| Resource quality checks | VERIFIED    | Append-only evaluation ledger with trigger immutability |
+| Verification workflow   | VERIFIED    | Version-specific, requires all 5 mandatory criteria PASSED |
+| Verification history    | VERIFIED    | Full audit trail of verifications and revocations |
+| Verification revocation | VERIFIED    | Mandatory non-empty reason and accountable actor tracking |
+| Governance reviews      | VERIFIED    | Admin review endpoints with RBAC separation of duties |
+| Audit logs              | VERIFIED    | Immutable evaluation ledger and verification histories |
+| Retention policies      | NOT_STARTED | Scheduled for future retention prompt |
+| Retention actions       | NOT_STARTED | Scheduled for future retention prompt |
+| Governance tests        | VERIFIED    | DB constraints, service workflow, RBAC route tests |
 
 Quality labels:
 
@@ -1037,7 +1037,7 @@ Every major implementation stage should have a Git checkpoint.
 | Contributors             | VERIFIED    | Prompt 21 implemented & verified |
 | Contributor finance      | VERIFIED    | Prompt 22 implemented & verified |
 | Education updates        | VERIFIED    | Prompt 23 implemented & verified |
-| Quality governance       | NOT_STARTED |        |
+| Quality governance       | VERIFIED    | Prompt 24 implemented & verified |
 | Feedback                 | NOT_STARTED |        |
 | Notifications            | NOT_STARTED |        |
 | Analytics                | NOT_STARTED |        |

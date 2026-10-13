@@ -2156,94 +2156,110 @@ Requirements:
 
 # 39. GOVERNANCE SCHEMA
 
-## 39.1 governance.quality_labels
+## 39.1 Quality Governance Architecture (Prompt 24)
 
-Fields:
-
-```text
-id UUID PK
-name VARCHAR NOT NULL
-code VARCHAR NOT NULL
-description TEXT NULL
-display_symbol VARCHAR NULL
-status VARCHAR NOT NULL
-```
-
-Initial labels:
-
-```text
-STANDARD
-VERIFIED
-PREMIUM
-```
-
----
+Quality Governance decouples pedagogical verification from commercial classification:
+* Commercial tiers (`STANDARD` vs `PREMIUM`) govern monetization and download entitlement gates.
+* Verification (`Verified ✓`) represents rigorous pedagogical validation based on objective criteria.
+* Resources may be both Premium ⭐ and Verified ✓.
+* Ordinary resource create/update APIs are strictly prohibited from directly assigning `VERIFIED`.
 
 ## 39.2 governance.quality_check_types
 
+Criteria taxonomy for assessing pedagogical quality across global and country-specific rubrics.
+
 Fields:
 
 ```text
-id UUID PK
-name VARCHAR NOT NULL
-code VARCHAR NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+code VARCHAR(50) NOT NULL
+name VARCHAR(100) NOT NULL
 description TEXT NULL
-required_for_publication BOOLEAN NOT NULL DEFAULT false
-status VARCHAR NOT NULL
+country_id UUID NULL FK -> platform.countries(id) ON DELETE RESTRICT
+required_for_verification BOOLEAN NOT NULL DEFAULT true
+status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ```
 
-Possible checks:
+Constraints and Indexes:
+* `chk_quality_check_types_code`: `length(trim(code)) > 0 AND code ~ '^[A-Z0-9_]+$'`
+* `chk_quality_check_types_status`: `status IN ('ACTIVE', 'INACTIVE')`
+* Partial Unique Index `uq_quality_check_types_global_code`: `(code) WHERE country_id IS NULL`
+* Partial Unique Index `uq_quality_check_types_country_code`: `(country_id, code) WHERE country_id IS NOT NULL`
+* Index `idx_quality_check_types_status`: `(status)`
+* Index `idx_quality_check_types_country`: `(country_id)`
 
-* Curriculum alignment
-* Factual accuracy
-* Completeness
-* Level/difficulty
-* Formatting/readability
-* Classification
-* Provenance
-* Rights
-* Exam relevance
+Canonical Initial Rubric (7 Seed Criteria):
+1. `CURRICULUM_ALIGNMENT` (Mandatory, `true`)
+2. `FACTUAL_ACCURACY` (Mandatory, `true`)
+3. `COMPLETENESS` (Mandatory, `true`)
+4. `FILE_INTEGRITY_READABILITY` (Mandatory, `true`)
+5. `PROVENANCE_RIGHTS` (Mandatory, `true`)
+6. `GRADE_APPROPRIATENESS` (Optional, `false`)
+7. `EXAM_RELEVANCE` (Optional, `false`)
 
 ---
 
 ## 39.3 governance.resource_quality_checks
 
+Append-only audit ledger recording individual quality rubric evaluations. Mutation and deletion are strictly prohibited by trigger defense.
+
 Fields:
 
 ```text
-id UUID PK
-resource_id UUID FK
-resource_version_id UUID NULL FK
-check_type_id UUID FK
-status VARCHAR NOT NULL
-notes TEXT NULL
-checked_by UUID NULL
-checked_at TIMESTAMPTZ NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+id UUID PK DEFAULT gen_random_uuid()
+resource_id UUID NOT NULL FK -> content.resources(id) ON DELETE RESTRICT
+resource_version_id UUID NOT NULL FK -> content.resource_versions(id) ON DELETE RESTRICT
+check_type_id UUID NOT NULL FK -> governance.quality_check_types(id) ON DELETE RESTRICT
+status VARCHAR(20) NOT NULL ('PASSED', 'FAILED', 'FLAGGED')
+notes TEXT NULL (Private reviewer evaluation notes)
+checked_by UUID NOT NULL FK -> identity.users(id) ON DELETE RESTRICT
+checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ```
+
+Constraints, Triggers, and Indexes:
+* `chk_resource_quality_checks_status`: `status IN ('PASSED', 'FAILED', 'FLAGGED')`
+* Index `idx_res_quality_checks_version_type_date`: `(resource_version_id, check_type_id, checked_at DESC)`
+* Index `idx_res_quality_checks_resource_id`: `(resource_id)`
+* Index `idx_res_quality_checks_checked_by`: `(checked_by)`
+* Trigger `trg_check_quality_check_version_match`: enforces that `resource_version_id` belongs to `resource_id`.
+* Trigger `trg_prevent_quality_checks_update`: blocks `UPDATE` on evaluation records.
+* Trigger `trg_prevent_quality_checks_delete`: blocks `DELETE` on evaluation records.
 
 ---
 
 ## 39.4 governance.resource_verifications
 
+Auditable lifecycle ledger tracking official pedagogical verification grants and accountable revocations.
+
 Fields:
 
 ```text
-id UUID PK
-resource_id UUID FK
-resource_version_id UUID NULL FK
-verification_status VARCHAR NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+resource_id UUID NOT NULL FK -> content.resources(id) ON DELETE RESTRICT
+resource_version_id UUID NOT NULL FK -> content.resource_versions(id) ON DELETE RESTRICT
+verification_status VARCHAR(20) NOT NULL ('VERIFIED', 'REVOKED')
 reason TEXT NULL
-verified_by UUID NULL
-verified_at TIMESTAMPTZ NULL
+verified_by UUID NOT NULL FK -> identity.users(id) ON DELETE RESTRICT
+verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+revoked_by UUID NULL FK -> identity.users(id) ON DELETE SET NULL
 revoked_at TIMESTAMPTZ NULL
-revoked_by UUID NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ```
 
-Verification is revocable and auditable.
+Constraints, Triggers, and Indexes:
+* `chk_res_verifications_status`: `verification_status IN ('VERIFIED', 'REVOKED')`
+* `chk_res_verifications_revocation`: `(verification_status = 'REVOKED' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND reason IS NOT NULL AND length(trim(reason)) > 0) OR (verification_status = 'VERIFIED' AND revoked_at IS NULL)`
+* Partial Unique Index `uq_single_active_resource_verification`: `(resource_id, resource_version_id) WHERE verification_status = 'VERIFIED'`
+* Index `idx_res_verifications_resource_id`: `(resource_id)`
+* Index `idx_res_verifications_version_id`: `(resource_version_id)`
+* Index `idx_res_verifications_status`: `(verification_status)`
+* Trigger `trg_check_verification_version_match`: enforces that `resource_version_id` belongs to `resource_id`.
+
+Verification is version-specific, revocable, and auditable without mutating published resource versions.
 
 ---
 
