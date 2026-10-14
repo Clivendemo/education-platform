@@ -282,18 +282,19 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
   describe('2. Direct SQL Publication Protection Triggers (Defense-in-Depth)', () => {
     it('rejects direct SQL INSERT of a file into a PUBLISHED resource version (trg_prevent_published_resource_file_insert)', async () => {
       await expectDbError(
-        db.insert(resourceFiles).values({
-          resourceVersionId: publishedVersionId,
-          storageBucket: 'test-bucket',
-          objectKey: `resources/${testResourceId}/versions/${publishedVersionId}/violating-file.pdf`,
-          originalFilename: 'illegal_insert.pdf',
-          fileExtension: 'pdf',
-          mimeType: 'application/pdf',
-          fileSizeBytes: 5000,
-          checksumSha256: 'd'.repeat(64),
-          status: 'AVAILABLE',
-          sequenceOrder: 1,
-        }),
+        () =>
+          db.insert(resourceFiles).values({
+            resourceVersionId: publishedVersionId,
+            storageBucket: 'test-bucket',
+            objectKey: `resources/${testResourceId}/versions/${publishedVersionId}/violating-file.pdf`,
+            originalFilename: 'illegal_insert.pdf',
+            fileExtension: 'pdf',
+            mimeType: 'application/pdf',
+            fileSizeBytes: 5000,
+            checksumSha256: 'd'.repeat(64),
+            status: 'AVAILABLE',
+            sequenceOrder: 1,
+          }),
         /Cannot attach file to a PUBLISHED resource version/i,
       );
     });
@@ -376,10 +377,11 @@ describe('Prompt 09: File Storage Neon Database Integrity & Publication Triggers
       const fileId = createdFileIds[0]; // currently in draftVersionId
 
       await expectDbError(
-        db
-          .update(resourceFiles)
-          .set({ resourceVersionId: publishedVersionId })
-          .where(eq(resourceFiles.id, fileId)),
+        () =>
+          db
+            .update(resourceFiles)
+            .set({ resourceVersionId: publishedVersionId })
+            .where(eq(resourceFiles.id, fileId)),
         /Cannot move file into a PUBLISHED resource version/i,
       );
     });
