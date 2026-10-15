@@ -92,6 +92,20 @@
       "when": 1791300000000,
       "tag": "0012_quality_governance",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0013_resource_feedback",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0014_feedback_details_limit",
+      "breakpoints": true
     }
   ]
 }

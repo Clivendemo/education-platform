@@ -702,11 +702,11 @@ No numerical public ratings.
 | Resource requests   | NOT_STARTED |       |
 | Request upvotes     | NOT_STARTED |       |
 | Anonymous requests  | NOT_STARTED |       |
-| Resource feedback   | NOT_STARTED |       |
+| Resource feedback   | VERIFIED    | 7 canonical categories, anonymous rf_sid hashing, 1-hour duplicate cooldown, state machine triage, and immutable event ledger |
 | Serious reports     | NOT_STARTED |       |
 | Moderation workflow | NOT_STARTED |       |
 | Demand signals      | NOT_STARTED |       |
-| Feedback tests      | NOT_STARTED |       |
+| Feedback tests      | VERIFIED    | 27 service, route, and DB integration tests passing (100%) |
 
 No general public resource commenting/discussion system.
 
@@ -827,7 +827,7 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 | Education update management | NOT_STARTED |       |
 | Calendar management         | NOT_STARTED |       |
 | Request management          | NOT_STARTED |       |
-| Feedback management         | NOT_STARTED |       |
+| Feedback management         | VERIFIED    | Queue listing, triage lifecycle, RBAC separation of duties (read-only for reviewers) |
 | Report management           | NOT_STARTED |       |
 | Commerce management         | NOT_STARTED |       |
 | Analytics dashboard         | NOT_STARTED |       |
@@ -1038,7 +1038,7 @@ Every major implementation stage should have a Git checkpoint.
 | Contributor finance      | VERIFIED    | Prompt 22 implemented & verified |
 | Education updates        | VERIFIED    | Prompt 23 implemented & verified |
 | Quality governance       | VERIFIED    | Prompt 24 implemented & verified |
-| Feedback                 | NOT_STARTED |        |
+| Feedback                 | VERIFIED    | Prompt 25 implemented & verified |
 | Notifications            | NOT_STARTED |        |
 | Analytics                | NOT_STARTED |        |
 | Search intelligence      | NOT_STARTED |        |
@@ -1054,6 +1054,40 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-15 — Prompt 25: Resource Feedback, Public Summary, and Triage Audit Ledger
+
+Status:
+VERIFIED
+
+Implemented:
+- Database Architecture (drizzle/0013_resource_feedback.sql, drizzle/0014_feedback_details_limit.sql & src/db/schema/feedback.ts):
+  * `content.resource_feedback`: Stores structured feedback bound to published resources and versions. Foreign keys to `content.resources` and `content.resource_versions` with `ON DELETE RESTRICT`. Exactly one identity enforced via `chk_feedback_exactly_one_identity` (either `user_id` is set OR `session_id` is set). Controlled status (`chk_feedback_status`), category (`chk_feedback_type`), and detail length constraint `chk_feedback_details_len` (<= 1000 characters).
+  * `content.resource_feedback_events`: Immutable append-only audit ledger recording triage transitions (`from_status`, `to_status`, `actor_user_id`, `internal_note`, `created_at`).
+  * Triggers:
+    - `trg_check_feedback_version_match`: Validates that version belongs to resource and both version and resource are `PUBLISHED`.
+    - `trg_prevent_feedback_events_update` and `trg_prevent_feedback_events_delete`: Enforces append-only immutability.
+- RBAC Permissions (src/db/seeds/roles-permissions.ts):
+  * Added canonical permissions `feedback.read` and `feedback.manage`.
+  * Mapped to `system_admin`, `content_manager`, and `content_reviewer` (read-only; triage strictly 403 Forbidden).
+- Service Layer (src/services/feedback.service.ts):
+  * `submitFeedback`: Anonymous cookie generation/hashing, 1-hour duplicate cooldown scoped to identity + version + category via `pg_advisory_xact_lock`.
+  * `getPublicSummary`: Exposes strictly aggregate metrics (`totalFeedback`, `helpfulCount`) with zero leakage of defect categories or notes, strictly excluding dismissed (`REJECTED`) feedback.
+  * `listFeedbackQueue`: Staff queue with pagination and filters (`feedback.read`).
+  * `getFeedbackById`: Staff detail with complete audit history events (`feedback.read`).
+  * `triageFeedback`: Transition lifecycle with validation and atomic audit events write (`feedback.manage`).
+- Fastify Route Handlers (src/routes/api/v1/feedback.ts):
+  * `POST /api/v1/resources/:id/feedback`: Enforces 1000-character details limit, anonymous session hashing, cooldown, and publication checks.
+  * `GET /api/v1/catalogue/resources/:id/feedback-summary`: Public aggregate summary excluding dismissed feedback.
+  * `GET /api/v1/admin/feedback`
+  * `GET /api/v1/admin/feedback/:id`
+  * `PATCH /api/v1/admin/feedback/:id/triage`
+- Tests:
+  * `tests/routes/feedback.integration.test.ts`: 24 tests covering anonymous/authenticated submissions, 7 categories, 1000-char details limit enforcement, publication integrity, duplicate cooldown, public summary with dismissal exclusion, RBAC access control, triage transitions, and DB triggers.
+  * `tests/db/feedback.integration.test.ts`: 7 tests covering DB constraints (including `chk_feedback_details_len` <= 1000), triggers, and foreign key ON DELETE RESTRICT.
+- Typecheck & Build:
+  * TypeScript typecheck: PASS (0 errors)
+  * Build: PASS
 
 ## 2026-10-08 — Prompt 20: Premium Downloads & Authoritative Entitlement Verification
 

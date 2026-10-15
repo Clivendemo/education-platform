@@ -265,6 +265,20 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'View quality checks, verifications, and audit history.',
   },
+  {
+    name: 'feedback.read',
+    resource: 'feedback',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View resource feedback entries, summary metrics, and audit history.',
+  },
+  {
+    name: 'feedback.manage',
+    resource: 'feedback',
+    action: 'manage',
+    scopeType: 'GLOBAL',
+    description: 'Triage, update status, and manage resource feedback.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -298,6 +312,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.revoke',
     'quality.check_types.manage',
     'quality.read',
+    'feedback.read',
+    'feedback.manage',
   ],
   content_manager: [
     'resource.read',
@@ -320,6 +336,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.verify',
     'quality.revoke',
     'quality.read',
+    'feedback.read',
+    'feedback.manage',
   ],
   content_reviewer: [
     'resource.read',
@@ -329,6 +347,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'contributor.application.review',
     'quality.check.create',
     'quality.read',
+    'feedback.read',
   ],
   verified_teacher: [
     'resource.read',
@@ -387,7 +406,13 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'quality.verify'))
     .limit(1);
 
-  if (Number(existing?.count) >= 65 && contributorRole && financePerm && updatePerm && qualityPerm) {
+  const [feedbackPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'feedback.manage'))
+    .limit(1);
+
+  if (Number(existing?.count) >= 70 && contributorRole && financePerm && updatePerm && qualityPerm && feedbackPerm) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

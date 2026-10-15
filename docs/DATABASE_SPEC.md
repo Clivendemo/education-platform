@@ -1331,38 +1331,99 @@ One upvote per user/session/request.
 
 ## 24.1 content.resource_feedback
 
+Controlled, auditable feedback submitted by anonymous visitors or registered users.
+
 Fields:
 
 ```text
-id UUID PK
-resource_id UUID FK
-resource_version_id UUID NULL FK
-user_id UUID NULL FK
-session_id VARCHAR NULL
-feedback_type VARCHAR NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+resource_id UUID NOT NULL FK -> content.resources(id) ON DELETE RESTRICT
+resource_version_id UUID NOT NULL FK -> content.resource_versions(id) ON DELETE RESTRICT
+user_id UUID NULL FK -> identity.users(id) ON DELETE RESTRICT
+session_id VARCHAR(64) NULL -- SHA-256 hex digest of rf_sid cookie (never raw token)
+feedback_type VARCHAR(32) NOT NULL
 details TEXT NULL
-status VARCHAR NOT NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+reviewed_by UUID NULL FK -> identity.users(id) ON DELETE SET NULL
+reviewed_at TIMESTAMPTZ NULL
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Feedback categories include:
+### Constraints & Defensive Rules
 
-```text
-HELPFUL
-OUTDATED
-INCORRECT
-MISSING_INFORMATION
-POOR_FORMATTING
-WRONG_CLASSIFICATION
-FILE_PROBLEM
-```
+1. `chk_feedback_type`:
+   Must be one of the 7 canonical categories:
+   - `HELPFUL`
+   - `OUTDATED`
+   - `INCORRECT`
+   - `MISSING_INFORMATION`
+   - `POOR_FORMATTING`
+   - `WRONG_CLASSIFICATION`
+   - `FILE_PROBLEM`
 
-No numerical/star rating is required.
+2. `chk_feedback_status`:
+   Must be one of the controlled lifecycle statuses:
+   - `PENDING`
+   - `UNDER_REVIEW`
+   - `ACCEPTED`
+   - `REJECTED`
+   - `REOPENED`
+
+3. `chk_feedback_exactly_one_identity`:
+   `((user_id IS NOT NULL AND session_id IS NULL) OR (user_id IS NULL AND session_id IS NOT NULL))`
+
+4. `chk_feedback_details_len`:
+   `details IS NULL OR (length(trim(details)) > 0 AND length(details) <= 1000)`
+
+5. `chk_feedback_reviewed`:
+   `(status = 'PENDING' AND reviewed_at IS NULL AND reviewed_by IS NULL) OR (status != 'PENDING')`
+
+6. `trg_check_feedback_version_match`:
+   Before INSERT or UPDATE of `resource_id`, `resource_version_id`:
+   - Verifies `resource_version_id` belongs to `resource_id`.
+   - Verifies `resource_version` status is `PUBLISHED`.
+   - Verifies `resource` status is `PUBLISHED`.
+   Raises `23503` or `23514` on mismatch.
+
+7. Anonymous Cookie Hashing:
+   Raw cookie `rf_sid` is issued to client as HttpOnly cookie (30-day lifetime). The server computes `SHA-256(rf_sid)` and stores only the 64-character hex digest.
+
+8. Duplicate Cooldown:
+   1-hour cooldown scoped to identity (`user_id` OR hashed `session_id`) + `resource_version_id` + `feedback_type`, protected by transaction advisory locks `pg_advisory_xact_lock(hashtext(...))`.
 
 ---
 
-## 24.2 content.resource_reports
+## 24.2 content.resource_feedback_events
+
+Immutable append-only audit ledger tracking feedback triage state transitions.
+
+Fields:
+
+```text
+id UUID PK DEFAULT gen_random_uuid()
+feedback_id UUID NOT NULL FK -> content.resource_feedback(id) ON DELETE RESTRICT
+from_status VARCHAR(20) NOT NULL
+to_status VARCHAR(20) NOT NULL
+actor_user_id UUID NOT NULL FK -> identity.users(id) ON DELETE RESTRICT
+internal_note TEXT NULL
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+### Constraints & Defensive Rules
+
+1. `chk_feedback_events_from_status` & `chk_feedback_events_to_status`:
+   Must be valid feedback statuses (`PENDING`, `UNDER_REVIEW`, `ACCEPTED`, `REJECTED`, `REOPENED`).
+
+2. `chk_feedback_events_note_len`:
+   `internal_note IS NULL OR length(internal_note) <= 2000`
+
+3. `trg_prevent_feedback_events_update` & `trg_prevent_feedback_events_delete`:
+   Prohibits any direct `UPDATE` or `DELETE` on `content.resource_feedback_events` records, raising PostgreSQL error `23514`.
+
+---
+
+## 24.3 content.resource_reports
 
 Fields:
 
@@ -1381,7 +1442,7 @@ resolved_at TIMESTAMPTZ NULL
 resolved_by UUID NULL
 ```
 
-Serious reports are separate from ordinary feedback.
+Serious reports are separate from ordinary feedback (deferred to future milestone).
 
 ---
 

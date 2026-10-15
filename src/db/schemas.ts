@@ -11,3 +11,4 @@ export * from './schema/commerce.js';
 export * from './schema/community.js';
 export * from './schema/updates.js';
 export * from './schema/governance.js';
+export * from './schema/feedback.js';

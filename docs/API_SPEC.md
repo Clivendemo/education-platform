@@ -1134,23 +1134,253 @@ Internal request counts and demand intelligence are not publicly exposed unless 
 
 # 37. Feedback
 
+Resource feedback allows learners, educators, and visitors to submit structured pedagogical, technical, and quality observations on published learning materials.
+
+## 37.1 Submit Feedback
+
 ```text
 POST /api/v1/resources/:id/feedback
 ```
 
-Supported structured reasons include:
+### Access & Identity
 
-* Helpful
-* Outdated
-* Incorrect
-* Missing Information
-* Poor Formatting
-* Wrong Classification
-* File Problem
+* **Public & Authenticated:** Anyone can submit feedback.
+* If authenticated (`auth_token` cookie present and valid), feedback records `userId` and `sessionId` is NULL.
+* If anonymous, the server checks the `rf_sid` cookie. If absent, it issues a 30-day HttpOnly `rf_sid` cookie. The database stores the `SHA-256` hash of this token in `sessionId`, keeping `userId` NULL.
 
-Optional details may be provided.
+### Request Body
 
-Numerical/star ratings are not used.
+```json
+{
+  "resourceVersionId": "d04a60ea-...",
+  "feedbackType": "HELPFUL",
+  "details": "Optional explanatory notes up to 1000 characters."
+}
+```
+
+* **7 Canonical Categories (`feedbackType`):**
+  * `HELPFUL`
+  * `OUTDATED`
+  * `INCORRECT`
+  * `MISSING_INFORMATION`
+  * `POOR_FORMATTING`
+  * `WRONG_CLASSIFICATION`
+  * `FILE_PROBLEM`
+
+### Abuse Prevention
+
+* **1-Hour Duplicate Cooldown:** Submitting duplicate feedback with the exact same identity (`userId` or hashed `sessionId`), `resourceVersionId`, and `feedbackType` within 1 hour returns HTTP 429 `DUPLICATE_FEEDBACK_COOLDOWN`.
+
+### Response (201 Created)
+
+```json
+{
+  "data": {
+    "id": "1fa017a6-...",
+    "resourceId": "8bfea683-...",
+    "resourceVersionId": "d04a60ea-...",
+    "feedbackType": "HELPFUL",
+    "status": "PENDING",
+    "createdAt": "2026-10-14T15:00:00.000Z"
+  }
+}
+```
+
+### Error Responses
+
+* `400 VALIDATION_ERROR`: Invalid category, invalid UUID format, or body length > 1000 chars.
+* `404 RESOURCE_NOT_FOUND`: Resource does not exist or is in DRAFT status.
+* `404 RESOURCE_VERSION_NOT_FOUND`: Version does not exist, is in DRAFT status, or does not belong to resource.
+* `429 DUPLICATE_FEEDBACK_COOLDOWN`: Duplicate submission within the 1-hour cooldown window.
+
+---
+
+## 37.2 Public Feedback Summary
+
+```text
+GET /api/v1/catalogue/resources/:id/feedback-summary
+```
+
+### Access
+
+* **Public:** No authentication or permissions required.
+* Exposes ONLY aggregate metrics. Defensively protects against leaking individual comments, defect categories, reviewer notes, or triage statuses.
+* Strictly excludes dismissed (`REJECTED`) feedback from aggregate totals (`totalFeedback` and `helpfulCount`).
+
+### Response (200 OK)
+
+```json
+{
+  "data": {
+    "resourceId": "8bfea683-...",
+    "totalFeedback": 42,
+    "helpfulCount": 38
+  }
+}
+```
+
+### Error Responses
+
+* `404 RESOURCE_NOT_FOUND`: Resource does not exist or is in DRAFT status.
+
+---
+
+## 37.3 Staff Feedback Queue
+
+```text
+GET /api/v1/admin/feedback
+```
+
+### Access
+
+* **Permission:** `feedback.read`
+* **Roles:** `content_reviewer` (read-only), `content_manager`, `system_admin`.
+
+### Query Parameters
+
+* `status`: Optional filter (`PENDING`, `UNDER_REVIEW`, `ACCEPTED`, `REJECTED`, `REOPENED`).
+* `resourceId`: Optional UUID.
+* `resourceVersionId`: Optional UUID.
+* `feedbackType`: Optional filter by feedback type.
+* `page`: Integer >= 1 (default 1).
+* `limit`: Integer 1..100 (default 20).
+
+### Response (200 OK)
+
+```json
+{
+  "items": [
+    {
+      "id": "1fa017a6-...",
+      "resourceId": "8bfea683-...",
+      "resourceVersionId": "d04a60ea-...",
+      "userId": null,
+      "sessionId": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+      "feedbackType": "OUTDATED",
+      "details": "References 2021 guidelines.",
+      "status": "PENDING",
+      "reviewedBy": null,
+      "reviewedAt": null,
+      "createdAt": "2026-10-14T15:00:00.000Z",
+      "updatedAt": "2026-10-14T15:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 1
+  }
+}
+```
+
+---
+
+## 37.4 Staff Feedback Detail & Audit History
+
+```text
+GET /api/v1/admin/feedback/:id
+```
+
+### Access
+
+* **Permission:** `feedback.read`
+* **Roles:** `content_reviewer` (read-only), `content_manager`, `system_admin`.
+
+### Response (200 OK)
+
+```json
+{
+  "data": {
+    "feedback": {
+      "id": "1fa017a6-...",
+      "resourceId": "8bfea683-...",
+      "resourceVersionId": "d04a60ea-...",
+      "feedbackType": "INCORRECT",
+      "details": "Formula on page 4 is wrong.",
+      "status": "UNDER_REVIEW",
+      "reviewedBy": "550e8400-...",
+      "reviewedAt": "2026-10-14T15:10:00.000Z",
+      "createdAt": "2026-10-14T15:00:00.000Z",
+      "updatedAt": "2026-10-14T15:10:00.000Z"
+    },
+    "events": [
+      {
+        "id": "e305e940-...",
+        "feedbackId": "1fa017a6-...",
+        "fromStatus": "PENDING",
+        "toStatus": "UNDER_REVIEW",
+        "actorUserId": "550e8400-...",
+        "actorName": "Content Manager",
+        "internalNote": "Assigned to curriculum specialist.",
+        "createdAt": "2026-10-14T15:10:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 37.5 Staff Feedback Triage
+
+```text
+PATCH /api/v1/admin/feedback/:id/triage
+```
+
+### Access
+
+* **Permission:** `feedback.manage`
+* **Roles:** `content_manager`, `system_admin`.
+* **Important:** `content_reviewer` is strictly forbidden from executing triage transitions (`403 FORBIDDEN`).
+
+### Request Body
+
+```json
+{
+  "status": "UNDER_REVIEW",
+  "internalNote": "Optional staff note up to 2000 characters."
+}
+```
+
+### State Machine Transitions
+
+* `PENDING` -> `UNDER_REVIEW`, `ACCEPTED`, `REJECTED`
+* `UNDER_REVIEW` -> `ACCEPTED`, `REJECTED`
+* `ACCEPTED` -> `REOPENED`
+* `REJECTED` -> `REOPENED`
+* `REOPENED` -> `UNDER_REVIEW`, `ACCEPTED`, `REJECTED`
+
+### Response (200 OK)
+
+```json
+{
+  "data": {
+    "feedback": {
+      "id": "1fa017a6-...",
+      "status": "ACCEPTED",
+      "reviewedBy": "550e8400-...",
+      "reviewedAt": "2026-10-14T15:15:00.000Z",
+      "updatedAt": "2026-10-14T15:15:00.000Z"
+    },
+    "event": {
+      "id": "c19b8830-...",
+      "feedbackId": "1fa017a6-...",
+      "fromStatus": "UNDER_REVIEW",
+      "toStatus": "ACCEPTED",
+      "actorUserId": "550e8400-...",
+      "internalNote": "Correction verified.",
+      "createdAt": "2026-10-14T15:15:00.000Z"
+    }
+  }
+}
+```
+
+### Error Responses
+
+* `400 INVALID_FEEDBACK_TRANSITION`: Transition not permitted by state machine.
+* `403 FORBIDDEN`: Actor lacks `feedback.manage` permission.
+* `404 FEEDBACK_NOT_FOUND`: Feedback ID not found.
 
 ---
 
