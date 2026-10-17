@@ -20,6 +20,7 @@ import { contributorRoutes } from './routes/api/v1/contributors.js';
 import { updatesRoutes } from './routes/api/v1/updates.js';
 import { qualityGovernanceRoutes } from './routes/api/v1/quality-governance.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
+import { notificationRoutes } from './routes/api/v1/notifications.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -39,6 +40,7 @@ import type { ContributorFinanceService } from './services/contributor-finance.s
 import type { EducationUpdateService } from './services/education-update.service.js';
 import type { QualityGovernanceService } from './services/quality-governance.service.js';
 import type { FeedbackService } from './services/feedback.service.js';
+import type { NotificationService } from './services/notification.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -66,6 +68,7 @@ export interface AppOptions extends FastifyServerOptions {
     educationUpdateService?: EducationUpdateService;
     qualityService?: QualityGovernanceService;
     feedbackService?: FeedbackService;
+    notificationService?: NotificationService;
   };
 }
 
@@ -223,6 +226,12 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(feedbackRoutes, {
     prefix: '/api/v1',
     feedbackService: services?.feedbackService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
+  });
+  app.register(notificationRoutes, {
+    prefix: '/api/v1',
+    notificationService: services?.notificationService,
     authService: services?.authService,
     rbacService: services?.rbacService,
   });

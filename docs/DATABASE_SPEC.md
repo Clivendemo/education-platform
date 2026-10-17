@@ -1450,51 +1450,152 @@ Serious reports are separate from ordinary feedback (deferred to future mileston
 
 ## 25.1 identity.notifications
 
+Centralized notifications ledger for user alerts, system updates, transactional events, and editorial lifecycle notifications.
+
 Fields:
 
 ```text
-id UUID PK
-user_id UUID FK
-notification_type VARCHAR NOT NULL
-title VARCHAR NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+user_id UUID NOT NULL FK -> identity.users(id) ON DELETE CASCADE
+category VARCHAR(32) NOT NULL
+notification_type VARCHAR(64) NOT NULL
+title VARCHAR(255) NOT NULL
 message TEXT NOT NULL
-entity_type VARCHAR NULL
+entity_type VARCHAR(64) NULL
 entity_id UUID NULL
-priority VARCHAR NOT NULL
-status VARCHAR NOT NULL
-created_at TIMESTAMPTZ
+priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'
+status VARCHAR(20) NOT NULL DEFAULT 'UNREAD'
+deduplication_key VARCHAR(128) NULL
+metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 read_at TIMESTAMPTZ NULL
+archived_at TIMESTAMPTZ NULL
 ```
+
+### Constraints & Defensive Rules
+
+1. `chk_notifications_category`:
+   Must be one of the canonical categories:
+   - `TRANSACTIONAL` (Mandatory: bypasses user opt-outs)
+   - `SECURITY` (Mandatory: bypasses user opt-outs)
+   - `EDITORIAL`
+   - `CONTRIBUTOR`
+   - `CURRICULUM_UPDATE`
+   - `MARKETING`
+
+2. `chk_notifications_priority`:
+   - `LOW`, `NORMAL`, `HIGH`, `URGENT`
+
+3. `chk_notifications_status`:
+   - `UNREAD`, `READ`, `ARCHIVED`
+
+4. `chk_notifications_lifecycle`:
+   Guarantees atomic lifecycle consistency:
+   - `(status = 'UNREAD' AND read_at IS NULL AND archived_at IS NULL)`
+   - `(status = 'READ' AND read_at IS NOT NULL AND archived_at IS NULL)`
+   - `(status = 'ARCHIVED' AND archived_at IS NOT NULL)` (Preserves prior `read_at` if already read)
+
+5. `chk_notifications_title_len`:
+   `length(trim(title)) > 0 AND length(title) <= 255`
+
+6. `chk_notifications_msg_len`:
+   `length(trim(message)) > 0 AND length(message) <= 5000`
+
+### Indexes
+
+- `idx_notifications_user_inbox`: B-tree index on `(user_id, status, created_at DESC)` for efficient inbox pagination and unread counts.
+- `uq_notifications_user_dedup`: Partial unique index on `(user_id, deduplication_key)` WHERE `deduplication_key IS NOT NULL` guaranteeing exactly-once dispatch semantics.
+- `idx_notifications_entity`: B-tree index on `(entity_type, entity_id)` for audit queries.
 
 ---
 
 ## 25.2 identity.notification_deliveries
 
+Transactional outbox and delivery tracking ledger for multi-channel message dispatch.
+
 Fields:
 
 ```text
-id UUID PK
-notification_id UUID FK
-channel VARCHAR NOT NULL
-status VARCHAR NOT NULL
-provider VARCHAR NULL
-provider_reference VARCHAR NULL
+id UUID PK DEFAULT gen_random_uuid()
+notification_id UUID NOT NULL FK -> identity.notifications(id) ON DELETE CASCADE
+channel VARCHAR(20) NOT NULL
+status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+provider VARCHAR(64) NULL
+provider_reference VARCHAR(255) NULL
 attempt_count INTEGER NOT NULL DEFAULT 0
+max_attempts INTEGER NOT NULL DEFAULT 3
+next_retry_at TIMESTAMPTZ NULL DEFAULT now()
+locked_at TIMESTAMPTZ NULL
+locked_by VARCHAR(64) NULL
 sent_at TIMESTAMPTZ NULL
 delivered_at TIMESTAMPTZ NULL
 failed_at TIMESTAMPTZ NULL
 error_message TEXT NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Channels:
+### Channels
+
+- `IN_APP`
+- `EMAIL`
+- `SMS`
+
+### Delivery Statuses
+
+- `PENDING`
+- `PROCESSING`
+- `SENT`
+- `DELIVERED`
+- `FAILED`
+- `SKIPPED`
+
+### Constraints & Invariants
+
+1. `chk_deliveries_channel`:
+   `channel IN ('IN_APP', 'EMAIL', 'SMS')`
+
+2. `chk_deliveries_status`:
+   `status IN ('PENDING', 'PROCESSING', 'SENT', 'DELIVERED', 'FAILED', 'SKIPPED')`
+
+3. `chk_deliveries_attempts`:
+   `attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts`
+
+4. `chk_deliveries_invariants`:
+   Complete state-machine lock, retry, and lifecycle invariant:
+   - `PENDING`: `locked_at IS NULL AND locked_by IS NULL AND next_retry_at IS NOT NULL AND attempt_count < max_attempts AND sent_at IS NULL AND delivered_at IS NULL AND failed_at IS NULL`
+   - `PROCESSING`: `locked_at IS NOT NULL AND locked_by IS NOT NULL AND next_retry_at IS NULL AND attempt_count >= 1 AND attempt_count <= max_attempts AND sent_at IS NULL AND delivered_at IS NULL AND failed_at IS NULL`
+   - `SENT`: `channel IN ('EMAIL', 'SMS') AND locked_at IS NULL AND locked_by IS NULL AND next_retry_at IS NULL AND sent_at IS NOT NULL AND failed_at IS NULL AND attempt_count >= 1 AND attempt_count <= max_attempts AND error_message IS NULL`
+   - `DELIVERED`: `channel = 'IN_APP' AND locked_at IS NULL AND locked_by IS NULL AND next_retry_at IS NULL AND delivered_at IS NOT NULL AND failed_at IS NULL AND sent_at IS NULL AND attempt_count = 0 AND error_message IS NULL`
+   - `FAILED`: `locked_at IS NULL AND locked_by IS NULL AND next_retry_at IS NULL AND failed_at IS NOT NULL AND sent_at IS NULL AND delivered_at IS NULL AND attempt_count >= 1 AND error_message IS NOT NULL`
+   - `SKIPPED`: `locked_at IS NULL AND locked_by IS NULL AND next_retry_at IS NULL AND sent_at IS NULL AND delivered_at IS NULL AND failed_at IS NULL AND attempt_count = 0 AND error_message IS NOT NULL`
+
+### Indexes
+
+- `idx_deliveries_queue`: Partial index on `(status, next_retry_at)` WHERE `status = 'PENDING'` for outbox claiming with `FOR UPDATE SKIP LOCKED`.
+- `idx_deliveries_notification`: B-tree index on `(notification_id)`.
+
+---
+
+## 25.3 identity.user_notification_preferences
+
+User notification delivery channel opt-in / opt-out preferences.
+
+Fields:
 
 ```text
-IN_APP
-EMAIL
-SMS
+id UUID PK DEFAULT gen_random_uuid()
+user_id UUID NOT NULL UNIQUE FK -> identity.users(id) ON DELETE CASCADE
+email_enabled BOOLEAN NOT NULL DEFAULT true
+marketing_email_enabled BOOLEAN NOT NULL DEFAULT false
+in_app_enabled BOOLEAN NOT NULL DEFAULT true
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
+
+### Unique Index
+
+- `uq_user_notification_preferences_user`: UNIQUE index on `(user_id)`.
 
 ---
 

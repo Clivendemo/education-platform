@@ -714,17 +714,17 @@ No general public resource commenting/discussion system.
 
 # 31. Notifications
 
-| Component                         | Status      | Notes |
-| --------------------------------- | ----------- | ----- |
-| Notification entity               | NOT_STARTED |       |
-| In-app notifications              | NOT_STARTED |       |
-| Email provider                    | NOT_STARTED |       |
-| SMS provider                      | NOT_STARTED |       |
-| Delivery tracking                 | NOT_STARTED |       |
-| Retry mechanism                   | NOT_STARTED |       |
-| Notification preferences          | NOT_STARTED |       |
-| Transactional notifications       | NOT_STARTED |       |
-| Marketing notification separation | NOT_STARTED |       |
+| Component                         | Status   | Notes |
+| --------------------------------- | -------- | ----- |
+| Notification entity               | VERIFIED | `identity.notifications` with lifecycle constraints (`chk_notifications_lifecycle`), deduplication, entity indexing |
+| In-app notifications              | VERIFIED | Synchronous transactional insert, immediate `DELIVERED` status with `attempt_count = 0` |
+| Email provider                    | VERIFIED | Transactional outbox pattern, mock delivery provider with latency and deterministic simulated failures |
+| SMS provider                      | VERIFIED | Transactional outbox pattern, mock SMS provider interface |
+| Delivery tracking                 | VERIFIED | `identity.notification_deliveries` outbox ledger with full status invariants |
+| Retry mechanism                   | VERIFIED | Atomic lease claims with `FOR UPDATE SKIP LOCKED`, exponential backoff, retry caps, stale-lease recovery |
+| Notification preferences          | VERIFIED | `identity.user_notification_preferences` with email, marketing email, and in-app toggles |
+| Transactional notifications       | VERIFIED | Mandatory categories (`TRANSACTIONAL`, `SECURITY`) strictly bypass user opt-outs |
+| Marketing notification separation | VERIFIED | Strict dual-gate enforcement: requires both `email_enabled = true` and `marketing_email_enabled = true` |
 
 ---
 
@@ -1039,7 +1039,7 @@ Every major implementation stage should have a Git checkpoint.
 | Education updates        | VERIFIED    | Prompt 23 implemented & verified |
 | Quality governance       | VERIFIED    | Prompt 24 implemented & verified |
 | Feedback                 | VERIFIED    | Prompt 25 implemented & verified |
-| Notifications            | NOT_STARTED |        |
+| Notifications            | VERIFIED    | Prompt 26 implemented & verified |
 | Analytics                | NOT_STARTED |        |
 | Search intelligence      | NOT_STARTED |        |
 | Recommendations          | NOT_STARTED |        |
@@ -1054,6 +1054,35 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-17 — Prompt 26: Multi-Channel Notifications, Transactional Outbox, and Worker Engine
+
+Status:
+VERIFIED
+
+Implemented:
+- Database Architecture (drizzle/0015_notifications_system.sql & src/db/schema/notifications.ts):
+  * `identity.notifications`: Central user notification records with full category check (`TRANSACTIONAL`, `SECURITY`, `EDITORIAL`, `CONTRIBUTOR`, `CURRICULUM_UPDATE`, `MARKETING`), priority check (`LOW`, `NORMAL`, `HIGH`, `URGENT`), and lifecycle invariant `chk_notifications_lifecycle` enforcing atomic transition states (`UNREAD`, `READ`, `ARCHIVED` preserving prior `read_at`). Partial unique index `uq_notifications_user_dedup` on `(user_id, deduplication_key)`.
+  * `identity.notification_deliveries`: Transactional outbox ledger with strict multi-state check invariant `chk_deliveries_invariants` covering `PENDING`, `PROCESSING`, `SENT`, `DELIVERED`, `FAILED`, and `SKIPPED`. Concurrency index `idx_deliveries_queue` on `(status, next_retry_at)`.
+  * `identity.user_notification_preferences`: Delivery channel preference store (`email_enabled`, `marketing_email_enabled`, `in_app_enabled`) with `uq_user_notification_preferences_user` unique index.
+- Provider Interfaces & Mock Implementations (src/services/notifications/):
+  * `NotificationDeliveryProvider` interface with contract for multi-channel dispatch.
+  * `MockEmailDeliveryProvider` and `MockSmsDeliveryProvider` supporting realistic latency simulation and deterministic failure injection for testing.
+- Service Layer (src/services/notification.service.ts):
+  * `dispatch`: Atomic transaction insertion for notification records, idempotency resolution for duplicate deduplication keys, synchronous in-app delivery execution (`attempt_count = 0`, status `DELIVERED`), mandatory category opt-out bypass (`TRANSACTIONAL`, `SECURITY`), and outbox queuing for external channels (`EMAIL`, `SMS`).
+  * `listUserNotifications` & `getUnreadCount`: User inbox pagination, status/category filtering, and unread counts.
+  * `markAsRead`, `markAllAsRead`, `archiveNotification`: User lifecycle operations with strict IDOR protections (cross-user access returns 404).
+  * `getUserPreferences` & `updateUserPreferences`: Channel preference retrieval with default fallback and update logic.
+  * `processPendingDeliveries`: Concurrency-safe worker engine utilizing `FOR UPDATE SKIP LOCKED`, exponential backoff (`Math.min(maxBackoff, baseBackoff * 2^(attempt - 1))`), retry budget enforcement, and stale-lease recovery identifying abandoned `PROCESSING` leases past timeout and returning them safely to `PENDING`.
+  * `listAdminDeliveries`: Staff audit trail with channel and status filtering.
+- Fastify Route Handlers (src/routes/api/v1/notifications.ts):
+  * User routes mounted under `/api/v1/me/notifications` and `/api/v1/me/notification-preferences`.
+  * Admin audit queue mounted at `GET /api/v1/admin/notifications` (requires `notification.admin.read`).
+  * Worker trigger sweep mounted at `POST /api/v1/admin/notifications/process-pending` (requires `notification.admin.manage`).
+- RBAC Integration (src/db/seeds/roles-permissions.ts):
+  * Seeded canonical permissions `notification.admin.read` (mapped to `system_admin`, `content_manager`) and `notification.admin.manage` (mapped exclusively to `system_admin`).
+- Testing & Verification (tests/db/notifications.integration.test.ts & tests/routes/notifications.integration.test.ts):
+  * 37 integration tests verifying database check constraints, lifecycle invariants, synchronous in-app delivery, preference suppression, mandatory opt-out bypass, deduplication idempotency, worker claiming, retry backoff, terminal failure, stale lease recovery, and RBAC authorization matrices.
 
 ## 2026-10-15 — Prompt 25: Resource Feedback, Public Summary, and Triage Audit Ledger
 

@@ -1,6 +1,7 @@
 import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { checkDatabaseHealth, closeDatabase } from './db/index.js';
+import { defaultNotificationService } from './services/notification.service.js';
 
 const app = buildApp({
   logger: {
@@ -46,7 +47,9 @@ async function startServer(): Promise<void> {
       port,
       host: env.HOST,
     });
+    defaultNotificationService.startWorker();
     app.log.info(`Server running at http://${env.HOST}:${port}`);
+    app.log.info('Notifications outbox background worker active');
   } catch (err) {
     app.log.fatal(err, 'Failed to start server');
     process.exit(1);

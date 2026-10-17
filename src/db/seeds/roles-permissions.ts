@@ -279,6 +279,20 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Triage, update status, and manage resource feedback.',
   },
+  {
+    name: 'notification.admin.read',
+    resource: 'notification',
+    action: 'admin_read',
+    scopeType: 'GLOBAL',
+    description: 'View administrative notification delivery logs, retry queues, and dispatch statistics.',
+  },
+  {
+    name: 'notification.admin.manage',
+    resource: 'notification',
+    action: 'admin_manage',
+    scopeType: 'GLOBAL',
+    description: 'Trigger outbox processing sweeps and manage notification delivery operations.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -314,6 +328,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.read',
     'feedback.read',
     'feedback.manage',
+    'notification.admin.read',
+    'notification.admin.manage',
   ],
   content_manager: [
     'resource.read',
@@ -338,6 +354,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.read',
     'feedback.read',
     'feedback.manage',
+    'notification.admin.read',
   ],
   content_reviewer: [
     'resource.read',
@@ -412,7 +429,21 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'feedback.manage'))
     .limit(1);
 
-  if (Number(existing?.count) >= 70 && contributorRole && financePerm && updatePerm && qualityPerm && feedbackPerm) {
+  const [notificationPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'notification.admin.manage'))
+    .limit(1);
+
+  if (
+    Number(existing?.count) >= 75 &&
+    contributorRole &&
+    financePerm &&
+    updatePerm &&
+    qualityPerm &&
+    feedbackPerm &&
+    notificationPerm
+  ) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,

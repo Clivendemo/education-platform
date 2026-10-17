@@ -1398,21 +1398,188 @@ Sensitive report details must never be publicly exposed.
 
 ---
 
-# 39. Notifications
+# 39. Notifications API
 
-```text
-GET /api/v1/me/notifications
-POST /api/v1/me/notifications/:id/read
-POST /api/v1/me/notifications/read-all
+Multi-channel notifications system with transactional outbox, worker claim lifecycle, exponential backoff, user preferences, and strict RBAC.
+
+## 39.1 User Notification Endpoints
+
+### GET /api/v1/me/notifications
+Queries the authenticated user's notification inbox.
+
+- **Auth Required**: Yes (`SESSION_COOKIE_NAME`)
+- **Query Parameters**:
+  - `status` (optional): `UNREAD` | `READ` | `ARCHIVED`
+  - `category` (optional): `TRANSACTIONAL` | `SECURITY` | `EDITORIAL` | `CONTRIBUTOR` | `CURRICULUM_UPDATE` | `MARKETING`
+  - `page` (optional, default `1`): positive integer
+  - `limit` (optional, default `20`, max `100`): positive integer
+- **Response `200 OK`**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "uuid",
+        "userId": "uuid",
+        "category": "TRANSACTIONAL",
+        "notificationType": "PAYMENT_CONFIRMATION",
+        "title": "Payment Confirmed",
+        "message": "Entitlement granted.",
+        "priority": "NORMAL",
+        "status": "UNREAD",
+        "metadata": {},
+        "createdAt": "2026-10-16T10:00:00.000Z",
+        "readAt": null,
+        "archivedAt": null
+      }
+    ],
+    "unreadCount": 1,
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 1,
+      "totalPages": 1
+    }
+  }
+}
 ```
 
-Notification delivery may use:
+### POST /api/v1/me/notifications/:id/read
+Marks an unread notification as read.
 
-* in-app
-* email
-* SMS
+- **Auth Required**: Yes
+- **Path Parameters**: `id` (UUID)
+- **Response `200 OK`**: Updated notification with `status = "READ"` and populated `readAt`.
+- **Response `404 NOT_FOUND`**: If notification does not exist or belongs to another user (IDOR protection).
 
-Provider implementation must remain behind provider interfaces.
+### POST /api/v1/me/notifications/read-all
+Marks all unread notifications for the authenticated user as read in a single atomic transaction.
+
+- **Auth Required**: Yes
+- **Response `200 OK`**:
+```json
+{
+  "data": {
+    "updatedCount": 5
+  }
+}
+```
+
+### POST /api/v1/me/notifications/:id/archive
+Archives a notification. If already read, preserves original `readAt` timestamp.
+
+- **Auth Required**: Yes
+- **Path Parameters**: `id` (UUID)
+- **Response `200 OK`**: Updated notification with `status = "ARCHIVED"` and populated `archivedAt`.
+- **Response `404 NOT_FOUND`**: If notification does not exist or belongs to another user.
+
+### GET /api/v1/me/notification-preferences
+Retrieves delivery channel preferences for the authenticated user. Lazily initializes defaults (`emailEnabled: true`, `marketingEmailEnabled: false`, `inAppEnabled: true`) if no record exists.
+
+- **Auth Required**: Yes
+- **Response `200 OK`**:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "userId": "uuid",
+    "emailEnabled": true,
+    "marketingEmailEnabled": false,
+    "inAppEnabled": true,
+    "createdAt": "2026-10-16T10:00:00.000Z",
+    "updatedAt": "2026-10-16T10:00:00.000Z"
+  }
+}
+```
+
+### PATCH /api/v1/me/notification-preferences
+Updates delivery channel preferences for the authenticated user.
+
+- **Auth Required**: Yes
+- **Request Body**:
+```json
+{
+  "emailEnabled": true,
+  "marketingEmailEnabled": true,
+  "inAppEnabled": false
+}
+```
+- **Response `200 OK`**: Updated preference object.
+
+---
+
+## 39.2 Administrative & Worker Endpoints
+
+### GET /api/v1/admin/notifications
+Staff audit log of notification delivery jobs across all channels.
+
+- **Auth Required**: Yes
+- **Permission Required**: `notification.admin.read` (Granted to `system_admin`, `content_manager`)
+- **Query Parameters**:
+  - `status` (optional): `PENDING` | `PROCESSING` | `SENT` | `DELIVERED` | `FAILED` | `SKIPPED`
+  - `channel` (optional): `IN_APP` | `EMAIL` | `SMS`
+  - `notificationId` (optional): UUID
+  - `page` (optional, default `1`)
+  - `limit` (optional, default `20`, max `100`)
+- **Response `200 OK`**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "uuid",
+        "notificationId": "uuid",
+        "channel": "EMAIL",
+        "status": "SENT",
+        "provider": "MOCK_EMAIL",
+        "providerReference": "email-ref-123",
+        "attemptCount": 1,
+        "maxAttempts": 3,
+        "sentAt": "2026-10-16T10:00:05.000Z",
+        "notificationTitle": "Resource Published",
+        "notificationType": "EDITORIAL_UPDATE"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 1,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+### POST /api/v1/admin/notifications/process-pending
+Triggers an outbox worker sweep to claim, process, and finalize pending deliveries. Includes stale-lease recovery for leases abandoned in `PROCESSING` status beyond timeout.
+
+- **Auth Required**: Yes
+- **Permission Required**: `notification.admin.manage` (Granted exclusively to `system_admin`)
+- **Request Body** (optional):
+```json
+{
+  "batchSize": 50
+}
+```
+- **Response `200 OK`**:
+```json
+{
+  "data": {
+    "recoveredLeases": 0,
+    "claimedJobs": 5,
+    "processedJobs": 5
+  }
+}
+```
+
+---
+
+## 39.3 Permissions Matrix
+
+| Permission | Resource | Action | Scope | Permitted Roles |
+| :--- | :--- | :--- | :--- | :--- |
+| `notification.admin.read` | `notification` | `admin_read` | `GLOBAL` | `system_admin`, `content_manager` |
+| `notification.admin.manage` | `notification` | `admin_manage` | `GLOBAL` | `system_admin` |
 
 ---
 

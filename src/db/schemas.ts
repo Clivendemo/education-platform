@@ -12,3 +12,4 @@ export * from './schema/community.js';
 export * from './schema/updates.js';
 export * from './schema/governance.js';
 export * from './schema/feedback.js';
+export * from './schema/notifications.js';
