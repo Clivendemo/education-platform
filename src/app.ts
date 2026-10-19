@@ -21,6 +21,7 @@ import { updatesRoutes } from './routes/api/v1/updates.js';
 import { qualityGovernanceRoutes } from './routes/api/v1/quality-governance.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
+import { analyticsRoutes } from './routes/api/v1/analytics.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -41,6 +42,7 @@ import type { EducationUpdateService } from './services/education-update.service
 import type { QualityGovernanceService } from './services/quality-governance.service.js';
 import type { FeedbackService } from './services/feedback.service.js';
 import type { NotificationService } from './services/notification.service.js';
+import type { AnalyticsService } from './services/analytics.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -69,6 +71,7 @@ export interface AppOptions extends FastifyServerOptions {
     qualityService?: QualityGovernanceService;
     feedbackService?: FeedbackService;
     notificationService?: NotificationService;
+    analyticsService?: AnalyticsService;
   };
 }
 
@@ -175,6 +178,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(searchRoutes, {
     prefix: '/api/v1',
     searchService: services?.searchService,
+    analyticsService: services?.analyticsService,
   });
   app.register(seoRoutes, {
     prefix: '/api/v1',
@@ -193,6 +197,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     prefix: '/api/v1',
     downloadService: services?.downloadService,
     authService: services?.authService,
+    analyticsService: services?.analyticsService,
   });
   app.register(calendarRoutes, {
     prefix: '/api/v1',
@@ -232,6 +237,12 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(notificationRoutes, {
     prefix: '/api/v1',
     notificationService: services?.notificationService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
+  });
+  app.register(analyticsRoutes, {
+    prefix: '/api/v1',
+    analyticsService: services?.analyticsService,
     authService: services?.authService,
     rbacService: services?.rbacService,
   });

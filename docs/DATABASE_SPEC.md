@@ -2272,47 +2272,63 @@ updated_at TIMESTAMPTZ
 
 ## 38.1 analytics.analytics_event_types
 
+Configurable catalog of platform events.
+
 Fields:
 
 ```text
-id UUID PK
-name VARCHAR NOT NULL
-event_code VARCHAR NOT NULL
+id UUID PK DEFAULT gen_random_uuid()
+name VARCHAR(64) NOT NULL
+event_code VARCHAR(32) NOT NULL UNIQUE
 description TEXT NULL
-status VARCHAR NOT NULL
-configuration JSONB NULL
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+configuration JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Tracked event types are configurable.
+Constraints:
+* `chk_analytics_event_types_status`: `status IN ('ACTIVE', 'DISABLED', 'ARCHIVED')`
+* `chk_analytics_event_types_code`: `event_code ~ '^[a-z0-9_]{2,32}$'`
 
 ---
 
 ## 38.2 analytics.analytics_events
 
+Append-only telemetry ledger supporting anonymous, authenticated, and system-originated activity.
+
 Fields:
 
 ```text
-id UUID PK
-event_type_id UUID FK
-user_id UUID NULL FK
-session_id VARCHAR NULL
-country_id UUID NULL FK
-entity_type VARCHAR NULL
+id UUID PK DEFAULT gen_random_uuid()
+event_type_id UUID NOT NULL FK -> analytics.analytics_event_types(id) ON DELETE RESTRICT
+actor_type VARCHAR(20) NOT NULL DEFAULT 'ANONYMOUS'
+user_id UUID NULL FK -> identity.users(id) ON DELETE SET NULL
+anonymous_session_hash VARCHAR(64) NULL
+idempotency_key VARCHAR(128) NULL
+country_id UUID NULL FK -> platform.countries(id) ON DELETE SET NULL
+entity_type VARCHAR(32) NULL
 entity_id UUID NULL
-context JSONB NULL
-occurred_at TIMESTAMPTZ NOT NULL
+context JSONB NOT NULL DEFAULT '{}'::jsonb
+occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Requirements:
+Constraints:
+* `chk_analytics_events_actor_type`: `actor_type IN ('AUTHENTICATED', 'ANONYMOUS', 'SYSTEM')`
+* `chk_analytics_events_actor`: `(actor_type = 'AUTHENTICATED') OR (actor_type = 'ANONYMOUS' AND anonymous_session_hash IS NOT NULL) OR (actor_type = 'SYSTEM')`
+* `chk_analytics_events_context_size`: `pg_column_size(context) <= 4096`
 
-* Anonymous events supported.
-* Authenticated events supported.
-* User linkage optional.
-* Sensitive information minimized.
-* Table should be designed for future partitioning.
-* Analytics should not overload transactional queries.
+Indexes:
+* `uq_analytics_events_idempotency`: `UNIQUE INDEX (idempotency_key) WHERE idempotency_key IS NOT NULL`
+* `idx_analytics_events_window`: `INDEX (occurred_at DESC, event_type_id)`
+* `idx_analytics_events_country_window`: `INDEX (country_id, occurred_at DESC) WHERE country_id IS NOT NULL`
+* `idx_analytics_events_actor_metrics`: `INDEX (occurred_at, user_id, anonymous_session_hash)`
+
+Requirements & Architectural Invariants:
+* **ON DELETE SET NULL Safe**: When an authenticated user is deleted, `user_id` becomes `NULL`. Because `actor_type` remains `'AUTHENTICATED'`, the actor check constraint remains valid, preventing orphaned event invalidation.
+* **No Raw Token Persistence**: Raw session tokens and identifiers are never stored; only SHA-256 hashes are persisted in `anonymous_session_hash`.
+* **Single Source of Truth**: Aggregate table `daily_event_aggregates` is deferred per Section 58 to prevent dual-state synchronization drift. Metric queries execute directly against indexed raw events.
 
 ---
 

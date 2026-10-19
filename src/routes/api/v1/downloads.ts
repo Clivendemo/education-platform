@@ -11,9 +11,16 @@ import {
   SESSION_COOKIE_NAME,
 } from '../../../services/auth.service.js';
 
+import {
+  defaultAnalyticsService,
+  type AnalyticsService,
+} from '../../../services/analytics.service.js';
+import crypto from 'node:crypto';
+
 export interface DownloadRoutesOptions {
   downloadService?: DownloadService;
   authService?: AuthService;
+  analyticsService?: AnalyticsService;
 }
 
 const ResourceIdParamSchema = z.object({
@@ -32,6 +39,7 @@ export const downloadRoutes: FastifyPluginAsync<DownloadRoutesOptions> = async (
 ) => {
   const downloadService = opts.downloadService || defaultDownloadService;
   const authService = opts.authService || defaultAuthService;
+  const analyticsService = opts.analyticsService || defaultAnalyticsService;
 
   // Route-scoped error handler for DownloadError and Zod validation errors
   fastify.setErrorHandler((error, request, reply) => {
@@ -97,6 +105,27 @@ export const downloadRoutes: FastifyPluginAsync<DownloadRoutesOptions> = async (
       resourceId: params.id,
       fileId: body?.fileId,
       userId: authenticatedUserId,
+    });
+
+    // Safe asynchronous analytics event emission (post-success, non-blocking)
+    const clientIp = request.raw?.socket?.remoteAddress || '127.0.0.1';
+    const rawAnonSession =
+      (request.headers['x-anonymous-session-id'] as string) ||
+      request.cookies?.['elimu_anon_sid'] ||
+      `${clientIp}:${request.headers['user-agent'] || 'unknown'}`;
+    const anonHash = crypto.createHash('sha256').update(rawAnonSession).digest('hex');
+
+    analyticsService.captureSafe({
+      eventCode: 'download',
+      actorType: authenticatedUserId ? 'AUTHENTICATED' : 'ANONYMOUS',
+      userId: authenticatedUserId || null,
+      anonymousSessionHash: anonHash,
+      entityType: 'resource',
+      entityId: params.id,
+      context: {
+        resource_id: params.id,
+        file_id: body?.fileId,
+      },
     });
 
     return reply.status(200).send({

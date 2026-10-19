@@ -2180,30 +2180,99 @@ Repeated requests must not create duplicate financial or entitlement records.
 
 # 58. Analytics API
 
-Public clients may submit approved analytics events through a controlled endpoint.
+Append-only telemetry and platform usage analytics system supporting anonymous visitors, authenticated users, and administrative reporting.
 
-Example:
+## 58.1 Public Event Ingestion
 
-```text
-POST /api/v1/analytics/events
+### POST /api/v1/analytics/events
+Public ingestion endpoint for approved client-side telemetry events.
+Rate limited to 120 requests/minute per client IP (in-memory LRU bucket).
+
+Request Headers:
+* `x-anonymous-session-id`: Optional anonymous session token (SHA-256 hashed before storage).
+* `Cookie`: Optional session cookie for authenticated users.
+
+Request Body:
+```json
+{
+  "eventCode": "view",
+  "idempotencyKey": "a8098c1a-f86e-11da-bd1a-00112444be1e",
+  "country": "ke",
+  "entityType": "resource",
+  "entityId": "123e4567-e89b-12d3-a456-426614174000",
+  "anonymousSessionId": "optional-client-session-token",
+  "context": {
+    "entity_type": "resource",
+    "entity_id": "123e4567-e89b-12d3-a456-426614174000",
+    "path": "/ke/curriculum/primary/math",
+    "referrer_type": "search"
+  }
+}
 ```
 
-Events may include:
+Response Envelope (200 OK):
+```json
+{
+  "data": {
+    "status": "RECORDED",
+    "eventId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+  }
+}
+```
+*Note on Deduplication*: If an identical `idempotencyKey` was already recorded, returns HTTP `200 OK` with `{ "data": { "status": "DEDUPLICATED" } }`.
 
-* search
-* view
-* preview
-* download
-* save
-* purchase
-* share
-* request
-* feedback
-* calendar interaction
+Strict Context Validation:
+* Payload size must not exceed 4KB.
+* Schemas are strict (`.strict()`): unexpected or unknown properties trigger `400 VALIDATION_ERROR`.
+* Paths undergo canonical normalization: control characters, path traversal (`/../`, `%2e%2e%2f`), and malformed percent encodings are strictly rejected.
+* Search events store `search_query_hash` (SHA-256 hex string). Raw search terms are never accepted or stored.
 
-The API must validate event types.
+---
 
-Clients must not be allowed to create arbitrary analytics event types.
+## 58.2 Administrative Analytics Endpoints
+
+### GET /api/v1/admin/analytics/overview
+Aggregated platform metrics over a specified half-open UTC interval `[startDate, endDate)`.
+
+Authentication: Required.
+Permission: `analytics.read` (`system_admin`, `content_manager`).
+
+Query Parameters:
+* `startDate` (ISO 8601 string, required)
+* `endDate` (ISO 8601 string, required)
+* `eventCode` (string, optional)
+* `country` (string, optional)
+
+Response (200 OK):
+```json
+{
+  "data": {
+    "window": {
+      "startDate": "2026-10-01T00:00:00.000Z",
+      "endDate": "2026-10-15T00:00:00.000Z"
+    },
+    "metrics": {
+      "actionCount": 142050,
+      "authenticatedUsers": 3,
+      "pureAnonymousSessions": 2,
+      "estimatedActorCount": 5,
+      "downloadUrlIssuedCount": 420,
+      "zeroResultRate": 0.0412
+    }
+  }
+}
+```
+*Mathematical Consistency*: `estimatedActorCount = authenticatedUsers + pureAnonymousSessions`. Converted sessions (anonymous sessions that logged in during the window) are safely accounted for under `authenticatedUsers` and excluded from `pureAnonymousSessions` without retroactive rewriting.
+*Large Count Handling*: Counts up to `Number.MAX_SAFE_INTEGER` are returned as native numbers; larger values are serialized as decimal strings.
+
+### GET /api/v1/admin/analytics/event-types
+Lists all configured event types and their operational statuses.
+Permission: `analytics.manage` (`system_admin`).
+
+### PATCH /api/v1/admin/analytics/event-types/:id
+Updates event type status (`ACTIVE`, `DISABLED`, `ARCHIVED`).
+Permission: `analytics.manage` (`system_admin`).
+Invalidates local in-process cache immediately.
 
 ---
 

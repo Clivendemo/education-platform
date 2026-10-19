@@ -293,6 +293,20 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Trigger outbox processing sweeps and manage notification delivery operations.',
   },
+  {
+    name: 'analytics.read',
+    resource: 'analytics',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View aggregate platform analytics, operational metrics, and reporting dashboards.',
+  },
+  {
+    name: 'analytics.manage',
+    resource: 'analytics',
+    action: 'manage',
+    scopeType: 'GLOBAL',
+    description: 'Configure analytics event types, retention rules, and telemetry controls.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -330,6 +344,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'feedback.manage',
     'notification.admin.read',
     'notification.admin.manage',
+    'analytics.read',
+    'analytics.manage',
   ],
   content_manager: [
     'resource.read',
@@ -355,6 +371,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'feedback.read',
     'feedback.manage',
     'notification.admin.read',
+    'analytics.read',
   ],
   content_reviewer: [
     'resource.read',
@@ -435,14 +452,21 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'notification.admin.manage'))
     .limit(1);
 
+  const [analyticsPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'analytics.manage'))
+    .limit(1);
+
   if (
-    Number(existing?.count) >= 75 &&
+    Number(existing?.count) >= 78 &&
     contributorRole &&
     financePerm &&
     updatePerm &&
     qualityPerm &&
     feedbackPerm &&
-    notificationPerm
+    notificationPerm &&
+    analyticsPerm
   ) {
     return {
       rolesCount: CANONICAL_ROLES.length,

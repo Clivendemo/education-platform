@@ -1,14 +1,20 @@
+import crypto from 'node:crypto';
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
   SearchService,
   DefaultSearchService,
 } from '../../../services/search.service.js';
+import {
+  defaultAnalyticsService,
+  type AnalyticsService,
+} from '../../../services/analytics.service.js';
 
 export const defaultSearchService: SearchService = new DefaultSearchService();
 
 export interface SearchRouteOptions {
   searchService?: SearchService;
+  analyticsService?: AnalyticsService;
 }
 
 const SearchQuerySchema = z.object({
@@ -43,6 +49,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
   opts,
 ) => {
   const searchService = opts.searchService || defaultSearchService;
+  const analyticsService = opts.analyticsService || defaultAnalyticsService;
 
   const handleSearch = async (request: any, reply: any) => {
     const queryResult = SearchQuerySchema.safeParse(request.query);
@@ -59,6 +66,36 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
 
     try {
       const result = await searchService.searchResources(queryResult.data);
+
+      // Safe asynchronous analytics event emission (post-success, non-blocking)
+      const q = queryResult.data.q.trim().toLowerCase();
+      const queryHash = crypto.createHash('sha256').update(q).digest('hex');
+      const count = result.data?.length ?? result.meta?.total ?? 0;
+      const filters = Object.keys(queryResult.data).filter(
+        (k) => k !== 'q' && k !== 'page' && k !== 'pageSize' && (queryResult.data as any)[k] !== undefined,
+      );
+
+      const clientIp = request.raw?.socket?.remoteAddress || '127.0.0.1';
+      const rawAnonSession =
+        (request.headers['x-anonymous-session-id'] as string) ||
+        request.cookies?.['elimu_anon_sid'] ||
+        `${clientIp}:${request.headers['user-agent'] || 'unknown'}`;
+      const anonHash = crypto.createHash('sha256').update(rawAnonSession).digest('hex');
+
+      analyticsService.captureSafe({
+        eventCode: 'search',
+        actorType: request.user?.id ? 'AUTHENTICATED' : 'ANONYMOUS',
+        userId: request.user?.id || null,
+        anonymousSessionHash: anonHash,
+        country: queryResult.data.country || null,
+        context: {
+          search_query_hash: queryHash,
+          results_count: count,
+          filters_applied: filters.slice(0, 10),
+          zero_results: count === 0,
+        },
+      });
+
       return reply.status(200).send(result);
     } catch (err: any) {
       request.log.error(err, 'Search execution error');
