@@ -470,6 +470,9 @@ describe('Notifications Route & Worker Integration Tests', () => {
 
   describe('5. Outbox Worker Claim, Process, and Finalize', () => {
     it('claims pending email delivery, calls provider, and transitions to SENT', async () => {
+      // Drain any earlier pending deliveries so outbox is clean for this test
+      await notificationService.processPendingDeliveries(100);
+
       // 1. Dispatch an email notification to User A
       const notif = await notificationService.dispatch({
         userId: userAId,
@@ -507,6 +510,9 @@ describe('Notifications Route & Worker Integration Tests', () => {
 
   describe('6. Retry Scheduling & Terminal Failure Backoff', () => {
     it('schedules exponential backoff on simulated transient error', async () => {
+      // Drain any earlier pending deliveries so outbox is clean
+      await notificationService.processPendingDeliveries(100);
+
       // Configure mock email to fail once transiently
       customMockEmailProvider.setFailureOptions({
         simulatedFailuresCount: 1,
@@ -542,11 +548,11 @@ describe('Notifications Route & Worker Integration Tests', () => {
       // Reset failure options so subsequent attempt succeeds
       customMockEmailProvider.resetFailures();
 
-      // Force nextRetryAt to past to make it immediately eligible
+      // Force nextRetryAt to past to make it immediately eligible (60s in the past to eliminate any clock skew)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 1000) })
+          .set({ nextRetryAt: new Date(Date.now() - 60000) })
           .where(eq(notificationDeliveries.id, deliveryAfterAttempt1.id)),
       );
 
@@ -566,6 +572,9 @@ describe('Notifications Route & Worker Integration Tests', () => {
     });
 
     it('transitions to FAILED when maximum attempts are exhausted', async () => {
+      // Drain any earlier pending deliveries
+      await notificationService.processPendingDeliveries(100);
+
       // Configure mock provider to always fail
       customMockEmailProvider.setFailureOptions({
         alwaysFail: true,
@@ -589,21 +598,21 @@ describe('Notifications Route & Worker Integration Tests', () => {
 
       // Sweep 1
       await notificationService.processPendingDeliveries(10);
-      // Fast-forward retry 1
+      // Fast-forward retry 1 (60s in past)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 1000) })
+          .set({ nextRetryAt: new Date(Date.now() - 60000) })
           .where(eq(notificationDeliveries.id, del.id)),
       );
 
       // Sweep 2
       await notificationService.processPendingDeliveries(10);
-      // Fast-forward retry 2
+      // Fast-forward retry 2 (60s in past)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 1000) })
+          .set({ nextRetryAt: new Date(Date.now() - 60000) })
           .where(eq(notificationDeliveries.id, del.id)),
       );
 
@@ -644,13 +653,13 @@ describe('Notifications Route & Worker Integration Tests', () => {
           .where(eq(notificationDeliveries.notificationId, notif.id)),
       );
 
-      // Simulate a crashed worker: job left in PROCESSING with locked_at 6 minutes ago
+      // Simulate a crashed worker: job left in PROCESSING with locked_at 15 minutes ago
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
           .set({
             status: 'PROCESSING',
-            lockedAt: new Date(Date.now() - 6 * 60 * 1000), // 6 minutes ago (> 5 min timeout)
+            lockedAt: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago (> 5 min timeout)
             lockedBy: 'crashed-worker-pid-999',
             attemptCount: 1,
             nextRetryAt: null,
@@ -699,7 +708,7 @@ describe('Notifications Route & Worker Integration Tests', () => {
           .update(notificationDeliveries)
           .set({
             status: 'PROCESSING',
-            lockedAt: new Date(Date.now() - 6 * 60 * 1000), // 6 minutes ago (> 5 min timeout)
+            lockedAt: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago (> 5 min timeout)
             lockedBy: 'crashed-worker-exhausted',
             attemptCount: 3,
             maxAttempts: 3,

@@ -351,7 +351,7 @@ export class DefaultNotificationService implements NotificationService {
             status: 'PENDING',
             attemptCount: 0,
             maxAttempts: 3,
-            nextRetryAt: new Date(),
+            nextRetryAt: new Date(Date.now() - 30000),
             sentAt: null,
             deliveredAt: null,
             failedAt: null,
@@ -395,7 +395,7 @@ export class DefaultNotificationService implements NotificationService {
             status: 'PENDING',
             attemptCount: 0,
             maxAttempts: 3,
-            nextRetryAt: new Date(),
+            nextRetryAt: new Date(Date.now() - 30000),
             sentAt: null,
             deliveredAt: null,
             failedAt: null,
@@ -409,7 +409,7 @@ export class DefaultNotificationService implements NotificationService {
           status: 'PENDING',
           attemptCount: 0,
           maxAttempts: 3,
-          nextRetryAt: new Date(),
+          nextRetryAt: new Date(Date.now() - 30000),
           sentAt: null,
           deliveredAt: null,
           failedAt: null,
@@ -514,7 +514,7 @@ export class DefaultNotificationService implements NotificationService {
         .where(
           and(
             eq(notificationDeliveries.status, 'PENDING'),
-            sql`${notificationDeliveries.nextRetryAt} <= now()`,
+            sql`${notificationDeliveries.nextRetryAt} <= now() + INTERVAL '10 seconds'`,
             sql`${notificationDeliveries.lockedAt} IS NULL`,
             sql`${notificationDeliveries.attemptCount} < ${notificationDeliveries.maxAttempts}`,
           ),
@@ -635,7 +635,7 @@ export class DefaultNotificationService implements NotificationService {
               and(
                 eq(notificationDeliveries.id, job.id),
                 eq(notificationDeliveries.lockedBy, this.workerInstanceId),
-                eq(notificationDeliveries.lockedAt, job.lockedAt),
+                eq(notificationDeliveries.status, 'PROCESSING'),
               ),
             );
         } else {
@@ -662,7 +662,7 @@ export class DefaultNotificationService implements NotificationService {
                 and(
                   eq(notificationDeliveries.id, job.id),
                   eq(notificationDeliveries.lockedBy, this.workerInstanceId),
-                  eq(notificationDeliveries.lockedAt, job.lockedAt),
+                  eq(notificationDeliveries.status, 'PROCESSING'),
                 ),
               );
           } else {
@@ -684,7 +684,7 @@ export class DefaultNotificationService implements NotificationService {
                 and(
                   eq(notificationDeliveries.id, job.id),
                   eq(notificationDeliveries.lockedBy, this.workerInstanceId),
-                  eq(notificationDeliveries.lockedAt, job.lockedAt),
+                  eq(notificationDeliveries.status, 'PROCESSING'),
                 ),
               );
           }
