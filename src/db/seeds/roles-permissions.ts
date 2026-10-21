@@ -307,6 +307,34 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Configure analytics event types, retention rules, and telemetry controls.',
   },
+  {
+    name: 'audit.read',
+    resource: 'audit',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View system audit logs and change histories.',
+  },
+  {
+    name: 'retention.read',
+    resource: 'retention',
+    action: 'read',
+    scopeType: 'GLOBAL',
+    description: 'View retention policies, execution logs, and point-in-time dry-run previews.',
+  },
+  {
+    name: 'retention.manage',
+    resource: 'retention',
+    action: 'manage',
+    scopeType: 'GLOBAL',
+    description: 'Create, update, activate, and deactivate data retention policies.',
+  },
+  {
+    name: 'retention.execute',
+    resource: 'retention',
+    action: 'execute',
+    scopeType: 'GLOBAL',
+    description: 'Trigger and recover manual or asynchronous data retention sweep executions.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -346,6 +374,10 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'notification.admin.manage',
     'analytics.read',
     'analytics.manage',
+    'audit.read',
+    'retention.read',
+    'retention.manage',
+    'retention.execute',
   ],
   content_manager: [
     'resource.read',
@@ -372,6 +404,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'feedback.manage',
     'notification.admin.read',
     'analytics.read',
+    'retention.read',
   ],
   content_reviewer: [
     'resource.read',
@@ -458,15 +491,43 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'analytics.manage'))
     .limit(1);
 
+  const [auditPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'audit.read'))
+    .limit(1);
+
+  const [retentionReadPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'retention.read'))
+    .limit(1);
+
+  const [retentionManagePerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'retention.manage'))
+    .limit(1);
+
+  const [retentionExecPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'retention.execute'))
+    .limit(1);
+
   if (
-    Number(existing?.count) >= 78 &&
+    Number(existing?.count) >= 83 &&
     contributorRole &&
     financePerm &&
     updatePerm &&
     qualityPerm &&
     feedbackPerm &&
     notificationPerm &&
-    analyticsPerm
+    analyticsPerm &&
+    auditPerm &&
+    retentionReadPerm &&
+    retentionManagePerm &&
+    retentionExecPerm
   ) {
     return {
       rolesCount: CANONICAL_ROLES.length,

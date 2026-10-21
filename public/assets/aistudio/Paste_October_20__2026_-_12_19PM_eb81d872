@@ -1,0 +1,877 @@
+Prompt 28 — Audit & Data Retention
+
+Complete Technical Implementation Authorization Specification
+
+Project: Kenya-First Education Resource Platform
+Repository: "Clivendemo/education-platform"
+Local path: "C:\Users\USER\Documents\Education-platform"
+Milestone: Prompt 28 — Audit & Data Retention
+Roadmap status: NOT_STARTED until implementation is approved and verified
+Current phase: PLAN → HUMAN APPROVAL
+Implementation authorization: NOT GRANTED
+Next migration: "drizzle/0017_audit_and_retention.sql", journal index 17, subject to verification against the actual repository
+Governance sequence: PLAN → HUMAN APPROVAL → IMPLEMENT → TEST → REPORT → STOP
+
+---
+
+1. Mission and governance requirements
+
+Implement a central audit and data-retention subsystem for the Kenya-first education resource platform.
+
+The implementation must provide:
+
+1. A central, append-only audit ledger for cross-cutting accountability.
+2. Transactionally consistent audit records for privileged business mutations.
+3. Defined audit-event coverage across authentication, RBAC, resource publication, quality verification, feedback triage, and retention administration.
+4. Versioned, validated retention policies.
+5. A controlled initial retention-policy catalogue.
+6. Safe, bounded, resumable retention execution.
+7. Mutation-free dry-run previews.
+8. Explicit DELETE and ANONYMIZE behaviour, with ARCHIVE supported only when a verified archive destination and recovery process exist.
+9. Enforcement of protected-record exclusions.
+10. Execution history and operational diagnostics.
+11. Least-privilege administrative APIs.
+12. Sensitive-data minimization and secret redaction.
+13. Database-level immutability safeguards.
+14. Automated unit, database-integration, route-integration, security, and regression tests.
+15. Updated architecture, database, API, security, and implementation-status documentation.
+
+Mandatory governance rules
+
+Follow this sequence without skipping a phase:
+
+PLAN → HUMAN APPROVAL → IMPLEMENT → TEST → REPORT → STOP
+
+- Begin with read-only reconnaissance and a final implementation plan.
+- Do not create or edit source files, migrations, tests, documentation, database records, package manifests, or dependencies during the planning phase.
+- Present the complete plan, assumptions, risks, migration strategy, file manifest, test strategy, and acceptance criteria together for human review.
+- Wait for explicit human approval of that plan before modifying anything.
+- If the plan reveals a material unresolved design decision, security risk, destructive-data risk, or scope change, stop and seek approval rather than improvising.
+- Once approved, implement the complete agreed scope in one coordinated implementation pass. Do not implement one subsystem at a time while leaving other agreed requirements unfinished.
+- After implementation, run the complete relevant test and quality-gate suite.
+- Report actual results and evidence, distinguishing verified outcomes from assumptions or unavailable checks.
+- Stop after the report. Do not start Prompt 29, add unrelated features, commit, push, deploy, or change production data without separate authorization.
+
+The human retains control over formal acceptance, Git commits, pushes, deployment, and production operations.
+
+2. Repository reconnaissance and source-of-truth verification
+
+Before finalizing the implementation plan, inspect the actual repository and verify the current state of:
+
+- "package.json" and available scripts.
+- "drizzle/meta/_journal.json" and existing migration files.
+- "src/db/logical-schemas.ts".
+- "src/db/schema/governance.ts".
+- "src/db/schema/geography.ts".
+- "src/db/schema/identity.ts" or the actual identity schema modules.
+- "src/db/schema/commerce.ts".
+- "src/db/schema/resource.ts".
+- "src/db/schema/publication.ts".
+- "src/db/schema/feedback.ts".
+- Existing notification, analytics, authentication, RBAC, quality-governance, contributor, and resource services.
+- Existing route registration and administrative route patterns.
+- "src/db/seeds/roles-permissions.ts".
+- Existing permission guards and session-authentication middleware.
+- Existing database test fixtures, test isolation, transaction utilities, and migration verification procedures.
+- "docs/ARCHITECTURE.md".
+- "docs/DATABASE_SPEC.md".
+- "docs/API_SPEC.md".
+- "docs/SECURITY_RULES.md".
+- "docs/IMPLEMENTATION_STATUS.md".
+
+The repository and database, where accessible, are authoritative. Do not rely solely on this prompt if the current implementation differs from the supplied reconnaissance.
+
+Verify exact table names, columns, foreign keys, timestamp semantics, actor/session representation, status enums, permission identifiers, and transaction boundaries.
+
+Confirm that the actual next migration is index 17 and that "0017_audit_and_retention.sql" is not already present or applied under another name. Do not duplicate a migration or alter historical migration entries.
+
+Database constraints: Use the existing managed Neon PostgreSQL architecture. Do not introduce local PostgreSQL, another database service, or a new infrastructure dependency.
+
+Dependencies: Use the existing Node.js 22, TypeScript, Fastify 5, Drizzle ORM, PostgreSQL driver, Zod, and standard-library facilities where sufficient. Do not add npm packages without separately documenting the necessity and obtaining approval.
+
+3. Settled policy decisions
+
+Implement these decisions as the agreed product defaults.
+
+Policy| Approved decision
+Audit-log retention| 7 years, represented as 2,555 days for the platform policy minimum
+Expired-session retention| Delete only after the session has expired and remained expired for an additional 30 days
+Raw analytics retention| 180 days
+Older feedback| Anonymize after 180 days, preserving only approved non-identifying information
+Retention administration| "system_admin" only for policy mutation and retention execution
+Content-manager access| Read-only "retention.read"
+Legal basis| Treat the seven-year audit minimum as a platform policy default pending legal validation, not as a universally verified statutory requirement
+
+The implementation must not represent the seven-year default as a confirmed universal legal mandate. Preserve the ability to document a verified legal obligation later through an approved policy change.
+
+For audit retention, enforce a minimum of 2,555 days for the "AUDIT_LOGS" category unless a separately approved and legally validated policy changes that requirement.
+
+For session retention, the effective deletion predicate must ensure the session is expired and its expiration timestamp is at least 30 days before the execution cutoff.
+
+For analytics, delete raw telemetry older than 180 days according to the selected reference timestamp and cutoff. Do not delete or mutate unrelated commerce, account, resource, or other domain records.
+
+For feedback, anonymization must follow a verified field-level allowlist. It must remove or irreversibly transform identifying fields as specified in Section 8, while preserving only the approved non-identifying classification and aggregate information.
+
+4. Architecture and schema ownership
+
+Use the existing "governance" PostgreSQL schema for:
+
+- "governance.audit_logs"
+- "governance.retention_policies"
+- "governance.retention_policy_versions"
+- "governance.data_retention_actions"
+
+Add the corresponding Drizzle definitions to the existing governance schema module, following repository conventions and avoiding duplicate declarations.
+
+The migration should be "drizzle/0017_audit_and_retention.sql", registered as journal index 17 only after verifying the current migration ledger.
+
+Keep domain-specific ledgers authoritative for their own lifecycle histories. Central audit logs must not replace or compete with:
+
+- "content.publication_events"
+- "governance.resource_quality_checks"
+- "governance.resource_verifications"
+- "content.resource_feedback_events"
+- Other established authoritative domain-event records discovered during reconnaissance.
+
+The central audit ledger records cross-cutting accountability: actor, action, entity, outcome, request correlation, timestamp, trusted country attribution where available, and minimized before/after context.
+
+Use "platform.countries" as the country foreign-key target if confirmed by the current schema and database catalog.
+
+5. Central audit ledger
+
+Create "governance.audit_logs" with the following conceptual fields:
+
+- UUID primary key.
+- Unique event identifier.
+- Action code.
+- Entity type and optional entity UUID.
+- Actor type: "AUTHENTICATED", "ANONYMOUS", or "SYSTEM".
+- Optional actor user UUID, with "ON DELETE SET NULL".
+- Outcome: "SUCCESS", "DENIED", or "FAILED".
+- Optional request ID.
+- Optional country UUID, with "ON DELETE SET NULL".
+- Optional minimized before/after JSONB snapshots.
+- Bounded context JSONB.
+- Event timestamp and creation timestamp.
+
+Add appropriate check constraints, unique indexes, query indexes, and foreign keys. Validate all enum-like values in both application code and database constraints.
+
+For authenticated actors, require a valid actor user identifier at event creation. Do not allow a deleted account's nullified foreign key to invalidate an existing audit record.
+
+5.1 Append-only protection
+
+Implement a PostgreSQL "BEFORE UPDATE OR DELETE" trigger on "governance.audit_logs" that rejects mutation.
+
+The application-level audit service must expose only the operations needed for validated insertion and authorized querying. Do not provide ordinary update or delete methods.
+
+The migration may replace its own trigger/function definitions where necessary, but it must not drop or recreate the audit table to bypass protection.
+
+Document the threat boundary: a database owner or sufficiently privileged administrator may be able to disable a trigger. Mitigate this by using least-privilege runtime database credentials, restricting schema ownership and DDL privileges, and keeping production migration privileges separate from ordinary application permissions where the deployment supports that separation.
+
+Test direct SQL "UPDATE" and "DELETE" attempts against the trigger. Also verify that ordinary audit insertion and querying continue to work.
+
+Do not promise cryptographic tamper-proofing or protection against a database superuser unless an independently verified mechanism provides it.
+
+5.2 Event identifiers and indexes
+
+Require unique event identifiers and use deterministic idempotency where retries could otherwise create duplicate records.
+
+Do not make ordinary business retries generate duplicate audit events. The idempotency design must not silently merge distinct real actions.
+
+Add indexes supporting timestamp filtering, action filtering, entity history, actor history, and request-ID lookup. Avoid indexes that do not support a demonstrated query or acceptance requirement.
+
+6. Audit event coverage and transactional semantics
+
+Implement central audit coverage for the following events, after confirming actual service and route boundaries.
+
+Authentication
+
+- "AUTH.LOGIN_SUCCESS"
+- "AUTH.LOGIN_FAILED"
+- "AUTH.LOGOUT"
+
+Successful login and logout audit records must be transactionally coordinated with the relevant session creation or revocation when the existing architecture supports a shared database transaction.
+
+Failed-login events must not reveal attempted passwords, credential hashes, session tokens, or other secrets. They must be best-effort operational/security events so an audit-storage outage does not disclose sensitive details or create an uncontrolled authentication failure loop. Emit a structured warning when recording fails.
+
+RBAC and account administration
+
+- "USER.ROLE_ASSIGNED"
+- "USER.ROLE_REVOKED"
+- "USER.STATUS_CHANGED"
+
+Write audit records in the same database transaction as the privileged state mutation. If the audit insert fails, the state mutation must roll back.
+
+Resource publication lifecycle
+
+- "RESOURCE.SUBMITTED"
+- "RESOURCE.APPROVED"
+- "RESOURCE.REJECTED"
+- "RESOURCE.PUBLISHED"
+- "RESOURCE.ARCHIVED"
+
+Retain the existing domain publication-event ledger as the authoritative lifecycle record. Write a corresponding central audit record within the same transaction as the lifecycle mutation whenever that transaction is available.
+
+Quality verification
+
+- "QUALITY.VERIFIED"
+- "QUALITY.REVOKED"
+
+Preserve "governance.resource_verifications" as the authoritative verification history. A grant or revocation and its central audit record must commit atomically. A revocation must retain its mandatory reason in the authoritative domain record and include only a minimized, appropriate summary in the central audit record.
+
+Feedback triage
+
+- "FEEDBACK.TRIAGED"
+
+Preserve "content.resource_feedback_events" as the authoritative triage history. Couple the central audit record to the same transaction as the triage mutation.
+
+Do not include reporter IPs, session identifiers, unnecessary reporter identity, or unredacted feedback text in audit context.
+
+Retention administration
+
+- "RETENTION.POLICY_CREATED"
+- "RETENTION.POLICY_UPDATED"
+- "RETENTION.EXECUTION_RUN"
+
+Policy creation, policy version insertion, policy update, and their audit records must be atomic.
+
+For completed retention executions, record the outcome and aggregate execution summary after the retention worker reaches a terminal state. Preserve the original execution record even when a later batch fails.
+
+Document how failed executions are reported when the central audit database write itself fails. Do not claim that an audit record was persisted if the database operation failed.
+
+6.1 Transaction boundary rule
+
+Privileged business mutations and their central audit inserts must share one database transaction. Do not perform the audit insert in an unrelated post-commit request.
+
+Where a service currently hides its transaction boundary, plan the smallest necessary refactor to propagate a transaction handle or provide an equivalent atomic service operation.
+
+For best-effort security events, explicitly document that logging failure is tolerated and logged operationally. Do not silently convert mandatory transactional audit failures into best-effort writes.
+
+7. Audit service and administration API
+
+Create "src/services/audit.service.ts" for validated event recording, context sanitization, idempotency, querying, filtering, and pagination.
+
+Create "src/routes/api/v1/audit.ts" for the audit-query endpoint, registered using the existing route conventions.
+
+"GET /api/v1/admin/audit-logs"
+
+Permission: "audit.read".
+
+Support:
+
+- "page": default 1, minimum 1.
+- "pageSize": default 25, range 1–100.
+- Optional "action".
+- Optional "entityType".
+- Optional UUID "entityId".
+- Optional UUID "actorUserId".
+- Optional outcome: "SUCCESS", "DENIED", "FAILED".
+- Optional validated "startDate" and "endDate".
+
+Use Zod schemas for query validation. Require valid timestamps, enforce "startDate < endDate" when both are supplied, and use UTC-consistent time handling.
+
+Return paginated data and metadata. Do not expose before/after snapshots, secrets, private context, or internal diagnostics by default. Expose only fields justified by the audit-reader role and documented API contract.
+
+Use deterministic pagination ordering, with a unique tie-breaker such as the audit UUID, to prevent unstable page results when timestamps match.
+
+Require session authentication and "audit.read". Unauthenticated requests must return the standard 401 envelope; authenticated callers without permission must receive 403.
+
+8. Retention policy model and initial catalogue
+
+Create "governance.retention_policies" with:
+
+- Unique policy code.
+- Name and description.
+- Data category.
+- Supported target identifier.
+- Retention reference point.
+- Positive retention duration in days.
+- Disposition: "DELETE", "ANONYMIZE", or "ARCHIVE".
+- Status: "DRAFT", "ACTIVE", "INACTIVE", or "SUPERSEDED".
+- Version number.
+- Legal-basis documentation.
+- Creator/updater references.
+- Creation and update timestamps.
+
+Add database constraints for valid action, status, positive duration, and the seven-year platform minimum for "AUDIT_LOGS".
+
+Use a supported-target registry in application code. Do not allow administrators to submit arbitrary table names, column names, SQL expressions, or database identifiers for execution.
+
+A policy must reference a supported target and permitted operation. Validate that the requested reference timestamp and disposition are allowed for that target.
+
+Do not treat "is_protected = false" as sufficient authority to delete data. Protected-target exclusions must be enforced by a non-bypassable service-level allowlist and by explicit execution safeguards.
+
+8.1 Policy version history
+
+Create "governance.retention_policy_versions" to preserve immutable snapshots of policy changes, including:
+
+- Policy UUID and version number.
+- Snapshot of the relevant policy configuration.
+- Required change rationale.
+- Actor UUID.
+- Creation timestamp.
+
+Enforce uniqueness of "(policy_id, version)".
+
+Make policy updates, version increment, snapshot insertion, and the corresponding central audit record one atomic transaction.
+
+Prevent application-level mutation of existing snapshots. If database-level version immutability triggers are appropriate and consistent with repository conventions, include them and test direct mutation attempts.
+
+Do not cascade-delete policy history when a policy is removed. Prefer deactivation/supersession and preserve historical references. Review the proposed foreign-key behaviour and change it to "ON DELETE RESTRICT" or an equivalent protective design if needed to prevent history loss.
+
+8.2 Initial retention-policy catalogue
+
+Seed or create the following policy definitions through the repository's established idempotent seed mechanism. Do not make destructive policies ACTIVE merely because they exist.
+
+A. "RET_USER_SESSIONS_30D"
+
+- Category: "USER_SESSIONS"
+- Target: the verified session table and verified expiry column.
+- Disposition: "DELETE"
+- Eligibility: the session is expired, and its expiration timestamp is at least 30 days before the execution cutoff.
+- Never delete active or unexpired sessions.
+
+B. "RET_ANALYTICS_EVENTS_180D"
+
+- Category: "ANALYTICS_EVENTS"
+- Target: "analytics.analytics_events"
+- Reference: "occurred_at"
+- Disposition: "DELETE"
+- Retention period: 180 days.
+- Do not delete unrelated financial or domain records.
+
+C. "RET_NOTIF_DELIVERIES_90D"
+
+- Category: "NOTIFICATION_DELIVERIES"
+- Target: the verified notification-delivery table.
+- Reference: verified creation timestamp.
+- Disposition: "DELETE"
+- Delete only eligible terminal delivery records, such as "DELIVERED" or "FAILED", older than 90 days.
+- Preserve parent notifications and unread or otherwise non-terminal delivery records.
+
+D. "RET_FEEDBACK_ANON_180D"
+
+- Category: "FEEDBACK_REPORTS"
+- Target: the verified feedback table and confirmed identifying fields.
+- Reference: verified creation timestamp.
+- Disposition: "ANONYMIZE"
+- Retention period: 180 days.
+- Preserve approved non-identifying classification and aggregate information only.
+- Preserve the authoritative feedback-triage event history.
+
+E. "RET_AUDIT_LOGS_7Y"
+
+- Category: "AUDIT_LOGS"
+- Target: "governance.audit_logs"
+- Reference: "occurred_at"
+- Retention period: at least 2,555 days.
+- Record the disposition as protected pending a verified archival implementation and approved legal requirements.
+
+Do not implement automatic deletion from "governance.audit_logs" in this milestone unless a separately verified, approved archive and recovery design exists. The platform's audit ledger is append-only; any future lifecycle process must preserve the agreed retention guarantee, demonstrate integrity and recoverability, and avoid bypassing protections through ordinary deletion.
+
+If the retention engine cannot safely implement a catalogue item based on verified schema and lifecycle semantics, keep that policy non-active and report the specific blocker rather than guessing.
+
+8.3 Feedback anonymization
+
+Before implementation, verify the actual feedback schema, foreign keys, reporter/session representation, event history, and any fields containing personal data.
+
+Define an explicit field-level transformation allowlist. At minimum, review:
+
+- Session identifiers or hashes.
+- Reporter user references, where applicable.
+- Reporter IP or network identifiers, if stored.
+- Free-text fields that may contain personal information.
+- Contact details or other identifying metadata.
+
+Do not assume that clearing a session ID and replacing feedback text with a generic summary is sufficient for anonymization.
+
+Preserve only approved non-identifying fields and classification values. If irreversible anonymization cannot be demonstrated without violating foreign keys or destroying required domain history, stop and report the issue before activation.
+
+9. Retention execution engine
+
+Create "src/services/retention.service.ts" to implement policy validation, policy versioning, dry runs, bounded execution, execution history, safe concurrency, and recovery.
+
+9.1 Bounded batches
+
+Use a default batch size of 500 records, configurable only within a strict application-enforced upper bound.
+
+Never load an unbounded eligible dataset into memory. Process each batch using parameterized queries and supported Drizzle/SQL patterns.
+
+Record accurate counts for evaluated, affected, skipped, failed, and processed batches. Avoid unsafe JavaScript number conversion for large database counts; use strings or "bigint" where required.
+
+9.2 Deterministic eligibility and resumability
+
+Timestamp predicates alone are insufficient to guarantee correct resumption.
+
+Define deterministic eligibility and batch progression for each supported target. Use stable primary-key ordering, a persisted cursor/checkpoint or an equivalent verifiable strategy, and idempotent operations where appropriate.
+
+Specify how rows that fail within a batch are handled and how retries avoid repeating destructive transformations or losing track of unprocessed rows.
+
+Use appropriate transaction boundaries and ensure that committed batches remain accurately represented in the execution history.
+
+9.3 Distributed concurrency control
+
+Prevent two workers from executing the same policy concurrently.
+
+Use a database-backed lock or advisory lock that works across application instances. An in-memory mutex alone is insufficient.
+
+The lock acquisition, execution ownership, and action-history status must be consistent under concurrent requests and process restarts.
+
+A concurrent duplicate request must not start a second destructive execution. Return a documented conflict response such as HTTP 409.
+
+Ensure locks are released on normal completion and failure. Define how abandoned "RUNNING" executions are identified and safely recovered without falsely marking a still-active run as failed.
+
+9.4 Dry-run mode
+
+Dry-run requests must:
+
+- Use the same validated policy and eligibility rules as live execution.
+- Calculate eligible and evaluated counts accurately.
+- Avoid changing target rows.
+- Avoid deleting, anonymizing, archiving, or locking data in a way that persists beyond the dry-run operation.
+- Return the cutoff timestamp, disposition, counts, and safe diagnostics.
+- Avoid returning samples containing personal information or sensitive row data.
+
+It is acceptable to persist an execution-history record that explicitly identifies the operation as a dry run, provided no target data is modified and the distinction is clear.
+
+The implementation must test that dry-run execution leaves target data unchanged.
+
+9.5 Partial failures and recovery
+
+Represent terminal states accurately, including "COMPLETED", "FAILED", and "PARTIAL".
+
+For a partial run:
+
+- Preserve committed batches.
+- Record the failure reason without secrets or raw personal data.
+- Persist the last successful checkpoint and the next eligible work.
+- Allow a safe retry or resume operation only when its semantics are deterministic and verified.
+- Do not mark an execution complete when eligible work remains.
+- Do not claim a transaction rolled back if earlier batches were already committed.
+
+Use a documented retry strategy and test it against injected failures between batches.
+
+10. Protected records and operations
+
+The following data is excluded from automated purge and anonymization in Prompt 28:
+
+- "commerce.orders"
+- "commerce.order_items"
+- "commerce.payments"
+- "content.resources"
+- "content.resource_versions"
+- "identity.users"
+- "identity.roles"
+- "identity.permissions"
+- "governance.resource_quality_checks"
+- "governance.resource_verifications"
+
+Preserve other authoritative domain ledgers unless a specific policy and explicit approval establish otherwise.
+
+The retention engine must reject unsupported targets and disallowed operations before beginning execution. Test that a malicious or malformed policy cannot reach a protected table.
+
+Do not depend on a policy's "is_protected" flag as the sole safeguard. Maintain an authoritative allowlist of supported targets and operations in application code.
+
+Do not introduce cascading deletion that silently removes related records. Inspect foreign-key relationships and ensure retention behaviour is compatible with existing domain histories.
+
+11. Execution history
+
+Create "governance.data_retention_actions" with:
+
+- Unique execution identifier.
+- Policy reference and policy version.
+- Data category and action.
+- Dry-run flag.
+- Status.
+- Evaluated, affected, skipped, and failed counts.
+- Batch count.
+- Cutoff timestamp.
+- Start and completion timestamps.
+- Optional executing actor.
+- Bounded, redacted error information.
+- Diagnostic JSONB.
+- Creation timestamp.
+
+Use "ON DELETE RESTRICT" for policy references so execution history cannot be silently removed by deleting a policy.
+
+Add constraints for allowed action and status values, and indexes for policy/time and execution-status lookups.
+
+Persist execution progress safely. Do not include raw deleted row contents, credentials, or identifying feedback content in diagnostics.
+
+Keep audit and execution-history writes consistent. An execution-history record must remain available after failure and must not be lost because the associated policy is deactivated.
+
+12. Retention administration APIs
+
+Create "src/routes/api/v1/retention.ts" and register it using the repository's established route-registration and dependency-injection conventions.
+
+All endpoints require session authentication and their specified RBAC permission.
+
+"GET /api/v1/admin/retention/policies"
+
+Permission: "retention.read"
+
+Return policy metadata, current versions, and status without exposing unnecessary internal diagnostics.
+
+"POST /api/v1/admin/retention/policies"
+
+Permission: "retention.manage"
+
+Create a validated policy in "DRAFT" status by default. Validate the category, supported target, reference point, duration, and permitted disposition.
+
+Do not accept arbitrary SQL or enable unsupported targets. Return 201 on successful creation.
+
+"GET /api/v1/admin/retention/policies/:id"
+
+Permission: "retention.read"
+
+Return policy details and paginated or bounded version history.
+
+"PATCH /api/v1/admin/retention/policies/:id"
+
+Permission: "retention.manage"
+
+Validate every requested change, require a meaningful change reason where policy configuration changes, increment the version, preserve the prior snapshot, and record the audit event atomically.
+
+Reject invalid transitions and changes that would violate protected-record or audit-retention requirements.
+
+"POST /api/v1/admin/retention/dry-run"
+
+Permission: "retention.read"
+
+Accept a policy UUID and return a mutation-free preview of eligible records and safe diagnostics.
+
+"POST /api/v1/admin/retention/execute"
+
+Permission: "retention.execute"
+
+Accept a policy UUID. Execute only an approved, supported, active policy. Apply the concurrency lock and bounded-batch engine. Record a durable execution summary and return the documented status.
+
+Do not activate destructive policies implicitly during execution.
+
+"GET /api/v1/admin/retention/executions"
+
+Permission: "retention.read"
+
+Return paginated execution history with validated filters and deterministic ordering.
+
+Use consistent API error envelopes and HTTP status conventions. Reject malformed UUIDs, unsupported filters, invalid dates, invalid transitions, unauthorized operations, and concurrent duplicate executions.
+
+13. RBAC and seed integrity
+
+Add these canonical permissions:
+
+- "audit.read"
+- "retention.read"
+- "retention.manage"
+- "retention.execute"
+
+Required assignments:
+
+- "system_admin": all four permissions.
+- "content_manager": "retention.read" only.
+- "content_reviewer": no new permissions.
+- "verified_teacher": no new permissions.
+- "contributor": no new permissions.
+- "standard_user": no new permissions.
+
+Only "system_admin" may create or modify retention policies or execute retention operations.
+
+Before changing "src/db/seeds/roles-permissions.ts", inspect the existing role definitions, permission counts, idempotency strategy, and fast-path logic.
+
+Update the permission seed verification to check the exact required permission identifiers and role assignments, not just a numeric permission threshold. A count threshold may remain as a secondary sanity check but must not be the sole proof of seed correctness.
+
+Ensure existing permissions and mappings remain intact and rerunning the seed does not create duplicates or remove unrelated assignments.
+
+Test the exact 401/403/200 outcomes and each required role-permission mapping.
+
+14. Privacy, validation, and redaction
+
+Implement strict Zod validation for audit events, retention policy inputs, query parameters, and execution requests.
+
+The audit-context sanitizer must use an explicit allowlist of safe fields rather than relying only on matching a few sensitive-key names.
+
+Never store:
+
+- Raw passwords.
+- Password hashes.
+- Raw session tokens or cookies.
+- Authorization headers.
+- API keys or secrets.
+- Payment credentials or sensitive payment data.
+- Binary file content.
+- Unnecessary personal data.
+- Raw feedback contents where they are not required for accountability.
+
+Where a before/after summary is necessary, store a minimized allowlisted representation rather than an unrestricted copy of the full database row.
+
+Reject or safely reduce context exceeding the approved 4,096-byte database storage limit before insertion. Verify how PostgreSQL "pg_column_size" relates to the serialized payload and enforce a consistent service-side size limit.
+
+Test nested objects, arrays, alternate key casing, sensitive fields embedded in nested structures, oversized payloads, malformed values, and attempts to smuggle secrets through unapproved fields.
+
+Do not log unsanitized payloads when validation or persistence fails.
+
+15. Country attribution and request correlation
+
+Use the repository's established request ID and trusted country-resolution mechanisms.
+
+- Capture the validated request ID when available.
+- Use the canonical country-resolution service rather than trusting an arbitrary client-supplied country ID.
+- Treat missing country attribution as nullable.
+- Do not infer country from untrusted headers.
+- Reuse the trusted-proxy rules established in Prompt 27.
+- Only interpret "X-Forwarded-For" according to the verified Fastify/deployment trust configuration.
+- Do not treat arbitrary forwarded headers as trusted when the request did not arrive through an approved proxy.
+
+Include tests for untrusted forwarded-header spoofing and trusted-proxy behaviour where the test environment can verify the configured topology.
+
+16. Migration safety and database operations
+
+Prepare one additive migration, subject to repository verification, to create the required governance tables, indexes, constraints, and triggers.
+
+Migration safety requirements:
+
+1. Verify the migration journal and current database migration state before writing or applying the migration.
+2. Never edit previously applied migrations or rewrite migration history.
+3. Avoid destructive "DROP TABLE", broad "CASCADE", or table recreation.
+4. Do not assume "CREATE TABLE IF NOT EXISTS" proves an existing table has the correct definition.
+5. Where relevant, validate existing object definitions and report incompatible pre-existing objects instead of silently accepting them.
+6. Ensure trigger/function creation and index definitions are consistent with the migration runner's transactional behaviour.
+7. Review all foreign-key deletion behaviour for preservation of audit, policy-version, and execution history.
+8. Keep initial policy seeding idempotent and separate from uncontrolled production purges.
+9. Do not run the migration against production or alter production data without explicit operational authorization.
+10. Do not report a migration as applied unless the database or migration ledger confirms it.
+
+Use the project's established database checks and migration tooling. Preserve the managed Neon-only architecture.
+
+17. Failure handling and operational recovery
+
+Implement structured, bounded operational diagnostics.
+
+For privileged mutations, any mandatory audit insertion failure must abort the transaction.
+
+For best-effort security events, log a sanitized structured warning when the audit write fails.
+
+For retention jobs:
+
+- Preserve execution history on failure.
+- Record accurate partial/completed status.
+- Use bounded error messages and sanitized diagnostics.
+- Release or recover database-backed locks safely.
+- Avoid logging row payloads or secrets.
+- Prevent concurrent workers from processing the same policy simultaneously.
+- Ensure a retry cannot cause an unsafe duplicate anonymization or silently skip unprocessed rows.
+- Clearly distinguish an audit-recording failure from a retention-target mutation failure.
+
+Do not introduce an external queue, Redis, or scheduler unless the current architecture is demonstrably insufficient and the additional infrastructure is approved.
+
+If an in-process worker or existing scheduler is considered, verify graceful shutdown, multiple-instance coordination, and abandoned-run recovery. Do not activate an automatic destructive scheduler without separate approval.
+
+18. Testing and acceptance matrix
+
+Create tests using the repository's existing test conventions and real database integration environment where required.
+
+18.1 Unit tests
+
+Cover:
+
+- Audit event validation.
+- Actor/action/entity/outcome validation.
+- Event ID idempotency.
+- Context allowlisting and secret redaction.
+- Nested sensitive fields.
+- Context size limits.
+- Policy validation.
+- Unsupported targets and dispositions.
+- Protected-record exclusions.
+- Audit-retention minimum.
+- Version increments and change reasons.
+- Safe count handling for large PostgreSQL integer values.
+- Dry-run calculations.
+- Bounded batch calculations.
+- Deterministic retry and checkpoint logic.
+- Error sanitization.
+
+18.2 Database integration tests
+
+Cover:
+
+- Creation and constraints of every new governance table.
+- Unique audit event identifiers.
+- Valid foreign-key behaviour.
+- Audit insertion.
+- Direct SQL audit "UPDATE" rejection.
+- Direct SQL audit "DELETE" rejection.
+- Policy-version immutability if database-level protection is implemented.
+- Policy update/version/audit transaction atomicity.
+- Transaction rollback removing both business mutation and audit insert.
+- Exact retention cutoff boundaries.
+- Session expiry plus 30 additional days.
+- Analytics retention at 180 days.
+- Notification deletion restricted to eligible terminal deliveries.
+- Feedback anonymization using the verified field allowlist.
+- Protected-record rejection.
+- Dry-run target-data purity.
+- Batch size never exceeding the configured limit.
+- Exact execution counts.
+- Partial-batch failure and safe resume.
+- Concurrent execution conflict.
+- Execution history persistence after failure.
+- Migration/schema consistency.
+
+Use isolated seeded test data. Never test destructive retention against production records.
+
+18.3 Route integration tests
+
+Cover:
+
+- Unauthenticated request: 401.
+- Authenticated unauthorized request: 403.
+- Authorized system administrator: expected successful response.
+- Content-manager read-only access to retention information.
+- Content-manager denial for policy creation, policy mutation, and execution.
+- Standard-user and content-reviewer denial for audit and retention administration.
+- Audit filtering and deterministic pagination.
+- Invalid UUID/date/range handling.
+- Policy creation and update validation.
+- Required change reason.
+- Dry-run response with zero target mutations.
+- Live execution against test-only records.
+- Concurrent duplicate execution response.
+- Sanitized API error responses.
+
+18.4 Regression and quality gates
+
+Run the relevant existing authentication, RBAC, analytics, publication, resource, quality-governance, feedback, notification, commerce, and database tests.
+
+Run the actual repository scripts for:
+
+- Test suite.
+- Typecheck.
+- Lint.
+- Database/schema checks.
+- Build or compile step.
+
+Use the project's actual package scripts and do not invent successful results.
+
+If any test fails, determine whether the failure is caused by the implementation, environment, or a pre-existing issue. Report the evidence precisely. Do not conceal failures or claim success from a partial test run.
+
+19. Documentation updates
+
+Update the following documents in the same implementation pass:
+
+"docs/ARCHITECTURE.md"
+
+Document central audit responsibilities, domain-ledger separation, immutability limitations, transactional audit semantics, retention execution, locking, and recovery.
+
+"docs/DATABASE_SPEC.md"
+
+Document the four governance tables, constraints, indexes, foreign keys, immutability protections, policy-version history, execution history, and retention exclusions.
+
+"docs/API_SPEC.md"
+
+Document all audit and retention routes, permissions, request/response schemas, validation rules, pagination, error responses, and dry-run/live-execution distinctions.
+
+"docs/SECURITY_RULES.md"
+
+Document audit immutability boundaries, runtime database privileges, context allowlisting, secret redaction, protected records, policy restrictions, trusted-proxy behaviour, and the platform-default seven-year retention policy pending legal validation.
+
+"docs/IMPLEMENTATION_STATUS.md"
+
+Update Prompt 28 only after implementation and verification. Record actual files, migration status, test totals, quality-gate outcomes, unresolved issues, and evidence.
+
+Do not mark the milestone VERIFIED if material acceptance criteria remain unmet.
+
+20. File-by-file implementation manifest
+
+Verify the actual repository layout before making changes. The expected manifest is:
+
+Create
+
+- "drizzle/0017_audit_and_retention.sql"
+- "src/services/audit.service.ts"
+- "src/services/retention.service.ts"
+- "src/routes/api/v1/audit.ts"
+- "src/routes/api/v1/retention.ts"
+- "tests/services/audit.service.test.ts"
+- "tests/services/retention.service.test.ts"
+- "tests/db/audit-retention.integration.test.ts"
+- "tests/routes/audit-retention.integration.test.ts"
+
+Edit
+
+- "src/db/schema/governance.ts"
+- "drizzle/meta/_journal.json"
+- "src/db/seeds/roles-permissions.ts"
+- Existing authentication, RBAC, resource/publication, quality-governance, and feedback services where necessary for transactional audit integration.
+- Existing route registration, such as "src/app.ts" or the actual versioned route index.
+- "docs/ARCHITECTURE.md"
+- "docs/DATABASE_SPEC.md"
+- "docs/API_SPEC.md"
+- "docs/SECURITY_RULES.md"
+- "docs/IMPLEMENTATION_STATUS.md"
+
+Do not edit every listed service automatically if inspection proves an event is already correctly captured by a shared transactional service. Conversely, do not omit required event coverage merely to reduce the file count. Document any manifest adjustment and its evidence in the approved plan.
+
+Do not touch unrelated files or expand the milestone into new product functionality.
+
+21. Acceptance criteria
+
+Prompt 28 may be reported as complete only when all applicable criteria below are supported by evidence:
+
+1. Migration index 17 is correctly registered, and the migration state is verified.
+2. All four governance tables, constraints, foreign keys, and indexes match the implemented schema.
+3. Audit inserts work and direct SQL update/delete attempts are rejected.
+4. Sensitive fields are removed or excluded from audit context.
+5. Audit context limits are enforced before insertion.
+6. Required event coverage is implemented at the correct transaction boundaries.
+7. Failed mandatory audit writes roll back privileged business mutations.
+8. Best-effort operational events fail safely and produce sanitized operational warnings.
+9. The initial policy catalogue is correct, idempotent, and not accidentally activated for destructive execution.
+10. Audit retention cannot be configured below the platform default of 2,555 days.
+11. Session retention respects expiration plus 30 additional days.
+12. Raw analytics retention is 180 days.
+13. Feedback anonymization is based on the verified schema and a field-level allowlist.
+14. Protected records cannot be purged through policy manipulation or arbitrary target injection.
+15. Policy changes create immutable version history and central audit records atomically.
+16. Dry runs do not modify target data.
+17. Live execution uses bounded batches and accurate counters.
+18. Concurrent execution is prevented across application instances.
+19. Partial execution is accurately recorded and can be safely resumed.
+20. Audit and retention routes enforce the approved permissions and standard error envelopes.
+21. The existing RBAC seed remains idempotent and preserves unrelated permissions.
+22. Tests verify security, rollback, redaction, protected data, retention boundaries, concurrency, and recovery.
+23. Existing project regression tests pass, or every failure is reported with verified evidence.
+24. Typecheck, lint, database/schema checks, and build pass.
+25. Documentation accurately reflects the implementation and verified migration state.
+26. No unauthorized production operation, commit, push, deployment, unrelated refactor, or scope expansion occurs.
+
+22. Implementation report requirements
+
+After implementation and testing, produce one consolidated report containing:
+
+1. Final status for every acceptance criterion.
+2. Exact files created and modified.
+3. Migration file and journal index, including whether it was applied and how that was verified.
+4. Database tables, constraints, indexes, triggers, and seed changes.
+5. Audit event coverage and transactional boundaries.
+6. Retention policies and their activation status.
+7. Dry-run, bounded execution, concurrency, and recovery results.
+8. Test suite totals and individual quality-gate outcomes.
+9. Any environmental limitations, skipped tests, or unresolved defects.
+10. Security review results and known limitations.
+11. Confirmation that protected data and production state were not altered without authorization.
+12. Confirmation that no commit, push, deployment, or subsequent milestone was performed.
+
+Separate PASS, FAIL, BLOCKED, and NOT VERIFIED results. Never equate “the code appears correct” with a passing integration test.
+
+23. Final governance stop point
+
+The current task is to prepare and review the complete implementation plan, not to execute it.
+
+Current authorization: NOT GRANTED.
+
+First complete read-only repository verification and present the final plan, including any evidence-based corrections to this specification. Wait for explicit human approval before modifying source files, tests, documentation, migrations, or database records.
+
+After approval, implement the full agreed Prompt 28 scope, test it comprehensively, report the verified results, and STOP.
+
+Do not begin Prompt 29 or any other milestone until the user reviews and formally accepts Prompt 28.

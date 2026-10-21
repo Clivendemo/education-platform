@@ -1,0 +1,685 @@
+PROMPT 28 — AUDIT & DATA RETENTION
+
+Complete Repository Audit, Architecture Plan, Implementation Specification and Acceptance Criteria
+
+1. Project identity and current milestone
+
+Project: Kenya-First Education Resource Platform
+
+Local repository: "C:\Users\USER\Documents\Education-platform"
+
+GitHub repository: "Clivendemo/education-platform"
+
+Development environment: Windows, VS Code, PowerShell, GitHub and Google AI Studio.
+
+Technology stack:
+
+- Node.js 22 and TypeScript
+- Fastify 5
+- Neon managed PostgreSQL
+- Drizzle ORM and SQL migrations
+- Zod validation
+- Vitest unit and integration tests
+- Existing authentication, RBAC, application services, error handling and audit conventions
+
+The preceding roadmap milestone, Prompt 27 — Analytics, has been formally accepted as is and closed.
+
+The current milestone is:
+
+Prompt 28 — Audit/Retention
+
+This prompt must cover the complete milestone. Do not skip requirements, split the milestone into partial implementations, or move to Prompt 29.
+
+2. Mandatory governance workflow
+
+Follow this exact sequence:
+
+PLAN → HUMAN APPROVAL → IMPLEMENT → TEST → REPORT → STOP
+
+This interaction begins with the PLAN stage only.
+
+You are authorized to inspect the repository read-only and prepare the complete technical plan. You are NOT authorized to modify files, create migrations, change the database, install dependencies, or implement any functionality during this planning stage.
+
+After presenting the complete plan, stop and await my explicit human approval.
+
+Once I approve the plan, the authorized implementation must cover the entire approved Prompt 28 scope in one coordinated implementation pass. Do not treat each component, table, API endpoint, test group, or documentation file as a separate approval milestone.
+
+If an important issue is discovered during implementation:
+
+- First determine whether it is already covered by the approved plan.
+- Resolve in-scope implementation details without unnecessarily interrupting the workflow.
+- If a material change to approved scope or a new product/security decision is required, stop and request approval for that specific change.
+- Never silently expand scope.
+- Do not implement unrelated features or continue into Prompt 29.
+
+My approval controls implementation. I retain control of Git review, commits, pushes and deployment.
+
+---
+
+3. Project vision and architectural constraints
+
+Preserve the project's guiding principle:
+
+«Public by default. Structured by design. Trusted through quality. Intelligent through data. Monetized without obstructing discovery. Built for Kenya, ready for Africa.»
+
+The architecture must remain:
+
+- Country-neutral, with Kenya as the first supported country.
+- Anonymous-first for public resource discovery.
+- Secure by default and privacy-conscious.
+- Based on managed Neon PostgreSQL only; do not propose local PostgreSQL.
+- Consistent with the existing logical schemas, migrations, services, validation, RBAC and API conventions.
+- Backward-compatible with previously accepted functionality.
+- Suitable for a production-grade education-resource platform.
+
+Do not reintroduce a React/Vite/Tailwind frontend scaffold or introduce an admin dashboard. The dashboard is a later roadmap milestone.
+
+Use the repository's actual implementation as the source of truth. Do not assume that a feature, table, permission, migration, service, or test exists simply because it is mentioned in older documentation.
+
+---
+
+4. Objective of Prompt 28
+
+Design and specify a complete, secure, maintainable audit and data-retention subsystem.
+
+The subsystem must answer these questions reliably:
+
+1. Who performed a significant action?
+2. What action was performed?
+3. Which entity or system component was affected?
+4. When did the action occur?
+5. Was the action successful, denied, or otherwise unsuccessful, where applicable?
+6. What minimal, privacy-safe context is needed to establish accountability?
+7. Which records must be retained, for how long, and why?
+8. Which records may be deleted, anonymized, archived, or otherwise disposed of?
+9. Who is authorized to define, change, execute, review, and audit retention policies?
+10. How can the platform demonstrate that retention operations ran safely and produced verifiable results?
+
+Design these capabilities as one integrated subsystem, not unrelated features.
+
+5. Repository reconnaissance — mandatory before proposing the design
+
+Inspect the existing repository read-only. At minimum, examine:
+
+- "package.json" and all actual scripts.
+- "drizzle/meta/_journal.json" and the latest migration files.
+- "src/db/logical-schemas.ts".
+- Existing schema definitions and database initialization.
+- Existing application and service-layer conventions.
+- Authentication, user sessions, RBAC and permission seeds.
+- Request ID handling, structured logging and error envelopes.
+- Existing publication-event and quality-governance audit records.
+- Feedback, notification and analytics implementations.
+- Existing foreign-key relationships and user-deletion behavior.
+- Existing cron, scheduled-job, worker or background-task infrastructure, if any.
+- Existing API route registration and administrative route conventions.
+- Existing environment configuration and secret-handling rules.
+- Existing tests, test-database isolation and Neon integration-test setup.
+- "docs/ARCHITECTURE.md".
+- "docs/DATABASE_SPEC.md".
+- "docs/API_SPEC.md".
+- "docs/SECURITY_RULES.md".
+- "docs/IMPLEMENTATION_STATUS.md".
+- Relevant project vision, governance and development-change-control documents.
+
+Inspect any additional files needed to establish the actual current state.
+
+Produce an evidence-based inventory containing:
+
+- What already exists and can be reused.
+- What exists but is insufficient.
+- What is missing.
+- Which existing tables or events must remain authoritative.
+- Which current behaviors could be damaged by the proposed design.
+- Which architectural or product decisions require my approval.
+
+Reference actual file paths, symbols, migration filenames and permission identifiers wherever available.
+
+Clearly distinguish verified repository evidence from assumptions. If a file or behavior cannot be inspected, identify it as unverified rather than claiming it exists or is missing.
+
+Do not start implementation during reconnaissance.
+
+---
+
+6. Workstream A — Centralized audit architecture
+
+Design the complete audit architecture using the existing logical-schema conventions. Determine whether an existing audit facility can be extended or whether a dedicated audit ledger is necessary.
+
+The plan must define the authoritative audit-record model and its responsibilities.
+
+Evaluate the following requirements:
+
+A.1 Audit event structure
+
+Specify the required and optional fields for significant audit events, including as applicable:
+
+- Stable event identifier.
+- Event type or action code.
+- Event timestamp stored consistently in UTC.
+- Actor type, such as authenticated user, anonymous actor where justified, system process or service.
+- Actor reference, where available.
+- Target entity type and identifier, where applicable.
+- Outcome or result classification.
+- Request/correlation identifier.
+- Country attribution where meaningful and supported by trusted server-side context.
+- A minimal, validated, structured context for additional non-sensitive information.
+- Schema/version information if required for long-term interpretation.
+
+Determine which fields require database constraints, indexes, foreign keys or controlled vocabularies.
+
+Do not introduce arbitrary unvalidated event names or unbounded context payloads.
+
+A.2 Audit event coverage
+
+Create a complete event-coverage matrix for the existing platform.
+
+Review significant security-sensitive, administrative and business-critical actions, including where they exist:
+
+- Authentication and session lifecycle events.
+- Authorization denials and privileged permission changes.
+- User account and role changes.
+- Resource creation, submission, approval, rejection, publication and archival.
+- Quality-check decisions, verification and revocation.
+- Feedback review and moderation actions.
+- Notification administration and relevant operational actions.
+- Analytics administration and event-type management.
+- Commerce, payment, entitlement and contributor-finance actions where applicable.
+- Retention-policy creation, modification, activation, execution and failure.
+- Other high-risk administrative mutations identified during repository inspection.
+
+This list defines areas to inspect, not permission to duplicate every existing domain event.
+
+For each event family, specify:
+
+- Whether an authoritative event already exists.
+- Whether the existing event is sufficient for audit purposes.
+- Whether a new central audit event is required.
+- Which service or transaction should emit it.
+- Required actor, target and outcome fields.
+- Whether it must be recorded synchronously with the business transaction.
+- Any sensitive fields that must be excluded.
+
+Preserve authoritative domain-specific ledgers such as publication events when they already represent the business lifecycle. Avoid creating redundant competing sources of truth.
+
+A.3 Audit integrity and reliability
+
+Design protection against unauthorized alteration and deletion of audit records.
+
+Evaluate:
+
+- Application-level append-only behavior.
+- Database constraints, privileges and triggers where appropriate.
+- Protection against updates or deletes through direct SQL by ordinary application roles.
+- Referential integrity and user deletion.
+- Handling of anonymous actors and system-generated events.
+- Transactional consistency when an audit event accompanies a critical business mutation.
+- Failure behavior when an audit write fails.
+- Idempotency where retries could duplicate records.
+- Safe handling of concurrent writes.
+- Pagination and bounded queries for audit retrieval.
+
+Distinguish ordinary operational logging from authoritative audit records.
+
+Do not claim that an append-only table is tamper-proof against database owners or privileged administrators. State the actual trust boundary and any residual limitations.
+
+---
+
+7. Workstream B — Data-retention policy model
+
+Design the complete retention-policy data model and policy lifecycle.
+
+Inspect existing schema and project documentation before choosing table names or relationships. Reuse established naming conventions and avoid duplicate policy models.
+
+The plan must specify whether a dedicated "governance.retention_policies" table and related execution-history tables are appropriate, and define their exact proposed responsibilities.
+
+B.1 Policy definition
+
+Specify the policy fields and constraints required to represent:
+
+- Policy identifier and stable policy code.
+- Human-readable name and purpose.
+- Record category or supported target.
+- Retention duration or another explicitly justified retention rule.
+- Retention reference point, such as creation time or event time.
+- Permitted disposition: deletion, anonymization, archival or another justified action.
+- Enabled/disabled status.
+- Policy version or equivalent change history.
+- Creation and modification accountability.
+- Effective dates where necessary.
+- Legal, operational or other approved retention rationale.
+- Any protected categories that require stricter controls.
+
+Define which policy combinations are valid and which must be rejected.
+
+Do not invent statutory retention periods. Where a legal or regulatory requirement has not been established, flag it as a decision requiring confirmation rather than presenting a guessed period as law.
+
+B.2 Policy lifecycle and governance
+
+Specify permitted transitions and business rules for:
+
+- Creating a policy.
+- Reviewing and activating a policy.
+- Editing an existing policy.
+- Disabling or superseding a policy.
+- Handling an invalid policy.
+- Preserving historical policy versions and decision accountability.
+
+Determine which changes take effect immediately and which require an explicit effective date or controlled activation.
+
+A policy modification must not silently rewrite the historical explanation of why an earlier retention operation occurred.
+
+Define safeguards against accidentally disabling all applicable retention controls or activating a policy that would dispose of protected data.
+
+B.3 Initial policy coverage
+
+Inventory the existing data categories and recommend a complete initial policy catalogue appropriate to the actual repository.
+
+Evaluate, where present:
+
+- Central audit records.
+- Analytics events.
+- Notification delivery and operational records.
+- Authentication/session records.
+- Feedback and moderation records.
+- Other personal, operational or security-sensitive data discovered during reconnaissance.
+
+Do not assume every category can be handled by one generic deletion query.
+
+For each proposed policy, state:
+
+- The target data.
+- The rationale.
+- The retention clock.
+- The proposed duration or the explicit decision needed to establish it.
+- The permitted disposition.
+- Dependencies and foreign-key consequences.
+- Whether the data may be legally or operationally exempt from ordinary disposal.
+- How successful application will be verified.
+
+Distinguish a policy's existence from its actual execution. A table of retention policies alone does not constitute a working retention system.
+
+---
+
+8. Workstream C — Safe retention execution
+
+Plan the complete execution mechanism, including how eligible records are discovered, processed, verified and reported.
+
+Inspect whether a scheduler or worker already exists. Reuse existing infrastructure if suitable. Do not introduce a new external scheduling service or dependency without demonstrating why the current architecture cannot meet the requirement and obtaining approval if the change is material.
+
+The plan must address:
+
+C.1 Execution lifecycle
+
+- Selecting active and applicable policies.
+- Determining eligible records using the approved reference timestamp.
+- Processing records in bounded batches.
+- Avoiding unbounded table scans and long-running transactions.
+- Handling concurrent workers and duplicate execution attempts.
+- Resuming safely after interruption.
+- Preventing repeated execution from corrupting data.
+- Recording start, completion, status and meaningful results.
+- Recording failures and safe diagnostic information.
+- Reporting counts of evaluated, retained, deleted, anonymized, archived, skipped and failed records where applicable.
+- Recording the policy version used for each run.
+- Providing a traceable execution identifier.
+
+Define explicit behavior for partially completed runs and retries.
+
+C.2 Dry-run and operational controls
+
+Design a safe dry-run capability that reports the estimated scope of a policy without modifying the affected records.
+
+Specify whether authorized operators can initiate a run manually and how scheduled runs are triggered. Do not introduce an administrative dashboard.
+
+Define the safeguards required before a destructive operation executes, including policy validation, bounded batch sizes, execution locking and appropriate permissions.
+
+Do not expose raw personal data in dry-run output or execution reports.
+
+C.3 Deletion and anonymization semantics
+
+Define exactly what each permitted disposition means.
+
+For deletion:
+
+- Establish the dependency and foreign-key impact before deleting.
+- Prevent unintended cascading deletion of unrelated or financially significant records.
+- Preserve required audit accountability.
+- Respect immutable published resource-version rules and existing domain protections.
+- Define the handling of files in object storage if any retained database record references them.
+
+For anonymization:
+
+- Define which fields may be transformed and how re-identification risk is reduced.
+- Preserve only the minimum information needed for legitimate aggregate or audit purposes.
+- Do not claim data is anonymous if stable identifiers or other linkable fields remain.
+
+For archival:
+
+- Define whether an existing storage mechanism supports it.
+- Specify access controls, retrieval requirements and eventual disposition.
+- Do not introduce a new archival infrastructure merely to satisfy the name of the feature.
+
+Never delete or anonymize records that an approved policy does not cover.
+
+C.4 Protected and exempt records
+
+Design explicit handling for data that must not be disposed of through ordinary retention execution, including where applicable:
+
+- Financial and payment-accounting records.
+- Required transaction and entitlement evidence.
+- Legal holds or documented preservation requirements.
+- Authoritative domain audit events.
+- Records protected by existing database invariants.
+- Records whose disposal would break referential integrity or destroy required accountability.
+
+Determine which protections are already implemented and which require new enforcement.
+
+Do not invent a legal-hold feature as a new product module if the repository has no such requirement. Instead, specify the minimum safe exclusion or approval mechanism needed and flag any material policy decision for my review.
+
+---
+
+9. Workstream D — Permissions and API contracts
+
+Design the complete API and permission surface required for Prompt 28, following existing route, validation, error-envelope and service-layer conventions.
+
+Inspect current RBAC seeds before proposing new permission codes. Reuse existing permissions when semantically appropriate; do not create duplicate or conflicting permissions.
+
+Evaluate a narrowly scoped administrative API for:
+
+- Listing and inspecting audit records.
+- Creating and listing retention policies.
+- Retrieving a policy and its version/history.
+- Updating or activating a policy.
+- Disabling or superseding a policy.
+- Performing a dry run.
+- Initiating an authorized retention run if manual execution is approved.
+- Retrieving execution history and status.
+
+The final plan must specify the exact proposed routes, HTTP methods, permissions, schemas, status codes, pagination, filtering and error behavior.
+
+Do not expose sensitive audit details through public endpoints.
+
+Access-control principles
+
+- Public anonymous users must not access administrative audit records or retention controls.
+- Enforce permissions on the server, not merely in route presentation or client behavior.
+- Follow least privilege and the existing role model.
+- Separate policy administration from execution authority where justified.
+- Ensure ordinary content reviewers or contributors cannot administer system-wide retention unless an existing approved permission explicitly grants it.
+- Record privileged policy and execution actions in the authoritative audit system.
+- Avoid recursive audit events in which recording an audit event continually generates more audit events.
+
+If the existing roles do not support a defensible separation of duties, present a precise proposed role/permission matrix for human approval.
+
+Do not silently grant broad powers to "system_admin" or "content_manager" without checking the existing permission conventions and documenting the rationale.
+
+---
+
+10. Workstream E — Privacy and security
+
+Threat-model the proposed audit and retention subsystem.
+
+At minimum, cover:
+
+- Sensitive personal information in audit context.
+- Passwords, authentication tokens, cookies, session secrets and credentials.
+- Payment credentials and confidential transaction data.
+- Internal reviewer notes and moderation details.
+- SQL injection and unsafe dynamic query construction.
+- Unauthorized audit access or retention-policy modification.
+- Destructive or excessively broad retention policies.
+- Concurrent retention runs and race conditions.
+- Audit-log tampering and deletion.
+- Forged actor identity or country attribution.
+- Error messages and logs that disclose confidential values.
+- Denial-of-service risks from large audit queries or retention jobs.
+- Inconsistent audit state when business transactions fail.
+- Privacy risks from indefinite retention.
+- Data loss caused by an incorrect policy or migration.
+
+Specify validation, database constraints, access controls, query limits, indexes, safe error handling, transaction boundaries and tests for each material risk.
+
+Retain only the minimum necessary information. Do not store request bodies or arbitrary headers in audit context by default.
+
+Do not log secrets, session cookies, authentication tokens, full payment credentials or unnecessary personal data.
+
+Do not describe retention as a substitute for access control or data minimization.
+
+---
+
+11. Workstream F — Database schema and migrations
+
+Prepare the complete database change specification.
+
+For every proposed table, field, constraint, index, foreign key, trigger and permission seed, document its purpose and integrity requirement.
+
+Evaluate, without assuming in advance, whether the design needs:
+
+- An authoritative audit-events table.
+- A retention-policies table.
+- Retention policy version/history records.
+- Retention execution/run records.
+- Existing or new controlled event and disposition types.
+- Database-level protections for audit immutability.
+- Supporting indexes for bounded retrieval and retention eligibility queries.
+
+Do not create unnecessary tables when existing authoritative records can be reused safely.
+
+Migration requirements
+
+- Inspect the actual latest migration and journal index.
+- Determine the exact next sequential migration filename and journal index from repository evidence.
+- Never guess a migration number.
+- Follow existing Drizzle conventions.
+- Prefer forward-only, reviewable migrations.
+- Avoid destructive changes to accepted functionality.
+- Do not treat "IF NOT EXISTS" as proof that an existing object has the correct definition.
+- Specify how the resulting schema will be checked for drift.
+- Identify all relevant existing foreign keys and delete behaviors.
+- Define a safe migration/test strategy using an isolated managed Neon test database or branch consistent with existing project practice.
+
+No database migration may run during the planning stage.
+
+---
+
+12. Workstream G — Service design and integration
+
+Specify the complete service-layer design for audit recording, policy management and retention execution.
+
+For each proposed service or module, state its responsibility, public methods, validation boundaries, transaction behavior, dependencies and failure handling.
+
+Determine how to integrate audit capture into existing services without duplicating authoritative publication, quality, commerce or other domain events.
+
+Critical business mutations must have a clearly defined audit-failure policy. Decide which events must be written transactionally with the underlying mutation and which operational events may be recorded independently.
+
+Do not silently swallow audit failures for actions requiring authoritative accountability.
+
+For best-effort operational capture, explicitly define why failure is acceptable, how it is surfaced, and what monitoring or recovery evidence remains available.
+
+Avoid circular dependencies between the audit service, retention service and business services.
+
+Keep the application initialization and "buildApp()" testability conventions intact. Unit tests must not require a live database unless they are explicitly database-integration tests.
+
+---
+
+13. Workstream H — Complete test and acceptance strategy
+
+Prepare the entire test plan before implementation.
+
+The plan must cover unit, route, database-integration, security, concurrency, migration and regression tests as appropriate.
+
+Audit tests
+
+- Required field validation.
+- Invalid event types and context rejection.
+- Actor and target integrity.
+- Correct event timestamps and outcomes.
+- Append-only enforcement through application and relevant direct-database operations.
+- Sensitive-field exclusion.
+- Transactional behavior on critical business mutations.
+- Failure handling.
+- Idempotency and concurrent writes where applicable.
+- Authorization and private-data isolation.
+- Stable pagination and bounded filtering.
+
+Retention-policy tests
+
+- Valid policy creation.
+- Invalid duration or disposition rejection.
+- Required fields and constraints.
+- Role and permission enforcement.
+- Policy activation, modification and deactivation.
+- Policy version/history preservation.
+- Rejection of unsafe or unsupported targets.
+- Auditability of privileged changes.
+
+Execution tests
+
+- Dry run makes no modifications.
+- Only eligible records are selected.
+- Records outside the time window remain unchanged.
+- Protected records remain intact.
+- Batch boundaries are respected.
+- Concurrent runs cannot process the same work unsafely.
+- Retry and interruption behavior is deterministic.
+- Partial failures are reported accurately.
+- Actual deletion or anonymization matches the approved policy.
+- Foreign-key and immutable-record protections remain effective.
+- Run summaries reconcile with database outcomes.
+- Execution history is retained according to its own approved rules.
+
+Regression tests
+
+- Existing authentication and RBAC.
+- Publication and quality-governance workflows.
+- Feedback and notifications.
+- Analytics ingestion and reporting.
+- Commerce, payments, entitlements and contributor finance.
+- Existing health endpoints, request IDs, error envelopes and service initialization.
+- All previously accepted functionality affected by schema or service integration.
+
+Do not claim test success without actual execution evidence.
+
+Identify which tests can run without a database and which require an isolated Neon test database or branch.
+
+Define measurable acceptance criteria for every workstream and identify evidence required to prove each criterion.
+
+---
+
+14. Workstream I — Documentation and operational readiness
+
+The implementation plan must identify all required documentation updates, including relevant sections in:
+
+- "docs/ARCHITECTURE.md"
+- "docs/DATABASE_SPEC.md"
+- "docs/API_SPEC.md"
+- "docs/SECURITY_RULES.md"
+- "docs/IMPLEMENTATION_STATUS.md"
+- Other directly relevant project specifications discovered during reconnaissance.
+
+Documentation must describe the final implemented behavior, not merely proposed architecture.
+
+Specify:
+
+- Audit event semantics and coverage.
+- Retention-policy model and lifecycle.
+- Initial policy catalogue and unresolved duration decisions.
+- Permission and API contracts.
+- Retention execution and retry behavior.
+- Dry-run and operational procedures.
+- Protected records and exclusions.
+- Privacy and secret-redaction requirements.
+- Migration and recovery considerations.
+- Actual limitations and verification status.
+
+Update the roadmap status only when the implementation and verification evidence supports the stated status.
+
+---
+
+15. Explicit exclusions
+
+Prompt 28 must not expand into later roadmap milestones or unrelated platform work.
+
+Strictly exclude:
+
+- Prompt 29 — Search Intelligence.
+- Prompt 30 — Recommendations.
+- Prompt 31 — Admin Dashboard.
+- Prompt 32 — Homepage Intelligence.
+- Prompt 33 — Security Audit as a separate milestone.
+- Prompt 34 — Performance Audit as a separate milestone.
+- Prompt 35 — Final Launch Audit.
+- Production frontend implementation.
+- New external logging, analytics or scheduling platforms unless already present and explicitly approved.
+- Unrelated refactoring or dependency upgrades.
+- Redesign of previously accepted authentication, publication, quality, commerce, notification or analytics features.
+- Git commits, pushes and deployment.
+- Any feature that is not necessary to complete the approved audit/retention objective.
+
+Security analysis and performance considerations needed to implement Prompt 28 safely are in scope. They must not become separate security or performance audit projects.
+
+---
+
+16. Required complete planning deliverable
+
+Do not respond with a brief outline, a partial design or a sequence of separate plans.
+
+Deliver one consolidated technical plan containing all of the following:
+
+1. Repository evidence report: verified current state, file paths, existing audit capabilities, retention gaps and dependencies.
+2. Requirements traceability matrix: every requirement in this prompt mapped to existing evidence, proposed implementation and acceptance test.
+3. Architecture specification: authoritative audit model, event integration, retention model and execution architecture.
+4. Event-coverage matrix: significant event families, current authoritative source, required audit behavior and transaction/failure semantics.
+5. Database specification: proposed tables, columns, data types, constraints, foreign keys, indexes, triggers and migration sequence.
+6. Retention catalogue: proposed record categories, reference timestamps, durations or unresolved decisions, dispositions, exclusions and verification methods.
+7. API contract specification: exact proposed routes, request/response schemas, permissions, status codes and error behavior.
+8. RBAC matrix: current and proposed permissions by role, with least-privilege rationale.
+9. Service integration map: files and modules to create or modify, their responsibilities and dependencies.
+10. Security and privacy threat model: material risks, mitigations, residual risks and evidence needed.
+11. Failure and recovery design: transactional behavior, partial runs, concurrency, retries, safe execution and operational reporting.
+12. Complete test matrix: unit, route, integration, concurrency, security, migration and regression tests.
+13. Documentation change map: exact documents and sections requiring updates.
+14. File-by-file implementation manifest: every expected file creation or modification, with a reason for each.
+15. Dependency assessment: whether any dependency change is necessary; prefer no new dependencies unless justified.
+16. Acceptance checklist: measurable, testable conditions for the entire milestone.
+17. Risk and decision register: assumptions, unresolved product/legal choices, proposed defaults and decisions requiring my approval.
+18. Implementation completion report template: the evidence that will be reported after implementation, including migration results, test totals, typecheck, lint, build, database checks, changed files and remaining limitations.
+
+The plan must be internally consistent. For example, retention policies must not prescribe deletion of records that the audit architecture requires to remain immutable; a policy must not be activatable if its disposition or target is unsupported; and API permissions must agree with the proposed RBAC matrix.
+
+Resolve ordinary engineering details using existing project conventions. Do not defer easily discoverable requirements to a later prompt.
+
+If a genuine legal, privacy or product decision cannot safely be inferred, identify it explicitly, explain its consequences and recommend a defensible default for my approval. Do not invent a legal obligation or silently choose a destructive retention duration.
+
+---
+
+17. Consolidated implementation rule after approval
+
+Once I approve the complete plan:
+
+- Implement all approved Prompt 28 workstreams in one coordinated pass.
+- Follow the file-by-file manifest.
+- Complete schema, migration, services, event integration, policy management, retention execution, permissions, API routes, tests and documentation together.
+- Do not stop after creating tables or a subset of endpoints.
+- Do not ask for separate approval for each already-approved workstream.
+- Do not omit difficult tests or documentation simply to report completion sooner.
+- If a material new decision is genuinely unavoidable, stop only for that decision and clearly explain the impact.
+- Run the actual available verification commands defined in "package.json".
+- Use the established isolated Neon integration-test strategy.
+- Do not run destructive operations against production data or deploy the application.
+- Do not commit or push changes.
+- Report the actual results, failures, limitations and evidence.
+
+A partially implemented Prompt 28 must not be reported as complete.
+
+---
+
+18. Final instruction for this interaction
+
+Begin now with repository inspection and the complete planning deliverable only.
+
+Do not modify files, write implementation code, create migrations, seed data, alter the database, install dependencies or execute retention operations.
+
+Do not begin Prompt 29.
+
+Present the entire Prompt 28 plan in one response, identify any specific decisions requiring my approval, and then STOP and wait for my explicit approval before implementation.

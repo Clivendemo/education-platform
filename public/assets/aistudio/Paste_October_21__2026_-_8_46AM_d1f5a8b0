@@ -1,0 +1,575 @@
+✓ Prompt 08: Publication Workflow Integration & Engine Rules > 4. Terminal ARCHIVED State & Immutability > prohibits submitting or approving an ARCHIVED resource  3424ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 5. Immutable Publication Events Ledger > records publication events in chronological order and exposes GET /resources/:id/events  15466ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 5. Immutable Publication Events Ledger > engine triggers prevent mutating or deleting publication events (immutable audit ledger)  2022ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 6. Published_at Consistency Constraint (chk_resource_versions_published_at) > rejects PUBLISHED version when published_at is NULL  3928ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 6. Published_at Consistency Constraint (chk_resource_versions_published_at) > rejects non-PUBLISHED version when published_at is NOT NULL  4427ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 6. Published_at Consistency Constraint (chk_resource_versions_published_at) > accepts PUBLISHED version with published_at timestamp and DRAFT with NULL  4100ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 7. Publication Event Version Match Trigger (trg_check_publication_event_version_match) > blocks publication event when resource_version_id belongs to a different resource  1772ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 7. Publication Event Version Match Trigger (trg_check_publication_event_version_match) > permits publication event when resource_version_id belongs to the resource or is null  7418ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 8. Approved Admin Endpoints (docs/API_SPEC.md Section 22) > supports full publication lifecycle via approved /admin/resources/* paths  21897ms
+   ✓ Prompt 08: Publication Workflow Integration & Engine Rules > 8. Approved Admin Endpoints (docs/API_SPEC.md Section 22) > supports rejection via POST /api/v1/admin/resources/:id/reject  4095ms
+ ✓ tests/routes/feedback.integration.test.ts (24 tests) 99978ms
+   ✓ Resource Feedback Route Integration Tests > 1. Public Anonymous Feedback Submission > generates rf_sid cookie and records feedback with SHA-256 hashed session_id  2922ms
+   ✓ Resource Feedback Route Integration Tests > 1. Public Anonymous Feedback Submission > reuses existing rf_sid cookie when supplied in request  3129ms
+   ✓ Resource Feedback Route Integration Tests > 2. Authenticated Feedback Submission > records feedback with user_id populated and session_id as NULL  5635ms
+   ✓ Resource Feedback Route Integration Tests > 3. Controlled Taxonomy Validation > accepts each of the 7 canonical feedback categories  16105ms
+   ✓ Resource Feedback Route Integration Tests > 3. Controlled Taxonomy Validation > accepts feedback details of exactly 1000 characters with 201 Created  2146ms
+   ✓ Resource Feedback Route Integration Tests > 4. Resource & Version Publication Integrity > rejects feedback for non-existent resource with 404 RESOURCE_NOT_FOUND  874ms
+   ✓ Resource Feedback Route Integration Tests > 4. Resource & Version Publication Integrity > rejects feedback for DRAFT resource with 404 RESOURCE_NOT_FOUND  1040ms
+   ✓ Resource Feedback Route Integration Tests > 4. Resource & Version Publication Integrity > rejects feedback when version does not belong to resource  1457ms
+   ✓ Resource Feedback Route Integration Tests > 5. Abuse Prevention & 1-Hour Duplicate Cooldown > blocks duplicate submission within 1 hour for same identity + version + type with 429  6664ms
+   ✓ Resource Feedback Route Integration Tests > 5. Abuse Prevention & 1-Hour Duplicate Cooldown > enforces cooldown per authenticated user account  6960ms
+   ✓ Resource Feedback Route Integration Tests > 6. Public Feedback Summary > returns aggregate counts without leaking defect details, statuses, or notes  921ms
+   ✓ Resource Feedback Route Integration Tests > 6. Public Feedback Summary > returns 404 RESOURCE_NOT_FOUND for draft or non-existent resource summary  306ms
+   ✓ Resource Feedback Route Integration Tests > 6. Public Feedback Summary > strictly excludes dismissed (REJECTED) feedback from public summary count  6042ms
+   ✓ Resource Feedback Route Integration Tests > 7. Staff Queue & RBAC Access Control > rejects standard_user with 403 FORBIDDEN  587ms
+   ✓ Resource Feedback Route Integration Tests > 7. Staff Queue & RBAC Access Control > permits content_reviewer to list and view feedback queue (read-only)  2709ms
+   ✓ Resource Feedback Route Integration Tests > 7. Staff Queue & RBAC Access Control > strictly forbids content_reviewer from triaging feedback (read-only role)  618ms
+   ✓ Resource Feedback Route Integration Tests > 7. Staff Queue & RBAC Access Control > permits content_manager to triage feedback and records audit event  8191ms
+   ✓ Resource Feedback Route Integration Tests > 7. Staff Queue & RBAC Access Control > rejects invalid state machine transitions with 400  1816ms
+   ✓ Resource Feedback Route Integration Tests > 8. Database Constraints & Trigger Immutability Defense > database constraint enforces exactly one identity (chk_feedback_exactly_one_identity)  714ms
+   ✓ Resource Feedback Route Integration Tests > 8. Database Constraints & Trigger Immutability Defense > database trigger rejects feedback version belonging to another resource  3386ms
+   ✓ Resource Feedback Route Integration Tests > 8. Database Constraints & Trigger Immutability Defense > database trigger prevents mutation or deletion of feedback events audit records  6165ms
+ ❯ tests/routes/notifications.integration.test.ts (24 tests | 3 failed) 80499ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > synchronously records in-app delivery as DELIVERED with attempt_count = 0  1824ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > queries user inbox immediately without background worker execution  3650ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > marks a single notification as READ via POST /me/notifications/:id/read  1192ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > enforces IDOR defense: User B cannot mark User A notification as read (returns 404)  736ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > archives notification via POST /me/notifications/:id/archive preserving read_at  927ms
+   ✓ Notifications Route & Worker Integration Tests > 1. Synchronous In-App Notification Delivery & User Inbox > marks all unread notifications as read via POST /me/notifications/read-all  4140ms
+   ✓ Notifications Route & Worker Integration Tests > 2. User Notification Preferences & Optional Suppression > returns default preferences via GET /me/notification-preferences  933ms
+   ✓ Notifications Route & Worker Integration Tests > 2. User Notification Preferences & Optional Suppression > updates preferences via PATCH /me/notification-preferences  968ms
+   ✓ Notifications Route & Worker Integration Tests > 2. User Notification Preferences & Optional Suppression > suppresses optional in-app and email notifications according to preferences  2356ms
+   ✓ Notifications Route & Worker Integration Tests > 2. User Notification Preferences & Optional Suppression > evaluates marketing_email_enabled as additional gate when email_enabled is true  4606ms
+   ✓ Notifications Route & Worker Integration Tests > 3. Mandatory Category Policy (Opt-Out Bypass) > bypasses user opt-outs for TRANSACTIONAL and SECURITY notifications  3259ms
+   ✓ Notifications Route & Worker Integration Tests > 4. Deduplication & Idempotency > returns existing notification on duplicate deduplicationKey without duplicate rows  3499ms
+   × Notifications Route & Worker Integration Tests > 5. Outbox Worker Claim, Process, and Finalize > claims pending email delivery, calls provider, and transitions to SENT 5802ms
+     → expected 'PENDING' to be 'SENT' // Object.is equality
+   × Notifications Route & Worker Integration Tests > 6. Retry Scheduling & Terminal Failure Backoff > schedules exponential backoff on simulated transient error 4221ms
+     → expected +0 to be 1 // Object.is equality
+   × Notifications Route & Worker Integration Tests > 6. Retry Scheduling & Terminal Failure Backoff > transitions to FAILED when maximum attempts are exhausted 10664ms
+     → expected 'PENDING' to be 'FAILED' // Object.is equality
+   ✓ Notifications Route & Worker Integration Tests > 7. Stale Lease Recovery & Stale Worker Protection > recovers an expired lease in PROCESSING status back to PENDING  6959ms
+   ✓ Notifications Route & Worker Integration Tests > 7. Stale Lease Recovery & Stale Worker Protection > transitions expired lease to FAILED when maximum attempts are exhausted  4813ms
+   ✓ Notifications Route & Worker Integration Tests > 7. Stale Lease Recovery & Stale Worker Protection > manages worker lifecycle: startWorker, isWorkerRunning, stopWorker, and Fastify onClose 268ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > rejects unauthenticated requests with 401 UNAUTHENTICATED 2ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > rejects standard_user from administrative endpoints with 403 FORBIDDEN  3825ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > permits content_manager to view delivery logs (read-only)  1238ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > rejects content_reviewer from triggering outbox sweep (requires notification.admin.manage)  688ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > rejects content_manager from triggering outbox sweep (requires notification.admin.manage)  571ms
+   ✓ Notifications Route & Worker Integration Tests > 8. Staff & RBAC Access Control > permits system_admin to trigger outbox sweep  2314ms
+ ✓ tests/services/file-storage.service.test.ts (9 tests) 14604ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > successfully uploads, verifies SHA-256 against storage metadata, and persists AVAILABLE record  1057ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > rejects upload and performs compensating R2 cleanup when storage SHA-256 metadata mismatches  684ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > performs compensating R2 cleanup when database insert fails  3297ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 2. Querying and Deletion Lifecycle > retrieves files by id and lists files for a version ordered by sequence order  1752ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 2. Querying and Deletion Lifecycle > deletes a file and its storage object when parent version is DRAFT  1839ms
+ ✓ tests/db/catalogue.integration.test.ts (13 tests) 108114ms
+   ✓ Public Catalogue Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > exposes a PUBLISHED resource with a PUBLISHED version in public catalogue  3561ms
+   ✓ Public Catalogue Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > hides resources in non-published lifecycle statuses (DRAFT, IN_REVIEW, APPROVED, ARCHIVED, REJECTED)  12591ms
+   ✓ Public Catalogue Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > hides a resource with status=PUBLISHED if its only version is DRAFT  2434ms
+   ✓ Public Catalogue Neon Database Integration Tests > 2. Single Published Version & Historical Isolation (Sections 4, 26) > exposes only the single PUBLISHED version when a newer DRAFT version exists  3735ms
+   ✓ Public Catalogue Neon Database Integration Tests > 3. Metadata-Only Resources & File Presentation (Correction 2 & Section 15) > discovers a PUBLISHED resource even when it has NO files attached  1854ms
+   ✓ Public Catalogue Neon Database Integration Tests > 3. Metadata-Only Resources & File Presentation (Correction 2 & Section 15) > presents AVAILABLE files without leaking storage buckets, keys, or R2 credentials  6133ms
+   ✓ Public Catalogue Neon Database Integration Tests > 4. Structured AND-Combined Filtering (Sections 7, 8, 9, 10, 26) > filters accurately by country public identifier (ke) and UUID  5898ms
+   ✓ Public Catalogue Neon Database Integration Tests > 4. Structured AND-Combined Filtering (Sections 7, 8, 9, 10, 26) > filters accurately by resourceType  2221ms
+   ✓ Public Catalogue Neon Database Integration Tests > 4. Structured AND-Combined Filtering (Sections 7, 8, 9, 10, 26) > filters accurately by quality label (PREMIUM)  4783ms
+   ✓ Public Catalogue Neon Database Integration Tests > 4. Structured AND-Combined Filtering (Sections 7, 8, 9, 10, 26) > filters accurately by school, and allows non-school resources when school filter is omitted  3256ms
+   ✓ Public Catalogue Neon Database Integration Tests > 4. Structured AND-Combined Filtering (Sections 7, 8, 9, 10, 26) > applies AND-combination across country + grade + subject + quality + term  2478ms
+   ✓ Public Catalogue Neon Database Integration Tests > 5. Deterministic Sorting & Pagination (Sections 12, 13, 26) > supports deterministic sorting options (newest, oldest, title)  6537ms
+   ✓ Public Catalogue Neon Database Integration Tests > 5. Deterministic Sorting & Pagination (Sections 12, 13, 26) > supports stable pagination with page, pageSize, total, and hasMore  2860ms
+ ✓ tests/db/search.integration.test.ts (11 tests) 83998ms
+   ✓ Public Search Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > returns a PUBLISHED resource with a PUBLISHED version in search results  2050ms
+   ✓ Public Search Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > strictly hides resources in non-published lifecycle statuses even if search term matches perfectly  5548ms
+   ✓ Public Search Neon Database Integration Tests > 1. Public Visibility Rule Matrix (Sections 3, 24, 26) > hides a resource with status=PUBLISHED if its version is DRAFT  1127ms
+   ✓ Public Search Neon Database Integration Tests > 2. Single Published Version & Historical Isolation > searches against the single PUBLISHED version and isolates unreleased DRAFT version metadata  2845ms
+   ✓ Public Search Neon Database Integration Tests > 3. Relevance Ranking & FTS Document Matching > ranks title matches higher than description matches and enforces deterministic id tiebreaker  2866ms
+   ✓ Public Search Neon Database Integration Tests > 3. Relevance Ranking & FTS Document Matching > supports case-insensitivity, phrase matching, and negation in search queries  5834ms
+   ✓ Public Search Neon Database Integration Tests > 3. Relevance Ranking & FTS Document Matching > matches taxonomy fields such as subject name and school name  3688ms
+   ✓ Public Search Neon Database Integration Tests > 4. Structured AND-Combined Filtering > applies structured filters in conjunction with text search query  6351ms
+   ✓ Public Search Neon Database Integration Tests > 5. Metadata-Only Resources & Storage Presentation Sanitization > discovers a metadata-only published resource with zero files attached  2249ms
+   ✓ Public Search Neon Database Integration Tests > 5. Metadata-Only Resources & Storage Presentation Sanitization > presents AVAILABLE files without leaking storage buckets, keys, or R2 credentials  3379ms
+   ✓ Public Search Neon Database Integration Tests > 6. Deterministic Sorting & Pagination > supports stable pagination with page, pageSize, total, and hasMore  8703ms
+ ✓ tests/routes/contributor-finance.integration.test.ts (10 tests) 78608ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > Contributor Workspace Authorization & IDOR Isolation > rejects non-contributor users with 403 Forbidden  3270ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > Contributor Workspace Authorization & IDOR Isolation > allows authenticated contributor to fetch own earnings with empty results initially  1944ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > Administrative Revenue Rules & Endpoints > rejects unprivileged access to /api/v1/admin/contributor-revenue-rules  817ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > Administrative Revenue Rules & Endpoints > allows admin to list revenue rules  976ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > Administrative Revenue Rules & Endpoints > allows admin to create a scheduled revenue rule and rejects overlapping active rule  1590ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > End-to-End Commerce, Payment Completion & Earnings Creation > executes purchase of contributor resource and atomically generates pending earnings  13199ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > End-to-End Commerce, Payment Completion & Earnings Creation > duplicate payment completion callback is idempotent and produces 0 duplicate earnings  2787ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > End-to-End Commerce, Payment Completion & Earnings Creation > admin can inspect earnings ledger via /api/v1/admin/contributor-earnings  1618ms
+   ✓ Contributor Finance HTTP Route & Commerce Integration Tests > End-to-End Commerce, Payment Completion & Earnings Creation > matures earnings after 7 days via mature endpoint  5529ms
+ ✓ tests/db/education-updates.integration.test.ts (4 tests) 18400ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > enforces chk_education_updates_status: invalid publication status fails  3119ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > enforces uq_education_updates_slug: duplicate slug fails  3093ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > cascades deletion of education_updates to curricula and resources junction tables  5118ms
+ ✓ tests/db/seo.integration.test.ts (4 tests) 16639ms
+   ✓ Resource SEO Service Neon Database Integration Tests > returns valid SEO metadata for a PUBLISHED resource with a PUBLISHED version  1120ms
+   ✓ Resource SEO Service Neon Database Integration Tests > strictly hides SEO metadata for unpublished resource lifecycle statuses  5022ms
+   ✓ Resource SEO Service Neon Database Integration Tests > hides SEO metadata if resource is PUBLISHED but its version is DRAFT  1228ms
+   ✓ Resource SEO Service Neon Database Integration Tests > generates a deterministic fallback description when resource and version have null description  1117ms
+ ✓ tests/routes/quality-governance.integration.test.ts (13 tests) 56482ms
+   ✓ Quality Governance Route Integration Tests > 1. Authentication and Authorization Boundaries > rejects standard users from accessing quality check types (403)  3167ms
+   ✓ Quality Governance Route Integration Tests > 1. Authentication and Authorization Boundaries > allows content_reviewer to list check types (200)  1027ms
+   ✓ Quality Governance Route Integration Tests > 1. Authentication and Authorization Boundaries > allows system_admin to list check types (200)  1122ms
+   ✓ Quality Governance Route Integration Tests > 2. Separation of Duties: Reviewer vs Manager > allows content_reviewer to record quality check evaluations  2251ms
+   ✓ Quality Governance Route Integration Tests > 2. Separation of Duties: Reviewer vs Manager > blocks content_reviewer from granting official verification (403 Forbidden)  593ms
+   ✓ Quality Governance Route Integration Tests > 2. Separation of Duties: Reviewer vs Manager > blocks content_reviewer from revoking verification (403 Forbidden)  633ms
+   ✓ Quality Governance Route Integration Tests > 3. Complete Quality Verification & Revocation Workflow > records all remaining mandatory checks  8806ms
+   ✓ Quality Governance Route Integration Tests > 3. Complete Quality Verification & Revocation Workflow > allows content_manager to grant official verification after mandatory checks pass  2660ms
+   ✓ Quality Governance Route Integration Tests > 3. Complete Quality Verification & Revocation Workflow > allows content_manager to inspect full internal quality details  2769ms
+   ✓ Quality Governance Route Integration Tests > 3. Complete Quality Verification & Revocation Workflow > allows content_manager to revoke verification with mandatory reason  1328ms
+   ✓ Quality Governance Route Integration Tests > 4. Public Projection & Information Hiding (Correction A) > projects quality details publicly in catalogue without leaking private reviewer notes  2738ms
+   ✓ Quality Governance Route Integration Tests > 4. Public Projection & Information Hiding (Correction A) > allows Premium resource to also be Verified without changing commercial classification (Correction A)  10982ms
+ ✓ tests/db/contributors.integration.test.ts (8 tests) 65447ms
+   ✓ Contributor System Database & Schema Integration Tests > 1. Active Application Uniqueness (Partial Unique Index) > enforces that a user can only have one active (SUBMITTED/UNDER_REVIEW) application  3250ms
+   ✓ Contributor System Database & Schema Integration Tests > 1. Active Application Uniqueness (Partial Unique Index) > allows a subsequent application after the previous one was REJECTED  9451ms
+   ✓ Contributor System Database & Schema Integration Tests > 2. Slug Generation & Collision Resolution > generates unique incremental slugs for colliding display names  18622ms
+   ✓ Contributor System Database & Schema Integration Tests > 3. Database Constraints & Invariants > enforces chk_contributors_status check constraint  2878ms
+   ✓ Contributor System Database & Schema Integration Tests > 3. Database Constraints & Invariants > enforces chk_contributors_suspension requiring suspended_at when SUSPENDED  2866ms
+   ✓ Contributor System Database & Schema Integration Tests > 3. Database Constraints & Invariants > enforces chk_contributor_subs_pricing check constraint (KES currency requirement)  8907ms
+   ✓ Contributor System Database & Schema Integration Tests > 3. Database Constraints & Invariants > restricts user deletion when contributor profile exists  4506ms
+   ✓ Contributor System Database & Schema Integration Tests > 3. Database Constraints & Invariants > sets contributor_id to NULL when resource is deleted  7062ms
+ ❯ tests/db/contributor-finance.integration.test.ts (8 tests | 1 failed) 68926ms
+   ✓ Contributor Finance Database & Schema Integration Tests > Database Schema Constraints > enforces non-negative amounts check constraint  307ms
+   ✓ Contributor Finance Database & Schema Integration Tests > Database Schema Constraints > enforces exact zero-sum allocation (gross = platform + contributor)  2969ms
+   × Contributor Finance Database & Schema Integration Tests > Database Schema Constraints > enforces KES currency constraint 20937ms
+     → expected 'Failed query: insert into "community"…' to match /chk_earnings_currency/
+   ✓ Contributor Finance Database & Schema Integration Tests > Database Schema Constraints > enforces unique (order_item_id, contributor_id) constraint  3621ms
+   ✓ Contributor Finance Database & Schema Integration Tests > PostgreSQL Trigger Append-Only Protections > blocks direct DELETE on contributor_earnings records  3091ms
+   ✓ Contributor Finance Database & Schema Integration Tests > PostgreSQL Trigger Append-Only Protections > blocks UPDATE tampering with financial facts (gross, platform, contributor amounts)  3277ms
+   ✓ Contributor Finance Database & Schema Integration Tests > PostgreSQL Trigger Append-Only Protections > blocks invalid status transitions (e.g. from PENDING directly to PAID)  3043ms
+   ✓ Contributor Finance Database & Schema Integration Tests > PostgreSQL Trigger Append-Only Protections > permits valid maturity status transition (PENDING -> AVAILABLE)  3098ms
+ ✓ tests/routes/contributors.integration.test.ts (28 tests) 55245ms
+   ✓ Contributor System HTTP Route Integration Tests > 1. Contributor Application Workflow > allows authenticated standard user to submit an application  5005ms
+   ✓ Contributor System HTTP Route Integration Tests > 1. Contributor Application Workflow > rejects duplicate pending application with 409 DUPLICATE_APPLICATION  1339ms
+   ✓ Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > forbids standard non-admin user from listing applications with 403  603ms
+   ✓ Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > allows system admin to list pending contributor applications  1235ms
+   ✓ Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > rejects application rejection without mandatory review notes with 400  599ms
+   ✓ Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > approves application, atomically creates profile and assigns contributor role  4923ms
+   ✓ Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > rejects reviewing an already reviewed application with 400  1539ms
+   ✓ Contributor System HTTP Route Integration Tests > 3. Contributor Workspace & Profile Management > returns 404 for standard user accessing contributor profile  611ms
+   ✓ Contributor System HTTP Route Integration Tests > 3. Contributor Workspace & Profile Management > returns contributor private profile for approved contributor  613ms
+   ✓ Contributor System HTTP Route Integration Tests > 3. Contributor Workspace & Profile Management > updates own contributor profile display name and bio  1331ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > creates draft candidate submission in KES currency  1229ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > lists submissions for current contributor  1532ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > retrieves submission details by id for owner  1159ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > blocks cross-contributor access to another contributor submission with 404  573ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > updates draft candidate submission  1540ms   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > submits candidate submission transitioning from DRAFT to SUBMITTED  1484ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > locks submitted submission against further edits returning 400  1353ms
+   ✓ Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > allows admin/editorial reviewer to review and approve submission  1261ms
+   ✓ Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public contributors with published resource count  1315ms
+   ✓ Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > retrieves public contributor profile by slug  632ms
+   ✓ Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public published resources attributed to contributor  995ms
+   ✓ Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > returns 404 for unknown contributor slug  369ms
+   ✓ Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > allows admin to suspend a contributor  1192ms
+   ✓ Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from updating profile with 403  943ms
+   ✓ Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from creating submissions with 403  1025ms
+   ✓ Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > re-activates contributor when admin sets status to ACTIVE  1328ms
+ ✓ tests/db/file-storage.trigger.test.ts (15 tests) 47228ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully inserts a file record into a DRAFT resource version via direct SQL  327ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully updates metadata on a file belonging to a DRAFT version (proving trigger is not over-broad)  613ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully moves a file between two DRAFT versions  614ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully deletes a file belonging to a DRAFT version  1012ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 2. Direct SQL Publication Protection Triggers (Defense-in-Depth) > rejects direct SQL INSERT of a file into a PUBLISHED resource version (trg_prevent_published_resource_file_insert)  319ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 2. Direct SQL Publication Protection Triggers (Defense-in-Depth) > rejects direct SQL UPDATE on a file belonging to a PUBLISHED resource version  9400ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 2. Direct SQL Publication Protection Triggers (Defense-in-Depth) > rejects moving a file from a DRAFT version into a PUBLISHED version  3013ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces partial unique index for single primary file per version (uq_resource_files_primary_version)  2827ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces unique sequence_order per version (uq_resource_files_version_seq)  2737ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects non-positive byte size (chk_resource_files_file_size_bytes)  2810ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid SHA-256 length (chk_resource_files_sha256)  2652ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid status value (chk_resource_files_status)  2647ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces unique (resource_version_id, checksum_sha256) constraint (uq_resource_files_version_checksum)  2849ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid storage_provider value (chk_resource_files_storage_provider)  2659ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > accepts QUARANTINED file status and persists storage_metadata JSONB  2787ms
+ ✓ tests/db/notifications.integration.test.ts (15 tests) 41081ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_priority on invalid priority  2615ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects UNREAD with read_at populated  2683ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects READ with read_at NULL  2971ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects ARCHIVED with archived_at NULL  2822ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > accepts ARCHIVED notification preserving prior read_at timestamp  2835ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces uq_notifications_user_dedup: prevents duplicate non-null deduplicationKey for same user  690ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > allows multiple notifications with NULL deduplicationKey for the same user  2762ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects IN_APP DELIVERED with attempt_count > 0  308ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects SENT with failed_at populated  2866ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects FAILED without error_message  2866ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects PROCESSING without locked_at or locked_by  2764ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects SKIPPED with attempt_count > 0  2764ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_attempts: rejects attempt_count > max_attempts  2968ms
+   ✓ Notifications Database Layer Integration Tests > 3. Foreign Key Cascades & Cleanup > cascades deletion of user to notifications, deliveries, and preferences  5119ms
+ ✓ tests/routes/commerce.integration.test.ts (13 tests) 41208ms
+   ✓ Commerce HTTP Route Integration Tests > 1. Public Product Discovery > GET /api/v1/products returns product catalog with active offers without authentication  2531ms
+   ✓ Commerce HTTP Route Integration Tests > 1. Public Product Discovery > GET /api/v1/products/:id returns specific product details with active offers  713ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/checkout creates order with server-calculated totals  4460ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/orders/:id retrieves order and snapshot items for owner  1139ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/me/orders lists orders for authenticated user  952ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/payments initiates payment and transitions order to PROCESSING  1862ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/payments/:id returns payment status for authorized owner  1333ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/payments/:id/simulate-success completes payment and provisions entitlement (Correction 8)  4741ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/me/entitlements exposes active entitlement for purchased resource  673ms
+   ✓ Commerce HTTP Route Integration Tests > 4. Cross-User Isolation & Security Invariants > prevents User B from accessing User A order (403 FORBIDDEN)  2548ms
+   ✓ Commerce HTTP Route Integration Tests > 4. Cross-User Isolation & Security Invariants > isolates entitlements: User B has no active entitlement for resource purchased by User A  635ms
+ ✓ tests/db/commerce.integration.test.ts (12 tests) 53339ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > creates a valid RESOURCE product and associates with content.resources  410ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects a product with invalid product_type (SUBSCRIPTION rejected per Correction 1)  339ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects a RESOURCE product missing resource_id (chk_products_resource_ref)  2731ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > creates a valid offer in KES integer minor units (chk_offers_currency)  3380ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects an offer with negative price (chk_offers_price)  817ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects an offer with currency other than KES (chk_offers_currency)  3174ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > creates an order with snapshots of quantity, unit_price_minor, and total_minor  4094ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > rejects an order item where total_minor does not equal quantity * unit_price_minor (chk_order_items_total)  1211ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > enforces cascade deletion: deleting an order deletes its order_items  4418ms
+   ✓ Commerce Database Integration Tests > 3. Payments & Provider Reference Uniqueness > enforces uniqueness of provider reference per provider_code (uq_payments_provider_ref)  922ms
+   ✓ Commerce Database Integration Tests > 4. Entitlements Invariants & Partial Unique Index > creates an entitlement linked to a resource and user without is_paid flag  2966ms
+   ✓ Commerce Database Integration Tests > 4. Entitlements Invariants & Partial Unique Index > enforces partial unique index uq_user_resource_active_entitlement: blocks duplicate active entitlement for same user and resource  308ms
+ ✓ tests/db/calendar.integration.test.ts (14 tests) 41680ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates an OFFICIAL calendar with country awareness and no user or session ownership  334ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects an OFFICIAL calendar that attempts to associate with a user or session (chk_calendars_official_owner)  328ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates a SCHOOL calendar bound to a school entity  2921ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects a SCHOOL calendar missing schoolId (chk_calendars_school_owner)  409ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates a USER calendar bound to an authenticated user  2970ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects a USER calendar missing userId (chk_calendars_user_owner)  406ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates an ANONYMOUS_SESSION calendar with explicit session_id and expires_at  4361ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects an ANONYMOUS_SESSION calendar missing sessionId or expiresAt (chk_calendars_anonymous_owner)  351ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects an invalid calendar scope value (chk_calendars_scope)  2764ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > creates a valid calendar event with date and time ordering  3162ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > rejects an event where end_date precedes start_date (chk_calendar_events_date_order)  624ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > rejects an event where end_time precedes start_time on same day (chk_calendar_events_time_order)  3148ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > supports structural recurrence rules without duplicate event cloning  3485ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > enforces cascade deletion: deleting calendar cascades to its events and exports  1863ms
+ ✓ tests/db/curriculum.integration.test.ts (18 tests) 64896ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates a custom curriculum and retrieves it via service  712ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates a curriculum version with status and date tracking  820ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates education levels with deterministic sequence ordering  431ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates grades under education levels with sequence ordering  387ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > demonstrates optional pathway creation (grades with and without pathways)  612ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates subjects under a pathway as well as direct grade subjects without pathway  717ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > creates hierarchical topic and sub-topic structures  716ms
+   ✓ Curriculum Database Integration Tests > 1. Valid Curriculum Hierarchy and Retrieval > filters inactive and historical records by default in public queries  1022ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects curriculum creation with nonexistent country reference  308ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects incompatible country relationships in curriculum versions  3482ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects invalid grade/education-level relationships across different curriculum versions  3067ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects invalid pathway/grade relationships across different levels  2749ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects invalid subject/pathway relationships where pathway belongs to another grade  2678ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects invalid topic/subject relationships where parent topic belongs to another subject  2662ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects self-parenting topic where id equals parent_id  2764ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects duplicate scoped identifiers within the same parent scope  5529ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > rejects invalid sequence values where sequenceOrder <= 0  20901ms
+   ✓ Curriculum Database Integration Tests > 2. Database Rejection of Invalid Relationships & Integrity Constraints > prevents deletion of curriculum version when child education levels exist (orphaned records prevention)  2957ms
+ ✓ tests/services/commerce-mpesa.service.test.ts (7 tests) 56616ms
+   ✓ CommerceService M-Pesa Integration Tests > 1. M-Pesa STK Push Initiation > initiates STK push and transitions order to PROCESSING  4233ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > confirms payment, marks order COMPLETED, and provisions resource entitlement on successful callback  7857ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > ensures callback idempotency: duplicate successful callback does not re-grant entitlements or mutate records  7705ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > handles user cancellation (ResultCode 1032) by marking payment and order CANCELLED  5736ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > rejects amount mismatch: underpayment or overpayment transitions payment to FAILED without granting entitlements  6049ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > safely handles unknown checkoutRequestId without leaking record presence  1116ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > is race-safe when concurrent duplicate callbacks arrive simultaneously  7578ms
+ ✓ tests/db/resource.integration.test.ts (15 tests) 59223ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates a general resource without curriculum relationship  895ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates a fully curriculum-linked resource down to topic  1032ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates multiple versions on a resource with version ordering  1554ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > prohibits modifying a PUBLISHED resource version through the application service  1632ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > prohibits modifying a PUBLISHED resource version through direct database updates (trigger defense)  2361ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > allows modifying an unpublished (DRAFT) version through the application service  4195ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > enforces correction policy: corrections create a new version with higher version_number  1346ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > enforces composite foreign key fk_resources_school_country: rejects cross-country school assignment  2022ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects duplicate version number for the same resource  6974ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects version number <= 0  4033ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects parent-dependency violation: topic provided without subject  3033ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects parent-dependency violation: subject provided without grade  2902ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects cross-country curriculum relationship: Kenya resource with Tanzania curriculum  3651ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > enforces RESTRICT on deleting a school referenced by a resource  3581ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects invalid resource status and invalid quality label  6022ms
+ ✓ tests/routes/calendar.integration.test.ts (13 tests) 42092ms
+   ✓ Calendar HTTP Route Integration Tests > 1. Public & Official Calendar Endpoints > GET /api/v1/calendar returns combined calendar preview without requiring credentials  952ms
+   ✓ Calendar HTTP Route Integration Tests > 1. Public & Official Calendar Endpoints > GET /api/v1/calendar/official returns official platform calendar events  716ms
+   ✓ Calendar HTTP Route Integration Tests > 1. Public & Official Calendar Endpoints > GET /api/v1/calendar/event-types returns active event types list  304ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > POST /api/v1/calendar/session initializes an anonymous session and sets HttpOnly cookie  576ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > POST /api/v1/calendar/session/events adds a personal event to anonymous calendar  1265ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > GET /api/v1/calendar/session retrieves anonymous calendar and personal events  1642ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > GET /api/v1/calendar preview combines anonymous events with official dates  1634ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > PATCH /api/v1/calendar/session/events/:id updates anonymous event  1335ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > rejects cross-session update attempt (Session B cannot update Session A event)  698ms
+   ✓ Calendar HTTP Route Integration Tests > 2. Anonymous Calendar Construction & Session Management > DELETE /api/v1/calendar/session/events/:id removes anonymous event  2470ms
+   ✓ Calendar HTTP Route Integration Tests > 3. Authenticated User Calendar & Anonymous-to-Account Transfer > allows anonymous building then atomic transfer to authenticated account  8297ms
+   ✓ Calendar HTTP Route Integration Tests > 3. Authenticated User Calendar & Anonymous-to-Account Transfer > supports direct authenticated user event CRUD via /me/calendar/events  4092ms
+   ✓ Calendar HTTP Route Integration Tests > 4. Calendar PDF Export Endpoints > POST /api/v1/calendar/export generates PDF calendar export with download URL  2970ms
+ ✓ tests/routes/downloads.integration.test.ts (17 tests) 36157ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows anonymous download with NO session cookie  1114ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows authenticated download with valid session cookie  3778ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows download when session cookie is invalid or expired (treats as anonymous)  1255ms
+   ✓ Free Downloads HTTP Route Integration Tests > 2. Parameter Validation & File Selection > successfully downloads specific file when valid fileId is provided in body  932ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > blocks download of DRAFT resources with 404 RESOURCE_NOT_FOUND  301ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > returns 404 RESOURCE_NOT_FOUND for non-existent resource UUID  305ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > blocks cross-version file access: returns 404 FILE_NOT_FOUND when requesting another resource file  922ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > blocks quarantined file download with 400 FILE_NOT_AVAILABLE  924ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks unauthenticated user from downloading PREMIUM resource (403 PREMIUM_RESOURCE_LOCKED)  332ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks authenticated user without entitlement from downloading PREMIUM resource (403)  1023ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks authenticated user with EXPIRED entitlement from downloading PREMIUM resource (403)  921ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks user when entitlement is for a different resource (resource-specific access check 403)  921ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > allows authenticated user with valid active entitlement to download published premium resource  1538ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > allows entitled user to download explicit available file of premium resource  1641ms
+stderr | tests/services/analytics.service.test.ts > AnalyticsService Unit Tests > captureSafe Non-Disruptive Execution > does not throw or disrupt caller when underlying recordEvent fails
+[AnalyticsService:captureSafe] Non-fatal background event recording failed: Simulated DB network partition
+
+ ✓ tests/services/analytics.service.test.ts (27 tests) 51ms
+ ✓ tests/routes/library.integration.test.ts (16 tests) 27391ms
+   ✓ User Library HTTP Route Integration Tests > 2. Parameter Validation (400 BAD_REQUEST) > returns 400 when resourceVersionId is not a valid UUID  317ms
+   ✓ User Library HTTP Route Integration Tests > 3. Eligibility & Error Handling > returns 400 RESOURCE_VERSION_NOT_ELIGIBLE when attempting to save a DRAFT version  3376ms
+   ✓ User Library HTTP Route Integration Tests > 3. Eligibility & Error Handling > returns 404 RESOURCE_VERSION_NOT_FOUND when version does not exist  714ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > saves a published version to User A library  1636ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > verifies that GET /library/resources/:id indicates isSaved = true for User A  719ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > enforces User Isolation: User B sees isSaved = false and empty list  1333ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > lists the saved resource for User A with public projection  1589ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > idempotently removes the saved version for User A  1886ms   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports saving via POST /api/v1/me/saved-resources/:id  1640ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports listing via GET /api/v1/me/saved-resources  1738ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports checking via GET /api/v1/me/saved-resources/:id  818ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports removing via DELETE /api/v1/me/saved-resources/:id  594ms
+ ✓ tests/services/calendar.service.test.ts (9 tests) 32876ms
+   ✓ Calendar Service Unit & Functional Tests > 1. Anonymous Session Lifecycle & Rolling Expiry > creates an anonymous calendar with 7-day rolling expiry  616ms
+   ✓ Calendar Service Unit & Functional Tests > 1. Anonymous Session Lifecycle & Rolling Expiry > extends rolling expiry on subsequent access  1329ms
+   ✓ Calendar Service Unit & Functional Tests > 2. Combined Calendar & Chronological Event Merging > merges official events with personal events and marks read-only properties  3485ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits creating an event on an OFFICIAL calendar through personal event API  715ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits updating or deleting official events  1838ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits cross-session event access (Session B cannot update or delete Session A event)  2460ms
+   ✓ Calendar Service Unit & Functional Tests > 4. Anonymous-to-Account Calendar Transfer > atomically transfers anonymous session events to authenticated user account  5631ms
+   ✓ Calendar Service Unit & Functional Tests > 5. PDF Calendar Export Flow > snapshots authorized calendar view and generates printable PDF export with signed URL  3882ms
+ ✓ tests/db/analytics.integration.test.ts (6 tests) 17478ms
+   ✓ Analytics Database Integration Tests > User Deletion and Actor Constraints > preserves analytics events with ON DELETE SET NULL when a user is deleted  1330ms
+   ✓ Analytics Database Integration Tests > User Deletion and Actor Constraints > allows system events with null user_id and null anonymous_session_hash  407ms
+   ✓ Analytics Database Integration Tests > User Deletion and Actor Constraints > rejects anonymous events without anonymous_session_hash  412ms
+   ✓ Analytics Database Integration Tests > Idempotency and Concurrency Deduplication > safely deduplicates identical idempotency keys  3479ms
+   ✓ Analytics Database Integration Tests > Idempotency and Concurrency Deduplication > handles simultaneous concurrent duplicate requests against the exact database conflict target (Promise.all)  3175ms
+   ✓ Analytics Database Integration Tests > Acceptance Test Fixture: Exact Mathematical Metric Set (3 + 2 = 5) > correctly calculates authenticatedUsers, pureAnonymousSessions, and estimatedActorCount without double counting converted sessions  5835ms
+ ✓ tests/routes/analytics.integration.test.ts (13 tests) 19931ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > successfully records a valid anonymous view event  722ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > successfully records a valid authenticated view event  3272ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > deduplicates events with identical idempotencyKey  614ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > isolates rate limits by trusted-proxy client IP (X-Forwarded-For)  601ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > persists Unicode and multilingual context properly  307ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 403 for standard user without analytics.read permission  780ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 200 for content_manager with analytics.read permission  2181ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 200 for system_admin with analytics.read permission  2248ms
+   ✓ Analytics Route Integration Tests > Event Type Management (RBAC & Invalidation) > allows system_admin to list and update event types  2049ms
+   ✓ Analytics Route Integration Tests > Event Type Management (RBAC & Invalidation) > returns 403 when content_manager tries to manage event types  713ms
+ ✓ tests/routes/updates.integration.test.ts (7 tests) 32953ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Public Endpoints (Anonymous Access) > GET /api/v1/updates/categories returns 200 OK without authentication  625ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Public Endpoints (Anonymous Access) > GET /api/v1/updates returns 200 OK and paginated structure  810ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Public Endpoints (Anonymous Access) > GET /api/v1/updates/:slug returns 404 for non-existent or unpublished update  468ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > POST /api/v1/admin/updates returns 403 Forbidden for standard_user lacking update.create  3324ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > POST /api/v1/admin/updates creates draft update for system_admin (201 Created)  3983ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > full publication workflow: create draft -> publish -> verify public -> archive -> verify hidden  9215ms
+ ✓ tests/services/commerce.service.test.ts (6 tests) 55895ms
+   ✓ Commerce Service Unit & Functional Tests > 1. Offer Validity & Product Types > evaluates offer validity against current time: rejects expired offers (Correction 6)  1518ms
+   ✓ Commerce Service Unit & Functional Tests > 1. Offer Validity & Product Types > rejects BUNDLE checkout expansion in Prompt 18 (Correction 5)  1533ms
+   ✓ Commerce Service Unit & Functional Tests > 2. Server-Authoritative Totals & Historical Price Immutability > calculates order total server-side and preserves historical snapshot if offer later changes (Correction 7)  3378ms
+   ✓ Commerce Service Unit & Functional Tests > 2. Server-Authoritative Totals & Historical Price Immutability > enforces order idempotency via idempotencyKey  3480ms
+   ✓ Commerce Service Unit & Functional Tests > 3. Ownership Isolation > prevents User B from accessing User A order  2791ms
+   ✓ Commerce Service Unit & Functional Tests > 4. Payment Completion & Atomic Entitlement Flow > verifies exact payment amount & currency before completing order and provisioning entitlement (Correction 2)  14003ms
+ ✓ tests/services/education-update.service.test.ts (8 tests) 44913ms
+   ✓ Prompt 23: Education Updates Service & Invariants > creates updates strictly as DRAFT and verifies canonical properties  3329ms
+   ✓ Prompt 23: Education Updates Service & Invariants > rejects duplicate slugs with a 409 DUPLICATE_SLUG error  2956ms
+   ✓ Prompt 23: Education Updates Service & Invariants > supports regional (nullable country_id) updates and builds regional canonical URLs  2645ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces country consistency: rejects curriculum from mismatched country  921ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces publication lifecycle: DRAFT -> PUBLISHED sets published_at and preserves on edit  6963ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces publication lifecycle: ARCHIVED immediately hides from public endpoints and prevents edits  7577ms
+   ✓ Prompt 23: Education Updates Service & Invariants > prevents leakage: public response filters out draft attached resources  6552ms
+   ✓ Prompt 23: Education Updates Service & Invariants > provides deterministic OpenGraph, Twitter, and canonical SEO metadata  4811ms
+ ✓ tests/db/geography.integration.test.ts (12 tests) 25938ms
+   ✓ Geography Database Integration Tests > Seeded Kenya Geography Verification > contains the active Kenya country record with canonical ISO code and URL prefix  309ms
+   ✓ Geography Database Integration Tests > Seeded Kenya Geography Verification > contains the three-tier administrative area types (County -> Sub-County -> Ward)  622ms
+   ✓ Geography Database Integration Tests > Seeded Kenya Geography Verification > contains exactly 47 counties of Kenya with parent_id IS NULL  1020ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces uppercase ISO code constraint (chk_countries_iso_code_upper)  404ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces lowercase URL prefix constraint (chk_countries_url_prefix_lower)  3044ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces unique ISO code constraint (uq_countries_iso_code)  2997ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces unique URL prefix constraint (uq_countries_url_prefix)  2867ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > prevents self-parenting on administrative areas  3589ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > ensures seed operation is strictly idempotent without duplicating records  4911ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service lists active countries  407ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service retrieves country by case-insensitive ISO code or URL prefix  612ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service lists areas with pagination metadata  931ms
+ ✓ tests/db/auth.integration.test.ts (11 tests) 38452ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 1. Transactional Registration > atomically creates users, auth_identities, and user_sessions in a single transaction  6406ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 2. Race-Safe Duplicate Email Handling > rejects duplicate email with EmailAlreadyRegisteredError via DB uniqueness constraint  4397ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 2. Race-Safe Duplicate Email Handling > handles concurrent registration race condition safely  3891ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > authenticates valid credentials and returns a fresh session  1270ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > authenticates case-insensitively for email  918ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > rejects incorrect password with generic InvalidCredentialsError  526ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > rejects non-existent email with generic InvalidCredentialsError  628ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 4. Logout and Session Revocation > revokes session on logout and rejects subsequent validation  3661ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > rejects login and invalidates active session when account is logically deleted (deleted_at != null)  4144ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > invalidates active session and rejects login when account becomes SUSPENDED  5989ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > invalidates active session and rejects login when account becomes DISABLED  3686ms
+ ✓ tests/routes/commerce-mpesa.integration.test.ts (5 tests) 30826ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 1. POST /api/v1/payments (M-Pesa STK Push Initiation) > initiates M-Pesa STK push for valid order and normalized phone number  6174ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 1. POST /api/v1/payments (M-Pesa STK Push Initiation) > rejects invalid Kenyan phone number with 400 MPESA_PHONE_INVALID  2868ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 2. POST /api/v1/payments/mpesa/callback (Daraja Callback Endpoint) > processes successful callback without session cookie and provisions user entitlement  7274ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 2. POST /api/v1/payments/mpesa/callback (Daraja Callback Endpoint) > supports alternative endpoint alias POST /api/v1/mpesa/callback  907ms
+ ✓ tests/services/quality-governance.service.test.ts (6 tests) 29711ms
+   ✓ Quality Governance Service Integration Tests > 1. lists canonical check types and supports country-specific criteria override (Correction E)  1334ms
+   ✓ Quality Governance Service Integration Tests > 2. preserves evaluation history when recording multiple checks on same criterion (Correction B)  4810ms
+   ✓ Quality Governance Service Integration Tests > 3. blocks verification when mandatory criteria are missing or not passed (Approved Rubric)  3376ms
+   ✓ Quality Governance Service Integration Tests > 4. verifies version when all mandatory criteria pass, without mutating published version (Correction A, B, C)  10473ms
+   ✓ Quality Governance Service Integration Tests > 5. revokes verification with mandatory reason and accountable actor, then permits reverification (Correction D, C)  3067ms
+   ✓ Quality Governance Service Integration Tests > 6. rejects direct VERIFIED assignment in resource creation and update APIs (Correction F)  1684ms
+ ✓ tests/db/schools.integration.test.ts (10 tests) 26849ms
+   ✓ Schools Database Integration Tests > Valid School Creation and Retrieval > creates a valid school with county association and retrieves it  650ms
+   ✓ Schools Database Integration Tests > Valid School Creation and Retrieval > creates a valid school without administrative area (optional area relationship)  612ms
+   ✓ Schools Database Integration Tests > School Geography Integrity & Constraints > prevents cross-country administrative area assignment (Kenya school with Tanzania area)  308ms
+   ✓ Schools Database Integration Tests > School Geography Integrity & Constraints > rejects an invalid administrative area reference (non-existent UUID)  2867ms
+   ✓ Schools Database Integration Tests > School Code Uniqueness Constraints > enforces uniqueness of school code within the same country  3255ms
+   ✓ Schools Database Integration Tests > School Code Uniqueness Constraints > permits multiple schools with NULL code  3194ms
+   ✓ Schools Database Integration Tests > Controlled School Type & Status Constraints > rejects invalid school type values via database check constraint  309ms
+   ✓ Schools Database Integration Tests > Controlled School Type & Status Constraints > rejects invalid school status values via database check constraint  2654ms
+   ✓ Schools Database Integration Tests > Controlled School Type & Status Constraints > rejects empty or whitespace-only school name via check constraint  2651ms
+   ✓ Schools Database Integration Tests > Inactive Schools Behaviour > does not expose inactive schools through public service queries  3728ms
+ ✓ tests/db/rbac.integration.test.ts (7 tests) 31508ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 1. Automatic standard_user Role Assignment (Prompt 14 Correction 3) > atomically assigns standard_user role during user registration  3211ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 2. Multiple Roles & Permission Accumulation (Locked Decision 32) > allows assigning multiple roles to a user and accumulates permissions  4300ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 3. GLOBAL vs Scoped Permissions Semantics (Prompt 14 Correction 1) > demonstrates scope isolation and hierarchical global satisfaction  4298ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 4. Role Revocation and Expiration > revokes a role and strips associated permissions immediately  2438ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 4. Role Revocation and Expiration > denies permissions when role assignment ends_at is in the past  1834ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 5. Database Integrity Constraints (Correction 5) > enforces chk_user_roles_scope_consistency in PostgreSQL  3820ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 5. Database Integrity Constraints (Correction 5) > enforces chk_user_roles_dates when ends_at <= starts_at  3542ms
+ ✓ tests/db/feedback.integration.test.ts (7 tests) 22091ms
+   ✓ Resource Feedback Database Layer Integration Tests > rejects feedback on draft version via trigger tg_check_feedback_version_match  308ms
+   ✓ Resource Feedback Database Layer Integration Tests > rejects feedback where version does not belong to resource via trigger  2758ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_status on invalid status insertion  3066ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_type on invalid feedback_type insertion  2649ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_reviewed constraint: PENDING cannot have reviewed_at or reviewed_by  2789ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_details_len constraint on details exceeding 1000 characters  2867ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces ON DELETE RESTRICT on user_id preventing accidental user hard-deletion  2969ms
+ ✓ tests/db/downloads.integration.test.ts (14 tests) 23774ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > successfully generates signed download URL for primary file when fileId is omitted  924ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > successfully generates signed download URL for explicit available fileId  919ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > rejects download when file status is QUARANTINED with FileNotAvailableError  921ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > blocks cross-version access: rejects requesting a file belonging to another resource  913ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > blocks premium resource download with PremiumResourceLockedError (403)  314ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > blocks draft resource download with ResourceNotFoundError (404)  305ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks unauthenticated request (no userId) with PremiumResourceLockedError (403)  308ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks authenticated user with NO entitlement with PremiumResourceLockedError (403)  659ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks user with EXPIRED entitlement with PremiumResourceLockedError (403)  659ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks user when entitlement is for a different resource with PremiumResourceLockedError (403)  625ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > allows download when user has valid active entitlement for published PREMIUM resource  1228ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > allows download of specific file when user has valid active entitlement  1228ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks download of QUARANTINED file of PREMIUM resource even when user is entitled (400)  1227ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks download of DRAFT resource even when user has active entitlement record (404)  614ms
+ ✓ tests/db/quality-governance.integration.test.ts (6 tests) 27043ms
+   ✓ Quality Governance Database Integration Tests > rejects resource verification with mismatched resource and version via trigger defense (Correction D)  2756ms
+   ✓ Quality Governance Database Integration Tests > enforces immutable evaluation history: blocks UPDATE and DELETE on quality checks (Correction B)  5763ms
+   ✓ Quality Governance Database Integration Tests > enforces partial unique index: prevents duplicate active verifications for same resource version (Correction C)  2972ms
+   ✓ Quality Governance Database Integration Tests > enforces revocation check constraint: mandates reason, actor, and timestamp when REVOKED  2965ms
+   ✓ Quality Governance Database Integration Tests > enforces ON DELETE RESTRICT preventing cascading deletion of quality history (Correction D)  2664ms
+ ✓ tests/db/integration.test.ts (4 tests) 3877ms
+   ✓ PostgreSQL Database Integration Tests > connects to PostgreSQL and executes a basic query  364ms
+   ✓ PostgreSQL Database Integration Tests > verifies that the pgcrypto extension is installed  306ms
+ ✓ tests/db/library.integration.test.ts (9 tests) 22289ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > successfully saves a published resource version into user array  1557ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > prevents duplicates: saving the same version repeatedly maintains a single array element  1563ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving a DRAFT version with ResourceVersionNotEligibleError  720ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving an ARCHIVED resource with ResourceVersionNotEligibleError  302ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving a non-existent version with ResourceVersionNotFoundError  308ms
+   ✓ User Library Neon Database Integration Tests > 2. User Isolation > isolates user libraries: User A saving a version does not affect User B  748ms
+   ✓ User Library Neon Database Integration Tests > 3. Check Status and Idempotent Removal > accurately verifies isResourceVersionSaved  658ms
+   ✓ User Library Neon Database Integration Tests > 3. Check Status and Idempotent Removal > idempotently removes a saved resource version  949ms
+   ✓ User Library Neon Database Integration Tests > 4. Listing & Sanitized Storage Projection > projects saved resource items with public catalogue metadata and no R2 leakage  1548ms
+ ✓ tests/routes/rbac.integration.test.ts (5 tests) 18588ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Forbidden Access (403 FORBIDDEN with Generic Message - Prompt 14 Correction 2) > returns 403 FORBIDDEN with non-leaking generic message when authenticated user lacks permission  3103ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Forbidden Access (403 FORBIDDEN with Generic Message - Prompt 14 Correction 2) > returns 403 FORBIDDEN when standard_user attempts to submit for review  698ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Authorized Access (User Possesses Required Permission) > passes authorization gate when user possesses required permission  1655ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Authorized Access (User Possesses Required Permission) > allows GET publication history when user has resource.read permission  1062ms
+ ✓ tests/db/config.test.ts (11 tests) 2921ms
+   ✓ PostgreSQL Foundation Configuration & Schemas > Database Health Check (checkDatabaseHealth) > returns an unhealthy status without throwing if DATABASE_URL is not configured  2903ms
+ ✓ tests/routes/curriculum.test.ts (12 tests) 869ms
+ ✓ tests/routes/resources.test.ts (12 tests) 618ms
+ ✓ tests/routes/auth.test.ts (12 tests) 642ms
+ ✓ tests/routes/schools.test.ts (10 tests) 447ms
+ ✓ tests/routes/search.test.ts (9 tests) 382ms
+ ✓ tests/routes/catalogue.test.ts (8 tests) 363ms
+ ✓ tests/routes/geography.test.ts (7 tests) 258ms
+ ✓ tests/routes/countries.test.ts (6 tests) 237ms
+ ✓ tests/routes/seo.test.ts (4 tests) 180ms
+ ✓ tests/routes/health.test.ts (7 tests) 73ms
+ ✓ tests/services/download.service.test.ts (18 tests) 38ms
+ ✓ tests/services/contributor.service.test.ts (16 tests) 22ms
+ ✓ tests/services/contributor-finance.service.test.ts (9 tests) 11ms
+ ✓ tests/services/library.service.test.ts (13 tests) 13ms
+ ✓ tests/services/rbac.service.test.ts (10 tests) 8ms
+ ✓ tests/services/storage-provider.test.ts (12 tests) 9ms
+ ✓ tests/services/mpesa-payment-provider.test.ts (7 tests) 5ms
+ ✓ tests/services/daraja-client.test.ts (6 tests) 7ms
+ ✓ tests/services/mpesa-phone.test.ts (13 tests) 5ms
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/db/contributor-finance.integration.test.ts > Contributor Finance Database & Schema Integration Tests > Database Schema Constraints > enforces KES currency constraint
+AssertionError: expected 'Failed query: insert into "community"…' to match /chk_earnings_currency/
+
+- Expected: 
+/chk_earnings_currency/
+
++ Received: 
+"Failed query: insert into \"community\".\"contributor_earnings\" (\"id\", \"contributor_id\", \"order_id\", \"order_item_id\", \"resource_id\", \"revenue_rule_id\", \"gross_amount_minor\", \"platform_amount_minor\", \"contributor_amount_minor\", \"currency_code\", \"status\", \"matures_at\", \"matured_at\", \"created_at\", \"updated_at\") values (default, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, default, default, default)
+params: f9658542-4a3b-4fda-bcbf-c4954ce39cd9,357d6f7e-a46f-45b4-80b5-d7895548d0b9,afb1dbfc-05b7-49b5-896f-280ba389c02a,e8a79f9c-03d1-4feb-8feb-36fb48a6c7a5,0bf1ceee-ddef-423d-b108-ae2f805dab99,50000,15000,35000,USD,PENDING,2026-10-21T04:23:28.417Z read ECONNRESET  ECONNRESET "
+
+ ❯ expectDbError tests/db/contributor-finance.integration.test.ts:242:29
+    240|       const fullMessage = `${err.message || ''} ${err.cause?.message || ''} ${err.cause?.detail || ''} ${err.cause?.code || ''} ${err…    241|       if (pattern) {
+    242|         expect(fullMessage).toMatch(pattern);
+       |                             ^
+    243|       }
+    244|     }
+ ❯ tests/db/contributor-finance.integration.test.ts:289:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+ FAIL  tests/routes/notifications.integration.test.ts > Notifications Route & Worker Integration Tests > 5. Outbox Worker Claim, Process, and Finalize > claims pending email delivery, calls provider, and transitions to SENT
+AssertionError: expected 'PENDING' to be 'SENT' // Object.is equality
+
+Expected: "SENT"
+Received: "PENDING"
+
+ ❯ tests/routes/notifications.integration.test.ts:498:31
+    496|       );
+    497| 
+    498|       expect(delivery.status).toBe('SENT');
+       |                               ^
+    499|       expect(delivery.provider).toBe('MOCK_EMAIL');
+    500|       expect(delivery.providerReference).toMatch(/^mock-email-/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+ FAIL  tests/routes/notifications.integration.test.ts > Notifications Route & Worker Integration Tests > 6. Retry Scheduling & Terminal Failure Backoff > schedules exponential backoff on simulated transient error
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/routes/notifications.integration.test.ts:537:50
+    535| 
+    536|       expect(deliveryAfterAttempt1.status).toBe('PENDING');
+    537|       expect(deliveryAfterAttempt1.attemptCount).toBe(1);
+       |                                                  ^
+    538|       expect(deliveryAfterAttempt1.nextRetryAt).toBeDefined();
+    539|       expect(deliveryAfterAttempt1.nextRetryAt!.getTime()).toBeGreaterThan(Date.now());
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+ FAIL  tests/routes/notifications.integration.test.ts > Notifications Route & Worker Integration Tests > 6. Retry Scheduling & Terminal Failure Backoff > transitions to FAILED when maximum attempts are exhausted
+AssertionError: expected 'PENDING' to be 'FAILED' // Object.is equality
+
+Expected: "FAILED"
+Received: "PENDING"
+
+ ❯ tests/routes/notifications.integration.test.ts:620:36
+    618|       );
+    619| 
+    620|       expect(finalDelivery.status).toBe('FAILED');
+       |                                    ^
+    621|       expect(finalDelivery.attemptCount).toBe(3);
+    622|       expect(finalDelivery.failedAt).toBeDefined();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+      Tests  4 failed | 706 passed (710)
+   Start at  07:10:01
+   Duration  1965.28s (transform 10.62s, setup 0ms, collect 34.93s, tests 1927.83s, environment 0ms, prepare 453ms)

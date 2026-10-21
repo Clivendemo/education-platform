@@ -120,6 +120,13 @@
       "when": 1791700000000,
       "tag": "0016_analytics_architecture",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0017_audit_and_retention",
+      "breakpoints": true
     }
   ]
 }
