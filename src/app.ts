@@ -185,6 +185,8 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     prefix: '/api/v1',
     searchService: services?.searchService,
     analyticsService: services?.analyticsService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
   app.register(seoRoutes, {
     prefix: '/api/v1',

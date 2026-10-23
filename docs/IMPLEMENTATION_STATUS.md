@@ -402,20 +402,20 @@ DRAFT
 
 | Component             | Status      | Notes |
 | --------------------- | ----------- | ----- |
-| SearchProvider        | NOT_STARTED |       |
-| PostgreSQL FTS        | NOT_STARTED |       |
-| Search index          | NOT_STARTED |       |
-| Weighted fields       | NOT_STARTED |       |
-| Search filters        | NOT_STARTED |       |
-| Search sorting        | NOT_STARTED |       |
-| Autocomplete          | NOT_STARTED |       |
-| Typo tolerance        | NOT_STARTED |       |
-| Kenyan terminology    | NOT_STARTED |       |
-| Synonym dictionary    | NOT_STARTED |       |
-| No-results experience | NOT_STARTED |       |
-| Related resources     | NOT_STARTED |       |
-| Search indexing jobs  | NOT_STARTED |       |
-| Search tests          | NOT_STARTED |       |
+| SearchProvider        | VERIFIED    | Prompt 14.2 / Prompt 29; SearchService -> SearchProvider -> PostgreSQLSearchProvider |
+| PostgreSQL FTS        | VERIFIED    | Prompt 14.2; tsvector (weighted A/B/C), websearch_to_tsquery, ts_rank_cd |
+| Search index          | VERIFIED    | Prompt 14.2 / Prompt 29; GIN tsvector and B-tree text_pattern_ops autocomplete prefix indices |
+| Weighted fields       | VERIFIED    | Prompt 14.2; A (title), B (description, curriculum, subject), C (grade, keywords) |
+| Search filters        | VERIFIED    | Prompt 14.2; curriculum, grade, subject, school, year, term, country |
+| Search sorting        | VERIFIED    | Prompt 14.2; relevance, newest, oldest, title |
+| Autocomplete          | VERIFIED    | Prompt 29; contextual 4-tier autocomplete with text_pattern_ops prefix index, regex word boundaries, country-pinned fallback |
+| Typo tolerance        | NOT_STARTED | Reserved for future fuzzy matching phase |
+| Kenyan terminology    | NOT_STARTED | Reserved for future phase |
+| Synonym dictionary    | NOT_STARTED | Reserved for future phase |
+| No-results experience | VERIFIED    | Prompt 29; related exploration and fallback metadata |
+| Related resources     | VERIFIED    | Prompt 29; GET /api/v1/search/related returning related subjects, topics, and suggestions |
+| Search indexing jobs  | NOT_STARTED | Handled synchronously via generated tsvector column / index |
+| Search tests          | VERIFIED    | Prompt 29; unit, route integration, and live Neon DB integration suites passing |
 
 Autocomplete requirements:
 
@@ -751,17 +751,18 @@ No general public resource commenting/discussion system.
 
 | Component                 | Status      | Notes |
 | ------------------------- | ----------- | ----- |
-| Structured ranking        | NOT_STARTED |       |
-| Quality signals           | NOT_STARTED |       |
-| Freshness signals         | NOT_STARTED |       |
-| Popularity signals        | NOT_STARTED |       |
-| Usage signals             | NOT_STARTED |       |
-| Context signals           | NOT_STARTED |       |
-| Synonym dictionary        | NOT_STARTED |       |
-| Kenyan terminology        | NOT_STARTED |       |
-| Contextual explanations   | NOT_STARTED |       |
-| Diversity rules           | NOT_STARTED |       |
-| Search intelligence tests | NOT_STARTED |       |
+| Structured ranking        | VERIFIED    | Prompt 29; tiered matching: exact title prefix, word boundary regex, topic context, country fallback |
+| Quality signals           | VERIFIED    | Prompt 14.2 / Prompt 29; published isolation and verified quality metadata |
+| Freshness signals         | NOT_STARTED | Reserved for future dynamic boosting phase |
+| Popularity signals        | NOT_STARTED | Reserved for future dynamic ranking phase |
+| Usage signals             | NOT_STARTED | Reserved for future dynamic ranking phase |
+| Context signals           | VERIFIED    | Prompt 29; Grade and Subject context-aware autocomplete matching |
+| Synonym dictionary        | NOT_STARTED | Reserved for future phase |
+| Kenyan terminology        | NOT_STARTED | Reserved for future phase |
+| Contextual explanations   | NOT_STARTED | Reserved for future phase |
+| Diversity rules           | NOT_STARTED | Reserved for future phase |
+| Search demand analytics   | VERIFIED    | Prompt 29; admin search demand aggregation with distinct qualifying search identities floor (min 3) and privacy suppression |
+| Search intelligence tests | VERIFIED    | Prompt 29; unit, route, and DB integration tests passing (100%) |
 
 ---
 

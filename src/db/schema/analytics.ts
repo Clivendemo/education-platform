@@ -94,6 +94,11 @@ export const analyticsEvents = analyticsSchema.table(
       table.anonymousSessionHash,
     ),
 
+    // Search demand telemetry partial index
+    index('idx_analytics_events_search_demand')
+      .on(table.eventTypeId, table.occurredAt.desc())
+      .where(sql`(${table.context}->>'normalized_query') IS NOT NULL`),
+
     check(
       'chk_analytics_events_actor_type',
       sql`${table.actorType} IN ('AUTHENTICATED', 'ANONYMOUS', 'SYSTEM')`,

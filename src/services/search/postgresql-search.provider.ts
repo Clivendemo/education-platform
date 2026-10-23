@@ -17,10 +17,15 @@ import {
   resourceVerifications,
 } from '../../db/schemas.js';
 import type { PaginatedResult } from '../catalogue.service.js';
+import { escapeRegexMetacharacters } from '../../utils/search-sanitizer.js';
 import type {
   SearchProvider,
   SearchQuery,
   SearchResultItem,
+  AutocompleteQuery,
+  AutocompleteSuggestion,
+  RelatedDiscoveryQuery,
+  RelatedDiscoveryResult,
 } from './search-provider.interface.js';
 
 type Database = typeof defaultDb;
@@ -523,6 +528,292 @@ export class PostgreSQLSearchProvider implements SearchProvider {
         total: totalCount,
         hasMore: offset + rows.length < totalCount,
       },
+    };
+  }
+
+  async getAutocompleteSuggestions(
+    query: AutocompleteQuery,
+  ): Promise<{ suggestions: AutocompleteSuggestion[]; fallbackUsed: boolean }> {
+    const trimmedQ = (query.q || '').trim();
+    if (trimmedQ.length < 2) {
+      return { suggestions: [], fallbackUsed: false };
+    }
+
+    const limit = Math.min(5, Math.max(1, query.limit || 5));
+    const lowerPrefix = `${trimmedQ.toLowerCase()}%`;
+    const escapedQ = escapeRegexMetacharacters(trimmedQ);
+
+    // Resolve Country filter if provided
+    let countryId: string | null = null;
+    if (query.country) {
+      const countryInput = query.country.trim();
+      if (UUID_REGEX.test(countryInput)) {
+        countryId = countryInput;
+      } else {
+        const countryRow = await this.db
+          .select({ id: countries.id })
+          .from(countries)
+          .where(
+            or(
+              eq(sql`LOWER(${countries.urlPrefix})`, countryInput.toLowerCase()),
+              eq(sql`UPPER(${countries.isoCode})`, countryInput.toUpperCase()),
+            ),
+          )
+          .limit(1);
+        if (countryRow.length > 0) {
+          countryId = countryRow[0].id;
+        }
+      }
+    }
+
+    // Check if contextual parameters were provided
+    const hasContextFilters = Boolean(
+      query.curriculum ||
+      query.curriculumVersion ||
+      query.educationLevel ||
+      query.grade ||
+      query.pathway ||
+      query.subject ||
+      query.topic,
+    );
+
+    // Helper to query published resources matching query
+    const queryResourceTitles = async (applyContext: boolean) => {
+      const conditions = [
+        eq(resources.status, 'PUBLISHED'),
+        eq(resourceVersions.status, 'PUBLISHED'),
+        or(
+          sql`lower(${resources.title}) LIKE ${lowerPrefix}`,
+          sql`${resources.title} ~* ${'\\y' + escapedQ}`,
+        )!,
+      ];
+
+      if (countryId) {
+        conditions.push(eq(resources.countryId, countryId));
+      }
+
+      if (applyContext) {
+        if (query.grade) {
+          if (UUID_REGEX.test(query.grade.trim())) {
+            conditions.push(eq(resources.gradeId, query.grade.trim()));
+          } else {
+            conditions.push(eq(sql`LOWER(${grades.code})`, query.grade.trim().toLowerCase()));
+          }
+        }
+        if (query.subject) {
+          if (UUID_REGEX.test(query.subject.trim())) {
+            conditions.push(eq(resources.subjectId, query.subject.trim()));
+          } else {
+            conditions.push(eq(sql`LOWER(${subjects.code})`, query.subject.trim().toLowerCase()));
+          }
+        }
+        if (query.curriculum) {
+          if (UUID_REGEX.test(query.curriculum.trim())) {
+            conditions.push(eq(resources.curriculumId, query.curriculum.trim()));
+          } else {
+            conditions.push(eq(sql`LOWER(${curricula.code})`, query.curriculum.trim().toLowerCase()));
+          }
+        }
+        if (query.topic) {
+          if (UUID_REGEX.test(query.topic.trim())) {
+            conditions.push(eq(resources.topicId, query.topic.trim()));
+          } else {
+            conditions.push(eq(sql`LOWER(${topics.code})`, query.topic.trim().toLowerCase()));
+          }
+        }
+      }
+
+      const rows = await this.db
+        .select({
+          resourceId: resources.id,
+          title: resources.title,
+          slug: resources.slug,
+          countryName: countries.name,
+          curriculumName: curricula.name,
+          gradeName: grades.name,
+          subjectName: subjects.name,
+          tier: sql<number>`CASE 
+            WHEN lower(${resources.title}) LIKE ${lowerPrefix} THEN 1 
+            ELSE 2 
+          END`.as('tier'),
+        })
+        .from(resources)
+        .innerJoin(resourceVersions, eq(resources.id, resourceVersions.resourceId))
+        .innerJoin(countries, eq(resources.countryId, countries.id))
+        .leftJoin(curricula, eq(resources.curriculumId, curricula.id))
+        .leftJoin(grades, eq(resources.gradeId, grades.id))
+        .leftJoin(subjects, eq(resources.subjectId, subjects.id))
+        .leftJoin(topics, eq(resources.topicId, topics.id))
+        .where(and(...conditions))
+        .orderBy(
+          sql`tier ASC`,
+          sql`LENGTH(${resources.title}) ASC`,
+          asc(resources.title),
+          asc(resources.id),
+        )
+        .limit(limit);
+
+      return rows;
+    };
+
+    // 1. Try with context if provided
+    const contextRows = await queryResourceTitles(hasContextFilters);
+
+    const suggestions: AutocompleteSuggestion[] = [];
+    const seenTitles = new Set<string>();
+
+    for (const row of contextRows) {
+      if (!seenTitles.has(row.title.toLowerCase())) {
+        seenTitles.add(row.title.toLowerCase());
+        suggestions.push({
+          text: row.title,
+          type: 'RESOURCE_TITLE',
+          resourceId: row.resourceId,
+          slug: row.slug,
+          context: {
+            country: row.countryName || undefined,
+            curriculum: row.curriculumName || undefined,
+            grade: row.gradeName || undefined,
+            subject: row.subjectName || undefined,
+          },
+        });
+      }
+      if (suggestions.length >= limit) break;
+    }
+
+    // Also look for matching curriculum topics if slots remain and subject context is present
+    if (suggestions.length < limit && hasContextFilters && (query.subject || query.grade)) {
+      const topicConditions = [
+        or(
+          sql`lower(${topics.name}) LIKE ${lowerPrefix}`,
+          sql`${topics.name} ~* ${'\\y' + escapedQ}`,
+        )!,
+      ];
+      if (query.subject) {
+        if (UUID_REGEX.test(query.subject.trim())) {
+          topicConditions.push(eq(topics.subjectId, query.subject.trim()));
+        } else {
+          topicConditions.push(eq(sql`LOWER(${subjects.code})`, query.subject.trim().toLowerCase()));
+        }
+      }
+      const topicRows = await this.db
+        .select({
+          topicId: topics.id,
+          name: topics.name,
+          subjectName: subjects.name,
+        })
+        .from(topics)
+        .innerJoin(subjects, eq(topics.subjectId, subjects.id))
+        .where(and(...topicConditions))
+        .limit(limit - suggestions.length);
+
+      for (const t of topicRows) {
+        if (!seenTitles.has(t.name.toLowerCase())) {
+          seenTitles.add(t.name.toLowerCase());
+          suggestions.push({
+            text: t.name,
+            type: 'CURRICULUM_TOPIC',
+            context: {
+              subject: t.subjectName,
+            },
+          });
+        }
+        if (suggestions.length >= limit) break;
+      }
+    }
+
+    // If matches found, return
+    if (suggestions.length > 0) {
+      return { suggestions: suggestions.slice(0, limit), fallbackUsed: false };
+    }
+
+    // 2. If zero results and context was specified, execute Fallback across the country
+    if (hasContextFilters) {
+      const fallbackRows = await queryResourceTitles(false);
+      const fallbackSuggestions: AutocompleteSuggestion[] = [];
+      for (const row of fallbackRows) {
+        if (!seenTitles.has(row.title.toLowerCase())) {
+          seenTitles.add(row.title.toLowerCase());
+          fallbackSuggestions.push({
+            text: row.title,
+            type: 'RESOURCE_TITLE',
+            resourceId: row.resourceId,
+            slug: row.slug,
+            context: {
+              country: row.countryName || undefined,
+              curriculum: row.curriculumName || undefined,
+              grade: row.gradeName || undefined,
+              subject: row.subjectName || undefined,
+            },
+          });
+        }
+        if (fallbackSuggestions.length >= limit) break;
+      }
+
+      return {
+        suggestions: fallbackSuggestions.slice(0, limit),
+        fallbackUsed: fallbackSuggestions.length > 0,
+      };
+    }
+
+    return { suggestions: [], fallbackUsed: false };
+  }
+
+  async getRelatedDiscovery(
+    query: RelatedDiscoveryQuery,
+  ): Promise<RelatedDiscoveryResult> {
+    const rawQ = (query.q || '').trim();
+    const escapedQ = escapeRegexMetacharacters(rawQ);
+
+    // 1. Related subjects
+    const relatedSubjects = await this.db
+      .select({
+        id: subjects.id,
+        name: subjects.name,
+        code: subjects.code,
+      })
+      .from(subjects)
+      .where(sql`${subjects.name} ~* ${'\\y' + escapedQ}`)
+      .limit(5);
+
+    // 2. Related topics
+    const relatedTopics = await this.db
+      .select({
+        id: topics.id,
+        name: topics.name,
+        code: topics.code,
+      })
+      .from(topics)
+      .where(sql`${topics.name} ~* ${'\\y' + escapedQ}`)
+      .limit(5);
+
+    // 3. Suggested resources in country
+    const searchRes = await this.searchResources({
+      q: rawQ,
+      country: query.country,
+      curriculum: query.curriculum,
+      grade: query.grade,
+      subject: query.subject,
+      pageSize: 5,
+    });
+
+    let suggestedResources = searchRes.data;
+
+    // If zero resources found with direct query, search using related subject names
+    if (suggestedResources.length === 0 && relatedSubjects.length > 0) {
+      const subjectSearch = await this.searchResources({
+        q: relatedSubjects[0].name,
+        country: query.country,
+        pageSize: 5,
+      });
+      suggestedResources = subjectSearch.data;
+    }
+
+    return {
+      query: rawQ,
+      relatedSubjects,
+      relatedTopics,
+      suggestedResources,
     };
   }
 }

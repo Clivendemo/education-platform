@@ -70,6 +70,7 @@ export const SearchContextSchema = z
     results_count: z.number().int().min(0).max(1_000_000),
     filters_applied: z.array(z.string().max(32)).max(10).default([]),
     zero_results: z.boolean(),
+    normalized_query: z.string().max(100).optional(),
   })
   .strict();
 

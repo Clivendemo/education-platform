@@ -273,6 +273,10 @@ export const resources = contentSchema.table(
     index('idx_resources_topic_id').on(table.topicId),
     index('idx_resources_academic_year').on(table.academicYear),
     index('idx_resources_contributor_id').on(table.contributorId),
+    index('idx_resources_title_autocomplete').on(
+      table.status,
+      sql`(lower(${table.title})) text_pattern_ops`,
+    ),
   ],
 );
 
