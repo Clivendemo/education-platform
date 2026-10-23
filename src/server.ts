@@ -47,9 +47,11 @@ async function startServer(): Promise<void> {
       port,
       host: env.HOST,
     });
-    defaultNotificationService.startWorker();
+    if (env.NODE_ENV === 'production' || process.env.ENABLE_NOTIFICATION_WORKER === 'true') {
+      defaultNotificationService.startWorker();
+      app.log.info('Notifications outbox background worker active');
+    }
     app.log.info(`Server running at http://${env.HOST}:${port}`);
-    app.log.info('Notifications outbox background worker active');
   } catch (err) {
     app.log.fatal(err, 'Failed to start server');
     process.exit(1);

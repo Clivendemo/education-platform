@@ -27,11 +27,13 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
 
   describe('Seeded Kenya Geography Verification', () => {
     it('contains the active Kenya country record with canonical ISO code and URL prefix', async () => {
-      const kenya = await db
-        .select()
-        .from(countries)
-        .where(eq(countries.isoCode, 'KE'))
-        .limit(1);
+      const kenya = await withDbRetry(() =>
+        db
+          .select()
+          .from(countries)
+          .where(eq(countries.isoCode, 'KE'))
+          .limit(1),
+      );
 
       expect(kenya).toHaveLength(1);
       expect(kenya[0].name).toBe('Kenya');
@@ -42,16 +44,18 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
     });
 
     it('contains the three-tier administrative area types (County -> Sub-County -> Ward)', async () => {
-      const kenya = (
-        await db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1)
-      )[0];
+      const [kenya] = await withDbRetry(() =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      );
       expect(kenya).toBeDefined();
 
-      const types = await db
-        .select()
-        .from(administrativeAreaTypes)
-        .where(eq(administrativeAreaTypes.countryId, kenya.id))
-        .orderBy(administrativeAreaTypes.hierarchyLevel);
+      const types = await withDbRetry(() =>
+        db
+          .select()
+          .from(administrativeAreaTypes)
+          .where(eq(administrativeAreaTypes.countryId, kenya.id))
+          .orderBy(administrativeAreaTypes.hierarchyLevel),
+      );
 
       expect(types).toHaveLength(3);
       expect(types[0]).toMatchObject({
@@ -75,26 +79,28 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
     });
 
     it('contains exactly 47 counties of Kenya with parent_id IS NULL', async () => {
-      const kenya = (
-        await db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1)
-      )[0];
+      const [kenya] = await withDbRetry(() =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      );
 
-      const countyType = (
-        await db
+      const [countyType] = await withDbRetry(() =>
+        db
           .select()
           .from(administrativeAreaTypes)
           .where(
             sql`${administrativeAreaTypes.countryId} = ${kenya.id} AND ${administrativeAreaTypes.slug} = 'county'`,
           )
-          .limit(1)
-      )[0];
+          .limit(1),
+      );
 
-      const areas = await db
-        .select()
-        .from(administrativeAreas)
-        .where(
-          sql`${administrativeAreas.countryId} = ${kenya.id} AND ${administrativeAreas.typeId} = ${countyType.id}`,
-        );
+      const areas = await withDbRetry(() =>
+        db
+          .select()
+          .from(administrativeAreas)
+          .where(
+            sql`${administrativeAreas.countryId} = ${kenya.id} AND ${administrativeAreas.typeId} = ${countyType.id}`,
+          ),
+      );
 
       expect(areas).toHaveLength(47);
       expect(areas.every((a) => a.parentId === null)).toBe(true);
@@ -108,81 +114,91 @@ describe.skipIf(!isDbAvailable)('Geography Database Integration Tests', () => {
   describe('Database Integrity & Constraints', () => {
     it('enforces uppercase ISO code constraint (chk_countries_iso_code_upper)', async () => {
       await expect(
-        db.insert(countries).values({
-          name: 'Uganda',
-          isoCode: 'ug', // Lowercase must violate check constraint
-          urlPrefix: 'ug',
-          defaultLanguageCode: 'en',
-          currencyCode: 'UGX',
-          status: 'ACTIVE',
-        }),
+        withDbRetry(() =>
+          db.insert(countries).values({
+            name: 'Uganda',
+            isoCode: 'ug', // Lowercase must violate check constraint
+            urlPrefix: 'ug',
+            defaultLanguageCode: 'en',
+            currencyCode: 'UGX',
+            status: 'ACTIVE',
+          }),
+        ),
       ).rejects.toThrow();
     });
 
     it('enforces lowercase URL prefix constraint (chk_countries_url_prefix_lower)', async () => {
       await expect(
-        db.insert(countries).values({
-          name: 'Uganda',
-          isoCode: 'UG',
-          urlPrefix: 'UG', // Uppercase must violate check constraint
-          defaultLanguageCode: 'en',
-          currencyCode: 'UGX',
-          status: 'ACTIVE',
-        }),
+        withDbRetry(() =>
+          db.insert(countries).values({
+            name: 'Uganda',
+            isoCode: 'UG',
+            urlPrefix: 'UG', // Uppercase must violate check constraint
+            defaultLanguageCode: 'en',
+            currencyCode: 'UGX',
+            status: 'ACTIVE',
+          }),
+        ),
       ).rejects.toThrow();
     });
 
     it('enforces unique ISO code constraint (uq_countries_iso_code)', async () => {
       await expect(
-        db.insert(countries).values({
-          name: 'Kenya Duplicate',
-          isoCode: 'KE', // Already exists
-          urlPrefix: 'ke2',
-          defaultLanguageCode: 'en',
-          currencyCode: 'KES',
-          status: 'ACTIVE',
-        }),
+        withDbRetry(() =>
+          db.insert(countries).values({
+            name: 'Kenya Duplicate',
+            isoCode: 'KE', // Already exists
+            urlPrefix: 'ke2',
+            defaultLanguageCode: 'en',
+            currencyCode: 'KES',
+            status: 'ACTIVE',
+          }),
+        ),
       ).rejects.toThrow();
     });
 
     it('enforces unique URL prefix constraint (uq_countries_url_prefix)', async () => {
       await expect(
-        db.insert(countries).values({
-          name: 'Kenya Duplicate',
-          isoCode: 'KD',
-          urlPrefix: 'ke', // Already exists
-          defaultLanguageCode: 'en',
-          currencyCode: 'KES',
-          status: 'ACTIVE',
-        }),
+        withDbRetry(() =>
+          db.insert(countries).values({
+            name: 'Kenya Duplicate',
+            isoCode: 'KD',
+            urlPrefix: 'ke', // Already exists
+            defaultLanguageCode: 'en',
+            currencyCode: 'KES',
+            status: 'ACTIVE',
+          }),
+        ),
       ).rejects.toThrow();
     });
 
     it('prevents self-parenting on administrative areas', async () => {
-      const kenya = (
-        await db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1)
-      )[0];
-      const countyType = (
-        await db
+      const [kenya] = await withDbRetry(() =>
+        db.select().from(countries).where(eq(countries.isoCode, 'KE')).limit(1),
+      );
+      const [countyType] = await withDbRetry(() =>
+        db
           .select()
           .from(administrativeAreaTypes)
           .where(
             sql`${administrativeAreaTypes.countryId} = ${kenya.id} AND ${administrativeAreaTypes.slug} = 'county'`,
           )
-          .limit(1)
-      )[0];
+          .limit(1),
+      );
 
       const testId = 'f0000000-0000-0000-0000-000000000001';
       await expect(
-        db.insert(administrativeAreas).values({
-          id: testId,
-          countryId: kenya.id,
-          typeId: countyType.id,
-          parentId: testId, // Self-parenting!
-          name: 'Self Parent Area',
-          slug: 'self-parent-area',
-          status: 'ACTIVE',
-        }),
+        withDbRetry(() =>
+          db.insert(administrativeAreas).values({
+            id: testId,
+            countryId: kenya.id,
+            typeId: countyType.id,
+            parentId: testId, // Self-parenting!
+            name: 'Self Parent Area',
+            slug: 'self-parent-area',
+            status: 'ACTIVE',
+          }),
+        ),
       ).rejects.toThrow();
     });
 

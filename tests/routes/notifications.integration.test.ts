@@ -548,11 +548,11 @@ describe('Notifications Route & Worker Integration Tests', () => {
       // Reset failure options so subsequent attempt succeeds
       customMockEmailProvider.resetFailures();
 
-      // Force nextRetryAt to past to make it immediately eligible (60s in the past to eliminate any clock skew)
+      // Force nextRetryAt to past to make it immediately eligible (using DB now() to eliminate any clock skew)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 60000) })
+          .set({ nextRetryAt: sql`now() - INTERVAL '1 minute'` })
           .where(eq(notificationDeliveries.id, deliveryAfterAttempt1.id)),
       );
 
@@ -598,21 +598,21 @@ describe('Notifications Route & Worker Integration Tests', () => {
 
       // Sweep 1
       await notificationService.processPendingDeliveries(10);
-      // Fast-forward retry 1 (60s in past)
+      // Fast-forward retry 1 (using DB now() to eliminate clock skew)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 60000) })
+          .set({ nextRetryAt: sql`now() - INTERVAL '1 minute'` })
           .where(eq(notificationDeliveries.id, del.id)),
       );
 
       // Sweep 2
       await notificationService.processPendingDeliveries(10);
-      // Fast-forward retry 2 (60s in past)
+      // Fast-forward retry 2 (using DB now() to eliminate clock skew)
       await withDbRetry(async () =>
         db
           .update(notificationDeliveries)
-          .set({ nextRetryAt: new Date(Date.now() - 60000) })
+          .set({ nextRetryAt: sql`now() - INTERVAL '1 minute'` })
           .where(eq(notificationDeliveries.id, del.id)),
       );
 
