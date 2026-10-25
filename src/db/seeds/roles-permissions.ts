@@ -335,6 +335,20 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'GLOBAL',
     description: 'Trigger and recover manual or asynchronous data retention sweep executions.',
   },
+  {
+    name: 'recommendation.read',
+    resource: 'recommendation',
+    action: 'read',
+    scopeType: 'ANY',
+    description: 'View editorial recommendation rules and curation state.',
+  },
+  {
+    name: 'recommendation.manage',
+    resource: 'recommendation',
+    action: 'manage',
+    scopeType: 'ANY',
+    description: 'Create, deactivate, and reactivate editorial recommendation rules.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -378,6 +392,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'retention.read',
     'retention.manage',
     'retention.execute',
+    'recommendation.read',
+    'recommendation.manage',
   ],
   content_manager: [
     'resource.read',
@@ -405,6 +421,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'notification.admin.read',
     'analytics.read',
     'retention.read',
+    'recommendation.read',
+    'recommendation.manage',
   ],
   content_reviewer: [
     'resource.read',
@@ -415,6 +433,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.check.create',
     'quality.read',
     'feedback.read',
+    'recommendation.read',
   ],
   verified_teacher: [
     'resource.read',
@@ -515,8 +534,20 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     .where(eq(permissions.name, 'retention.execute'))
     .limit(1);
 
+  const [recommendationReadPerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'recommendation.read'))
+    .limit(1);
+
+  const [recommendationManagePerm] = await dbInstance
+    .select({ id: permissions.id })
+    .from(permissions)
+    .where(eq(permissions.name, 'recommendation.manage'))
+    .limit(1);
+
   if (
-    Number(existing?.count) >= 83 &&
+    Number(existing?.count) >= 88 &&
     contributorRole &&
     financePerm &&
     updatePerm &&
@@ -527,7 +558,9 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     auditPerm &&
     retentionReadPerm &&
     retentionManagePerm &&
-    retentionExecPerm
+    retentionExecPerm &&
+    recommendationReadPerm &&
+    recommendationManagePerm
   ) {
     return {
       rolesCount: CANONICAL_ROLES.length,

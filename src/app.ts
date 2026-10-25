@@ -24,6 +24,7 @@ import { notificationRoutes } from './routes/api/v1/notifications.js';
 import { analyticsRoutes } from './routes/api/v1/analytics.js';
 import { auditRoutes } from './routes/api/v1/audit.js';
 import { retentionRoutes } from './routes/api/v1/retention.js';
+import { recommendationRoutes } from './routes/api/v1/recommendations.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -47,6 +48,7 @@ import type { NotificationService } from './services/notification.service.js';
 import type { AnalyticsService } from './services/analytics.service.js';
 import type { AuditService } from './services/audit.service.js';
 import type { RetentionService } from './services/retention.service.js';
+import type { RecommendationService } from './services/recommendations/recommendation.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -78,6 +80,7 @@ export interface AppOptions extends FastifyServerOptions {
     analyticsService?: AnalyticsService;
     auditService?: AuditService;
     retentionService?: RetentionService;
+    recommendationService?: RecommendationService;
   };
 }
 
@@ -265,6 +268,13 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     retentionService: services?.retentionService,
     authService: services?.authService,
     rbacService: services?.rbacService,
+  });
+  app.register(recommendationRoutes, {
+    prefix: '/api/v1',
+    recommendationService: services?.recommendationService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
+    auditService: services?.auditService,
   });
 
   // Support unversioned /api/payments/mpesa/callback & /api/mpesa/callback

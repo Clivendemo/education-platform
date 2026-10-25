@@ -1,6 +1,6 @@
 {
-  "summary":  "Consolidated Technical Implementation Plan (Revision 4 — Cleaned Final Approval Candidate) for Prompt 29 (Search Intelligence). Fully resolves the four reviewer clarifications: accurately defines partial index mechanics using the approved formulation, restores all benchmark queries and threshold definitions without truncated fragments, decouples functional correctness tests from diagnostic EXPLAIN performance tests to prevent brittle CI failures, and reinforces strict privacy reporting boundaries (total and pagination omit suppressed groups). Phase remains strictly PLAN ONLY with zero database or source code mutations.",
-  "updatedAt":  "2026-10-22T11:37:42.565569167Z",
+  "summary":  "Complete Revision 8 Technical Implementation Plan for Prompt 30 — Recommendations, including database-enforced active-version proof, version-authoritative quality precedence, mutually exclusive topic scoring, elapsed 24-hour freshness windows, explicit surface and continue-exploring ranking formulas, multi-table triggers, cache eviction contracts, RBAC/audit specifications, and repeatable P95 benchmark criteria.",
+  "updatedAt":  "2026-10-24T11:54:52.327061003Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

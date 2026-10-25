@@ -2,6 +2,7 @@ import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { checkDatabaseHealth, closeDatabase } from './db/index.js';
 import { defaultNotificationService } from './services/notification.service.js';
+import { defaultRecommendationCacheService } from './services/recommendations/recommendation-cache.service.js';
 
 const app = buildApp({
   logger: {
@@ -51,6 +52,10 @@ async function startServer(): Promise<void> {
       defaultNotificationService.startWorker();
       app.log.info('Notifications outbox background worker active');
     }
+    if (env.DATABASE_URL) {
+      await defaultRecommendationCacheService.startListener();
+      app.log.info('Recommendation cache LISTEN/NOTIFY subscriber active');
+    }
     app.log.info(`Server running at http://${env.HOST}:${port}`);
   } catch (err) {
     app.log.fatal(err, 'Failed to start server');
@@ -64,6 +69,7 @@ for (const signal of signals) {
   process.on(signal, async () => {
     app.log.info(`Received ${signal}, shutting down gracefully...`);
     try {
+      await defaultRecommendationCacheService.stopListener();
       await app.close();
       await closeDatabase();
       app.log.info('Server and database pool closed successfully.');

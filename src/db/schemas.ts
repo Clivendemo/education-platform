@@ -14,3 +14,4 @@ export * from './schema/governance.js';
 export * from './schema/feedback.js';
 export * from './schema/notifications.js';
 export * from './schema/analytics.js';
+export * from './schema/recommendations.js';
