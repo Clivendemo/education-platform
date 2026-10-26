@@ -13,6 +13,17 @@ import {
   type ResourceStatus,
   type PublicationEventType,
 } from '../db/schemas.js';
+import {
+  defaultAuditService,
+  type AuditService,
+  type ActorSnapshot,
+} from './audit.service.js';
+
+export interface PublicationActorContext {
+  actorUserId: string;
+  actorSnapshot: ActorSnapshot;
+  requestId?: string | null;
+}
 
 export interface PublicationEventResult {
   id: string;
@@ -56,43 +67,46 @@ export class PublicationError extends Error {
 export interface PublicationService {
   submitResourceForReview(
     resourceId: string,
-    options?: { versionId?: string; actorUserId?: string },
+    options?: { versionId?: string; actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId: string; event: PublicationEventResult }>;
 
   approveResource(
     resourceId: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; event: PublicationEventResult }>;
 
   rejectResource(
     resourceId: string,
     reason: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId?: string; event: PublicationEventResult }>;
 
   publishResourceVersion(
     resourceId: string,
     versionId: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<PublishResult>;
 
   archiveResource(
     resourceId: string,
     reason?: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; event: PublicationEventResult }>;
 
   returnResourceToDraft(
     resourceId: string,
     reason?: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId?: string; event: PublicationEventResult }>;
 
   getPublicationHistory(resourceId: string): Promise<PublicationEventResult[]>;
 }
 
 export class DbPublicationService implements PublicationService {
-  constructor(private readonly dbInstance: NodePgDatabase<typeof schemas> = defaultDb) {}
+  constructor(
+    private readonly dbInstance: NodePgDatabase<typeof schemas> = defaultDb,
+    private readonly auditService: AuditService = defaultAuditService,
+  ) {}
 
   /**
    * Submit Resource & Candidate Version for Review (Atomic Transaction)
@@ -101,7 +115,7 @@ export class DbPublicationService implements PublicationService {
    */
   async submitResourceForReview(
     resourceId: string,
-    options?: { versionId?: string; actorUserId?: string },
+    options?: { versionId?: string; actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId: string; event: PublicationEventResult }> {
     return await this.dbInstance.transaction(async (tx) => {
       // 1. Fetch resource
@@ -180,6 +194,8 @@ export class DbPublicationService implements PublicationService {
         .set({ status: 'IN_REVIEW', updatedAt: new Date() })
         .where(eq(resourceVersions.id, targetVersion.id));
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+
       // 4. Record publication event
       const [event] = await tx
         .insert(publicationEvents)
@@ -189,10 +205,35 @@ export class DbPublicationService implements PublicationService {
           eventType: 'SUBMITTED',
           fromStatus: 'DRAFT',
           toStatus: 'IN_REVIEW',
-          actorUserId: options?.actorUserId ?? null,
+          actorUserId: effectiveActorId,
           reason: null,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_SUBMITTED_FOR_REVIEW',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: 'DRAFT' },
+            afterState: { status: 'IN_REVIEW', versionId: targetVersion.id },
+            context: {
+              publicationEventId: event.id,
+              versionId: targetVersion.id,
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resourceId,
@@ -221,7 +262,7 @@ export class DbPublicationService implements PublicationService {
    */
   async approveResource(
     resourceId: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; event: PublicationEventResult }> {
     return await this.dbInstance.transaction(async (tx) => {
       const [res] = await tx
@@ -268,6 +309,8 @@ export class DbPublicationService implements PublicationService {
         .set({ status: 'APPROVED', updatedAt: new Date() })
         .where(eq(resources.id, resourceId));
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+
       const [event] = await tx
         .insert(publicationEvents)
         .values({
@@ -276,10 +319,35 @@ export class DbPublicationService implements PublicationService {
           eventType: 'APPROVED',
           fromStatus: 'IN_REVIEW',
           toStatus: 'APPROVED',
-          actorUserId: options?.actorUserId ?? null,
+          actorUserId: effectiveActorId,
           reason: null,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_APPROVED',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: 'IN_REVIEW' },
+            afterState: { status: 'APPROVED', versionId: candidateVersion.id },
+            context: {
+              publicationEventId: event.id,
+              versionId: candidateVersion.id,
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resourceId,
@@ -310,7 +378,7 @@ export class DbPublicationService implements PublicationService {
   async rejectResource(
     resourceId: string,
     reason: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId?: string; event: PublicationEventResult }> {
     if (!reason || reason.trim().length === 0) {
       throw new PublicationError('REJECTION_REASON_REQUIRED', 'A non-empty rejection reason is required.', 400);
@@ -363,6 +431,9 @@ export class DbPublicationService implements PublicationService {
         .set({ status: 'REJECTED', updatedAt: new Date() })
         .where(eq(resources.id, resourceId));
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+      const trimmedReason = reason.trim();
+
       const [event] = await tx
         .insert(publicationEvents)
         .values({
@@ -371,10 +442,36 @@ export class DbPublicationService implements PublicationService {
           eventType: 'REJECTED',
           fromStatus,
           toStatus: 'REJECTED',
-          actorUserId: options?.actorUserId ?? null,
-          reason: reason.trim(),
+          actorUserId: effectiveActorId,
+          reason: trimmedReason,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_REJECTED',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: fromStatus },
+            afterState: { status: 'REJECTED', versionId: targetVersionId },
+            context: {
+              publicationEventId: event.id,
+              versionId: targetVersionId,
+              reasonPreview: trimmedReason.slice(0, 200),
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resourceId,
@@ -404,7 +501,7 @@ export class DbPublicationService implements PublicationService {
   async returnResourceToDraft(
     resourceId: string,
     reason?: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; versionId?: string; event: PublicationEventResult }> {
     return await this.dbInstance.transaction(async (tx) => {
       const [res] = await tx
@@ -459,6 +556,9 @@ export class DbPublicationService implements PublicationService {
         .set({ status: 'DRAFT', updatedAt: new Date() })
         .where(eq(resources.id, resourceId));
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+      const normalizedReason = reason && reason.trim().length > 0 ? reason.trim() : null;
+
       const [event] = await tx
         .insert(publicationEvents)
         .values({
@@ -467,10 +567,36 @@ export class DbPublicationService implements PublicationService {
           eventType: 'RETURNED_TO_DRAFT',
           fromStatus: 'REJECTED',
           toStatus: 'DRAFT',
-          actorUserId: options?.actorUserId ?? null,
-          reason: reason ? reason.trim() : null,
+          actorUserId: effectiveActorId,
+          reason: normalizedReason,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_RETURNED_TO_DRAFT',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: 'REJECTED' },
+            afterState: { status: 'DRAFT', versionId: targetVersionId },
+            context: {
+              publicationEventId: event.id,
+              versionId: targetVersionId,
+              ...(normalizedReason ? { reasonPreview: normalizedReason.slice(0, 200) } : {}),
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resourceId,
@@ -512,7 +638,7 @@ export class DbPublicationService implements PublicationService {
   async publishResourceVersion(
     resourceId: string,
     versionId: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<PublishResult> {
     return await this.dbInstance.transaction(async (tx) => {
       // 1. Fetch resource
@@ -667,6 +793,8 @@ export class DbPublicationService implements PublicationService {
         .where(eq(resourceVersions.id, versionId))
         .returning();
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+
       const [event] = await tx
         .insert(publicationEvents)
         .values({
@@ -675,10 +803,40 @@ export class DbPublicationService implements PublicationService {
           eventType: 'PUBLISHED',
           fromStatus: 'APPROVED',
           toStatus: 'PUBLISHED',
-          actorUserId: options?.actorUserId ?? null,
+          actorUserId: effectiveActorId,
           reason: null,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_VERSION_PUBLISHED',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: 'APPROVED' },
+            afterState: {
+              status: 'PUBLISHED',
+              versionId: updatedVersion.id,
+              versionNumber: updatedVersion.versionNumber,
+            },
+            context: {
+              publicationEventId: event.id,
+              versionId: updatedVersion.id,
+              versionNumber: updatedVersion.versionNumber,
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resource: {
@@ -717,7 +875,7 @@ export class DbPublicationService implements PublicationService {
   async archiveResource(
     resourceId: string,
     reason?: string,
-    options?: { actorUserId?: string },
+    options?: { actorUserId?: string; actorContext?: PublicationActorContext },
   ): Promise<{ resourceId: string; status: ResourceStatus; event: PublicationEventResult }> {
     return await this.dbInstance.transaction(async (tx) => {
       const [res] = await tx
@@ -760,6 +918,9 @@ export class DbPublicationService implements PublicationService {
         .where(eq(resources.id, resourceId))
         .returning();
 
+      const effectiveActorId = options?.actorContext?.actorUserId ?? options?.actorUserId ?? null;
+      const normalizedReason = reason && reason.trim().length > 0 ? reason.trim() : null;
+
       const [event] = await tx
         .insert(publicationEvents)
         .values({
@@ -768,10 +929,36 @@ export class DbPublicationService implements PublicationService {
           eventType: 'ARCHIVED',
           fromStatus: 'PUBLISHED',
           toStatus: 'ARCHIVED',
-          actorUserId: options?.actorUserId ?? null,
-          reason: reason ? reason.trim() : null,
+          actorUserId: effectiveActorId,
+          reason: normalizedReason,
         })
         .returning();
+
+      if (options?.actorContext) {
+        await this.auditService.logEvent(
+          {
+            action: 'RESOURCE_ARCHIVED',
+            entityType: 'RESOURCE',
+            entityId: resourceId,
+            actorType: 'AUTHENTICATED',
+            actorUserId: options.actorContext.actorUserId,
+            actorSnapshot: options.actorContext.actorSnapshot,
+            outcome: 'SUCCESS',
+            requestId: options.actorContext.requestId
+              ? options.actorContext.requestId.slice(0, 64)
+              : null,
+            countryId: res.countryId,
+            beforeState: { status: 'PUBLISHED' },
+            afterState: { status: 'ARCHIVED', versionId: targetVersionId },
+            context: {
+              publicationEventId: event.id,
+              versionId: targetVersionId,
+              ...(normalizedReason ? { reasonPreview: normalizedReason.slice(0, 200) } : {}),
+            },
+          },
+          tx,
+        );
+      }
 
       return {
         resourceId: updatedResource.id,

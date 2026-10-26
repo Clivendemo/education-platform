@@ -2587,6 +2587,42 @@ Do not create indexes indiscriminately.
 
 Indexes should be justified by query patterns and tested.
 
+## 45.1 Admin Dashboard & Review-Queue Indexes (`0020_admin_dashboard_indexes.sql`)
+
+Prompt 31 adds 18 additive B-tree indexes (zero table/column/constraint changes) verified against live PostgreSQL `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`:
+
+1. **`content.resources` (11 indexes)**:
+   - Ordered administrative catalogue indexes:
+     - `idx_resources_updated_at_id_desc` ON `(updated_at DESC, id DESC)`
+     - `idx_resources_created_at_id_desc` ON `(created_at DESC, id DESC)`
+     - `idx_resources_lower_title_id_asc` ON `((lower(title)) ASC, id ASC)`
+     - `idx_resources_country_updated_desc` ON `(country_id, updated_at DESC, id DESC)`
+     - `idx_resources_country_created_desc` ON `(country_id, created_at DESC, id DESC)`
+     - `idx_resources_status_updated_desc` ON `(status, updated_at DESC, id DESC)`
+     - `idx_resources_country_status_updated_desc` ON `(country_id, status, updated_at DESC, id DESC)`
+   - Partial editorial review-queue indexes supporting global and single-country ordering across `status IN ('IN_REVIEW', 'APPROVED')` without `Sort` nodes:
+     - `idx_resources_review_queue_updated_desc` ON `(updated_at DESC, id DESC) WHERE status IN ('IN_REVIEW', 'APPROVED')`
+     - `idx_resources_review_queue_created_desc` ON `(created_at DESC, id DESC) WHERE status IN ('IN_REVIEW', 'APPROVED')`
+     - `idx_resources_country_review_queue_updated_desc` ON `(country_id, updated_at DESC, id DESC) WHERE status IN ('IN_REVIEW', 'APPROVED')`
+     - `idx_resources_country_review_queue_created_desc` ON `(country_id, created_at DESC, id DESC) WHERE status IN ('IN_REVIEW', 'APPROVED')`
+2. **`content.publication_events` (3 indexes)**:
+   - `idx_pub_events_created_id_desc` ON `(created_at DESC, id DESC)`
+   - `idx_pub_events_type_created_id_desc` ON `(event_type, created_at DESC, id DESC)`
+   - `idx_pub_events_resource_created_id_desc` ON `(resource_id, created_at DESC, id DESC)`
+3. **`files.resource_files` (4 indexes)**:
+   - `idx_res_files_created_id_desc` ON `(created_at DESC, id DESC)`
+   - `idx_res_files_updated_id_desc` ON `(updated_at DESC, id DESC)`
+   - `idx_res_files_size_id_desc` ON `(file_size_bytes DESC, id DESC)`
+   - `idx_res_files_status_created_id_desc` ON `(status, created_at DESC, id DESC)`
+
+## 45.2 Prompt 31 Rollback & Emergency Disablement Safety
+
+1. **Additive Index Rollback**: Execute `DROP INDEX IF EXISTS` restricted strictly to the 18 index names listed in Section 45.1.
+2. **RBAC Operational Procedures (4 Prompt-31-Exclusive Permissions: `admin.dashboard.read`, `resource.admin.read`, `file.admin.read`, `file.admin.verify`)**:
+   - **Full Rollback**: Delete the 11 Prompt-31 `identity.role_permissions` mappings and delete the 4 Prompt-31-exclusive `identity.permissions` records inside a single transaction. Verified against `0008_identity_rbac.sql`: `fk_role_permissions_permission_id` (`identity.role_permissions.permission_id -> identity.permissions.id ON DELETE CASCADE`) is the only foreign key targeting `identity.permissions.id`.
+   - **Emergency Disablement**: Retain the 4 `identity.permissions` records, remove their 11 Prompt-31 `identity.role_permissions` mappings, and set `status = 'INACTIVE'` on those 4 `identity.permissions` records (`chk_permissions_status` allows `'ACTIVE' | 'INACTIVE'`).
+   - **Shared Permission Invariant**: Both procedures must leave all 41 shared pre-Prompt-31 permissions and their 88 role-permission mappings untouched.
+
 ---
 
 # 46. UNIQUE CONSTRAINTS

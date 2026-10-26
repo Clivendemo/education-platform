@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { sql, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db as defaultDb, closeDatabase, type AppDatabase } from '../index.js';
 import {
   roles,
@@ -349,6 +349,34 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'ANY',
     description: 'Create, deactivate, and reactivate editorial recommendation rules.',
   },
+  {
+    name: 'admin.dashboard.read',
+    resource: 'admin',
+    action: 'dashboard_read',
+    scopeType: 'ANY',
+    description: 'View centralized operational dashboard summaries and administrative KPIs.',
+  },
+  {
+    name: 'resource.admin.read',
+    resource: 'resource',
+    action: 'admin_read',
+    scopeType: 'ANY',
+    description: 'Inspect resources across all lifecycle states, versions, and publication events.',
+  },
+  {
+    name: 'file.admin.read',
+    resource: 'file',
+    action: 'admin_read',
+    scopeType: 'ANY',
+    description: 'Inspect controlled file storage metadata, checksums, and status across versions.',
+  },
+  {
+    name: 'file.admin.verify',
+    resource: 'file',
+    action: 'admin_verify',
+    scopeType: 'ANY',
+    description: 'Trigger controlled storage integrity verification checks on file records.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -394,6 +422,10 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'retention.execute',
     'recommendation.read',
     'recommendation.manage',
+    'admin.dashboard.read',
+    'resource.admin.read',
+    'file.admin.read',
+    'file.admin.verify',
   ],
   content_manager: [
     'resource.read',
@@ -423,6 +455,10 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'retention.read',
     'recommendation.read',
     'recommendation.manage',
+    'admin.dashboard.read',
+    'resource.admin.read',
+    'file.admin.read',
+    'file.admin.verify',
   ],
   content_reviewer: [
     'resource.read',
@@ -434,6 +470,9 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'quality.read',
     'feedback.read',
     'recommendation.read',
+    'admin.dashboard.read',
+    'resource.admin.read',
+    'file.admin.read',
   ],
   verified_teacher: [
     'resource.read',
@@ -454,122 +493,105 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
   ],
 };
 
+const PROMPT_31_PERMISSION_NAMES = [
+  'admin.dashboard.read',
+  'resource.admin.read',
+  'file.admin.read',
+  'file.admin.verify',
+] as const;
+
+const CANONICAL_ROLE_SLUGS = CANONICAL_ROLES.map((r) => r.slug);
+const CANONICAL_MAPPING_COUNT = Object.values(ROLE_PERMISSION_MATRIX).reduce(
+  (sum, perms) => sum + perms.length,
+  0,
+); // 99 canonical mappings (45 + 31 + 12 + 5 + 4 + 2)
+const PROMPT_31_MAPPING_COUNT = 11; // 4 (system_admin) + 4 (content_manager) + 3 (content_reviewer)
+
 /**
  * Idempotently seeds canonical roles, permissions, and role_permissions mappings.
- * Uses fast-path check and batch operations to avoid multiple network round-trips.
+ * Uses fast-path check against canonical roles, active milestone permissions, and
+ * Prompt-31 role_permissions mappings so partial seeds or rollbacks never skip mappings.
  */
 export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultDb): Promise<{
   rolesCount: number;
   permissionsCount: number;
   mappingsCount: number;
 }> {
-  // Fast-path: if canonical role_permissions are already seeded including contributor, return immediately
-  const [existing] = await dbInstance
+  // Fast-path: verify canonical role_permissions count (>= 99), active milestone permissions,
+  // and all 11 Prompt-31 role_permissions mappings before returning early.
+  const [existingCanonical] = await dbInstance
     .select({ count: sql<string>`count(*)` })
-    .from(rolePermissions);
+    .from(rolePermissions)
+    .innerJoin(roles, eq(rolePermissions.roleId, roles.id))
+    .where(inArray(roles.slug, CANONICAL_ROLE_SLUGS));
 
   const [contributorRole] = await dbInstance
     .select({ id: roles.id })
     .from(roles)
-    .where(eq(roles.slug, 'contributor'))
+    .where(and(eq(roles.slug, 'contributor'), eq(roles.status, 'ACTIVE')))
     .limit(1);
 
-  const [financePerm] = await dbInstance
-    .select({ id: permissions.id })
+  const [activePrompt31Perms] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
     .from(permissions)
-    .where(eq(permissions.name, 'contributor.finance.manage'))
-    .limit(1);
+    .where(
+      and(
+        inArray(permissions.name, [...PROMPT_31_PERMISSION_NAMES]),
+        eq(permissions.status, 'ACTIVE'),
+      ),
+    );
 
-  const [updatePerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'update.publish'))
-    .limit(1);
+  const [existingPrompt31Mappings] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
+    .from(rolePermissions)
+    .innerJoin(roles, eq(rolePermissions.roleId, roles.id))
+    .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+    .where(
+      and(
+        inArray(roles.slug, ['system_admin', 'content_manager', 'content_reviewer']),
+        inArray(permissions.name, [...PROMPT_31_PERMISSION_NAMES]),
+        eq(permissions.status, 'ACTIVE'),
+      ),
+    );
 
-  const [qualityPerm] = await dbInstance
-    .select({ id: permissions.id })
+  const [activeMilestonePerms] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
     .from(permissions)
-    .where(eq(permissions.name, 'quality.verify'))
-    .limit(1);
-
-  const [feedbackPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'feedback.manage'))
-    .limit(1);
-
-  const [notificationPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'notification.admin.manage'))
-    .limit(1);
-
-  const [analyticsPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'analytics.manage'))
-    .limit(1);
-
-  const [auditPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'audit.read'))
-    .limit(1);
-
-  const [retentionReadPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'retention.read'))
-    .limit(1);
-
-  const [retentionManagePerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'retention.manage'))
-    .limit(1);
-
-  const [retentionExecPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'retention.execute'))
-    .limit(1);
-
-  const [recommendationReadPerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'recommendation.read'))
-    .limit(1);
-
-  const [recommendationManagePerm] = await dbInstance
-    .select({ id: permissions.id })
-    .from(permissions)
-    .where(eq(permissions.name, 'recommendation.manage'))
-    .limit(1);
+    .where(
+      and(
+        inArray(permissions.name, [
+          'contributor.finance.manage',
+          'update.publish',
+          'quality.verify',
+          'feedback.manage',
+          'notification.admin.manage',
+          'analytics.manage',
+          'audit.read',
+          'retention.read',
+          'retention.manage',
+          'retention.execute',
+          'recommendation.read',
+          'recommendation.manage',
+        ]),
+        eq(permissions.status, 'ACTIVE'),
+      ),
+    );
 
   if (
-    Number(existing?.count) >= 88 &&
+    Number(existingCanonical?.count) >= CANONICAL_MAPPING_COUNT &&
     contributorRole &&
-    financePerm &&
-    updatePerm &&
-    qualityPerm &&
-    feedbackPerm &&
-    notificationPerm &&
-    analyticsPerm &&
-    auditPerm &&
-    retentionReadPerm &&
-    retentionManagePerm &&
-    retentionExecPerm &&
-    recommendationReadPerm &&
-    recommendationManagePerm
+    Number(activeMilestonePerms?.count) === 12 &&
+    Number(activePrompt31Perms?.count) === PROMPT_31_PERMISSION_NAMES.length &&
+    Number(existingPrompt31Mappings?.count) === PROMPT_31_MAPPING_COUNT
   ) {
     return {
       rolesCount: CANONICAL_ROLES.length,
       permissionsCount: CANONICAL_PERMISSIONS.length,
-      mappingsCount: Number(existing.count),
+      mappingsCount: Number(existingCanonical.count),
     };
   }
 
-  // 1. Batch insert Permissions
+  // 1. Batch insert Permissions (and ensure canonical permissions are ACTIVE if re-seeding after rollback)
   await dbInstance
     .insert(permissions)
     .values(
@@ -582,7 +604,10 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
         status: 'ACTIVE' as const,
       })),
     )
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: permissions.name,
+      set: { status: 'ACTIVE' },
+    });
 
   // 2. Batch insert Roles
   await dbInstance

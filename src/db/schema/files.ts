@@ -139,6 +139,23 @@ export const resourceFiles = filesSchema.table(
     index('idx_resource_files_version_id').on(table.resourceVersionId),
     index('idx_resource_files_checksum').on(table.checksumSha256),
     index('idx_resource_files_status').on(table.status),
+    index('idx_res_files_created_id_desc').on(
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_res_files_updated_id_desc').on(
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_res_files_size_id_desc').on(
+      table.fileSizeBytes.desc(),
+      table.id.desc(),
+    ),
+    index('idx_res_files_status_created_id_desc').on(
+      table.status,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
   ],
 );
 

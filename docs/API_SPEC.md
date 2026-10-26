@@ -2015,32 +2015,90 @@ POST /api/v1/admin/resources/:id/revoke-verification
 
 ---
 
-# 52. Admin API
+# 52. Admin API (Prompt 31 — Centralized Admin Dashboard)
 
-Administrative routes must be clearly separated.
+Administrative routes are strictly separated under `/api/v1/admin/*` and return `Cache-Control: private, no-store` on all responses.
 
-Base path:
+Every admin endpoint enforces server-side authentication (`401 UNAUTHENTICATED`), RBAC permission checks, and `COUNTRY`-scoped isolation (`403 FORBIDDEN` with generic message and `DENIED` audit log entry in `governance.audit_logs`).
 
-```text
-/api/v1/admin/
-```
+## 52.1 Dedicated Prompt 31 RBAC Permissions
 
-Examples:
+| Permission | Scope Type | Permitted Roles | Purpose |
+| :--- | :--- | :--- | :--- |
+| `admin.dashboard.read` | `ANY` | `system_admin`, `content_manager`, `content_reviewer` | Access centralized administrative overview (`GET /api/v1/admin/dashboard/overview`). Sub-sections are additionally gated by domain sub-permissions. |
+| `resource.admin.read` | `ANY` | `system_admin`, `content_manager`, `content_reviewer` | Administrative cross-status resource listing, resource inspection, publication event ledger, and admin resource event timeline. |
+| `file.admin.read` | `ANY` | `system_admin`, `content_manager`, `content_reviewer` | Administrative binary file metadata listing and detail inspection (redacts internal storage buckets, object keys, and provider metadata). |
+| `file.admin.verify` | `ANY` | `system_admin`, `content_manager` | Execute read-only object-storage binary integrity verification (`POST /api/v1/admin/files/:id/verify-integrity`). Explicitly withheld from `content_reviewer` (strictly read-only). |
 
-```text
-GET /api/v1/admin/resources
-GET /api/v1/admin/users
-GET /api/v1/admin/orders
-GET /api/v1/admin/payments
-GET /api/v1/admin/contributors
-GET /api/v1/admin/reports
-GET /api/v1/admin/analytics
-GET /api/v1/admin/audit-logs
-```
+*Note on Scope Evaluation (`resolvePermissionAccess`)*:
+- Unscoped role assignments (`scope_type IS NULL`) on `ANY` or `GLOBAL` permissions grant platform-wide access (with optional `?countryId=<uuid>` narrowing).
+- `COUNTRY`-scoped role assignments restrict visibility and actions strictly to the administrator's granted country UUIDs; cross-country requests fail closed with `403 FORBIDDEN` and write a `DENIED` audit event.
+- `SCHOOL`- or `RESOURCE`-only grants fail closed (`granted: false`) on platform/country administrative surfaces.
 
-Every admin endpoint must enforce server-side permissions.
+## 52.2 Canonical Operational Attention Flags (`ADMIN_ATTENTION_FLAGS`)
 
-Admin UI visibility alone is not authorization.
+Shared identically across `GET /api/v1/admin/dashboard/overview`, `GET /api/v1/admin/resources` (row `attentionFlags` and `?attentionFlag=` filter), `GET /api/v1/admin/publications/review-queue`, and `GET /api/v1/admin/resources/:id`. A single resource may legitimately carry multiple overlapping flags:
+
+1. `PENDING_REVIEW`: `content.resources.status = 'IN_REVIEW'`.
+2. `APPROVED_AWAITING_PUBLISH`: `content.resources.status = 'APPROVED'`.
+3. `PUBLISHED_WITHOUT_AVAILABLE_FILE`: `content.resources.status = 'PUBLISHED'` and no `PUBLISHED` `content.resource_versions` row has a primary file (`is_primary = true`) with `status = 'AVAILABLE'`.
+4. `IN_REVIEW_WITHOUT_CANDIDATE_VERSION`: `content.resources.status IN ('IN_REVIEW', 'APPROVED')` and no `content.resource_versions` row exists with `status = 'IN_REVIEW'` (matching `DbPublicationService`'s candidate-version invariant).
+5. `HAS_PROBLEMATIC_FILES`: `content.resources.status <> 'ARCHIVED'` and at least one version in `('DRAFT', 'IN_REVIEW', 'APPROVED', 'PUBLISHED')` has a file in `('QUARANTINED', 'FAILED')`.
+6. `HAS_OPEN_DEFECT_FEEDBACK`: `content.resources.status <> 'ARCHIVED'` and at least one `content.resource_feedback` row has `status IN ('PENDING', 'UNDER_REVIEW', 'REOPENED')` and `feedback_type <> 'HELPFUL'`.
+
+## 52.3 Prompt 31 Administrative Endpoints
+
+### 1. `GET /api/v1/admin/dashboard/overview`
+- **Permission:** `admin.dashboard.read`
+- **Query:** `countryId` (optional UUID, `.strict()`)
+- **Behavior:** Returns platform or country-scoped counts across resources, review queue, `attentionSummary` (`totalResourcesRequiringAttention` + `byFlag` for all 6 canonical flags), recent publication activity, and domain sub-sections (`fileStorage` [`file.admin.read`], `qualityGovernance` [`quality.read`], `feedbackModeration` [`feedback.read`], `educationUpdates` [`update.read`], `contributors` [`contributor.manage`, global unscoped only], `notifications` [`notification.admin.read`, global unscoped only], `analytics` [`analytics.read` (`GLOBAL` permission; narrows by `countryId` when requested by a global admin)], `governanceAudit` [`audit.read` (`GLOBAL` permission; narrows `audit` by `countryId` when requested) / `retention.read` (`GLOBAL` permission, global unscoped only)]). Unauthorized or out-of-scope sub-sections return `null` and are listed in `scope.redactedSections`.
+
+### 2. `GET /api/v1/admin/resources`
+- **Permission:** `resource.admin.read`
+- **Query (`.strict()`):** `countryId`, `status`, `qualityLabel`, `resourceTypeId`, `curriculumId`, `educationLevelId`, `gradeId`, `subjectId`, `topicId`, `schoolId`, `contributorId`, `academicYear`, `term`, `attentionFlag` (enum of 6 canonical flags), `search`, `sortBy` (`updatedAt` | `createdAt` | `title`), `sortOrder` (`asc` | `desc`), `page`, `pageSize` (1..100).
+- **Behavior:** Cross-status administrative catalogue inspection using single-table ordered index scans + batch hydration, returning taxonomy context, version/file counts, and canonical `attentionFlags`.
+
+### 3. `GET /api/v1/admin/resources/:id`
+- **Permission:** `resource.admin.read` (+ `COUNTRY` scope check)
+- **Behavior:** Deep single-resource administrative inspection including all versions (`immutable: status === 'PUBLISHED'`), publication event timeline, canonical `attentionFlags`, and sub-permission-gated sections (`files` [`file.admin.read`], `qualityGovernance` [`quality.read`], `feedbackSummary` [`feedback.read`]), with omitted sections listed in `redactedSections`.
+
+### 4. `GET /api/v1/admin/publications/review-queue`
+- **Permission:** `resource.review`
+- **Query (`.strict()`):** `countryId`, `queueState` (`ALL` | `IN_REVIEW` | `APPROVED`, default `ALL`), `resourceTypeId`, `gradeId`, `subjectId`, `sortBy` (`updatedAt` | `createdAt`, default `updatedAt`), `sortOrder` (`asc` | `desc`, default `asc`), `page`, `pageSize` (1..100).
+- **Behavior:** Editorial review and publish queue backed by partial composite indexes (`WHERE status IN ('IN_REVIEW', 'APPROVED')`), returning candidate version summary, latest event, and canonical `attentionFlags`.
+
+### 5. `GET /api/v1/admin/publications/events`
+- **Permission:** `resource.admin.read`
+- **Query (`.strict()`):** `countryId`, `resourceId`, `eventType`, `actorUserId`, `fromDate`, `toDate`, `sortOrder` (`asc` | `desc`, default `desc`), `page`, `pageSize` (1..100).
+- **Behavior:** Cross-resource append-only publication event ledger filtered by effective country scope.
+
+### 6. `GET /api/v1/admin/files`
+- **Permission:** `file.admin.read`
+- **Query (`.strict()`):** `countryId`, `resourceId`, `resourceVersionId`, `status`, `storageProvider`, `fileType`, `isPrimary`, `versionStatus`, `checksumSha256` (64-char hex), `sortBy` (`createdAt` | `updatedAt` | `fileSizeBytes`), `sortOrder`, `page`, `pageSize` (1..100).
+- **Behavior:** Controlled binary asset inventory. Strictly omits `storageBucket`, `objectKey`, `storageMetadata`, and presigned URLs.
+
+### 7. `GET /api/v1/admin/files/:id`
+- **Permission:** `file.admin.read` (+ `COUNTRY` scope check)
+- **Behavior:** Controlled single-file administrative detail with parent version, resource, country, and `immutableUnderPublishedVersion` indicator. Strictly redacts internal storage bucket/key/metadata.
+
+### 8. `POST /api/v1/admin/files/:id/verify-integrity`
+- **Permission:** `file.admin.verify` (+ `COUNTRY` scope check prior to storage `HEAD` call)
+- **Request Body:** Empty object `{}` (`.strict()`, optional)
+- **Rate Limit:** Sliding-window `20 requests / 60 seconds / actorUserId` → `429 RATE_LIMIT_EXCEEDED`.
+- **Behavior:** Performs read-only object-storage `HEAD` verification via `FileStorageService.verifyFileIntegrity` without mutating `files.resource_files` (safe on `PUBLISHED` immutable versions), writes a synchronous `ADMIN_FILE_INTEGRITY_VERIFIED` audit log (`SUCCESS` or `FAILED`), and maps upstream storage failures to safe `502 STORAGE_VERIFICATION_ERROR` without leaking bucket/key internals.
+
+## 52.4 Publication Hardening & Public vs Admin Event-Route Split
+
+- All 6 publication transition operations (`POST /api/v1/resources/:id/submit` [aliases `/admin/resources/:id/submit-review`, `/admin/resources/:id/submit`], `POST /api/v1/resources/:id/approve` [alias `/admin/resources/:id/approve`], `POST /api/v1/resources/:id/reject` [alias `/admin/resources/:id/reject`], `POST /api/v1/resources/:id/publish` [alias `/admin/resources/:id/publish`], `POST /api/v1/resources/:id/archive` [aliases `/admin/resources/:id/retire`, `/admin/resources/:id/archive`], and `POST /api/v1/resources/:id/return-to-draft` [alias `/admin/resources/:id/return-to-draft`]) enforce `COUNTRY` scope, populate `actor_user_id` on `content.publication_events`, and write transactional `governance.audit_logs` records inside the same PostgreSQL transaction.
+- `GET /api/v1/resources/:id/events` preserves `resource.read` for backward compatibility (Prompt 14), whereas `GET /api/v1/admin/resources/:id/events` enforces `resource.admin.read` + `COUNTRY` scope + `Cache-Control: private, no-store`.
+
+## 52.5 Rollback Safety Contract (Prompt 31)
+
+- **RBAC Rollback vs. Emergency Disablement:** Restricted strictly to the 4 Prompt-31-exclusive permissions (`admin.dashboard.read`, `resource.admin.read`, `file.admin.read`, `file.admin.verify`) via two distinct, mutually exclusive operational procedures:
+  - **Option A — Full Rollback (complete removal):** Delete the 11 Prompt-31 `identity.role_permissions` mappings and delete the 4 Prompt-31-exclusive `identity.permissions` records inside one transaction. Foreign-key safety is verified against `drizzle/0008_identity_rbac.sql` (`fk_role_permissions_permission_id` on `identity.role_permissions.permission_id -> identity.permissions.id ON DELETE CASCADE` is the sole foreign key referencing `identity.permissions.id`; `identity.user_roles` references `identity.roles.id` and `governance.audit_logs` stores permission strings in JSONB without a foreign key).
+  - **Option B — Emergency Disablement (runtime revocation retaining catalog rows):** Retain the 4 Prompt-31 `identity.permissions` records, delete their 11 Prompt-31 `identity.role_permissions` mappings, and set `status = 'INACTIVE'` on only those 4 `identity.permissions` records (`chk_permissions_status` permits `'ACTIVE' | 'INACTIVE'`, and `RbacService` enforces `permissions.status = 'ACTIVE'`).
+  - **Shared Permission Protection (mandatory for both options):** All 41 pre-Prompt-31 permissions (including `resource.review`, `resource.read`, `quality.read`, `feedback.read`, `update.read`, `contributor.manage`, `notification.admin.read`, `analytics.read`, `audit.read`, and `retention.read`) and their 88 pre-Prompt-31 `identity.role_permissions` mappings are shared with earlier modules and must remain completely untouched. Re-running `seedRolesAndPermissions` restores canonical state (`45` active permissions, `99` mappings) cleanly from either procedure.
+- **Database Index Rollback:** `DROP INDEX IF EXISTS` on only the 18 additive index names created by `drizzle/0020_admin_dashboard_indexes.sql` (`docs/DATABASE_SPEC.md` Section 45.1–45.2).
 
 ---
 

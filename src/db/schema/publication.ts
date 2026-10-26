@@ -59,6 +59,20 @@ export const publicationEvents = contentSchema.table(
     index('idx_publication_events_resource_id').on(table.resourceId),
     index('idx_publication_events_version_id').on(table.resourceVersionId),
     index('idx_publication_events_created_at').on(table.createdAt),
+    index('idx_pub_events_created_id_desc').on(
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_pub_events_type_created_id_desc').on(
+      table.eventType,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_pub_events_resource_created_id_desc').on(
+      table.resourceId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
   ],
 );
 

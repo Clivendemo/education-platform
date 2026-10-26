@@ -25,6 +25,7 @@ import { analyticsRoutes } from './routes/api/v1/analytics.js';
 import { auditRoutes } from './routes/api/v1/audit.js';
 import { retentionRoutes } from './routes/api/v1/retention.js';
 import { recommendationRoutes } from './routes/api/v1/recommendations.js';
+import { adminDashboardRoutes } from './routes/api/v1/admin-dashboard.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -49,6 +50,8 @@ import type { AnalyticsService } from './services/analytics.service.js';
 import type { AuditService } from './services/audit.service.js';
 import type { RetentionService } from './services/retention.service.js';
 import type { RecommendationService } from './services/recommendations/recommendation.service.js';
+import type { FileStorageService } from './services/file-storage.service.js';
+import type { AdminDashboardService } from './services/admin-dashboard.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
@@ -81,6 +84,8 @@ export interface AppOptions extends FastifyServerOptions {
     auditService?: AuditService;
     retentionService?: RetentionService;
     recommendationService?: RecommendationService;
+    fileStorageService?: FileStorageService;
+    adminDashboardService?: AdminDashboardService;
   };
 }
 
@@ -179,6 +184,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     publicationService: services?.publicationService,
     authService: services?.authService,
     rbacService: services?.rbacService,
+    auditService: services?.auditService,
   });
   app.register(catalogueRoutes, {
     prefix: '/api/v1',
@@ -272,6 +278,13 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(recommendationRoutes, {
     prefix: '/api/v1',
     recommendationService: services?.recommendationService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
+    auditService: services?.auditService,
+  });
+  app.register(adminDashboardRoutes, {
+    prefix: '/api/v1',
+    adminDashboardService: services?.adminDashboardService,
     authService: services?.authService,
     rbacService: services?.rbacService,
     auditService: services?.auditService,

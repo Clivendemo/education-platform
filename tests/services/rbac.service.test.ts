@@ -174,4 +174,141 @@ describe('DefaultRbacService Unit Tests', () => {
       expect(perms).toEqual(['resource.read', 'resource.create', 'resource.submit']);
     });
   });
+
+  describe('resolvePermissionAccess (Prompt 31 global vs COUNTRY scope resolution)', () => {
+    it('returns granted: false when user has no active grants', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'admin.dashboard.read');
+      expect(res).toEqual({
+        granted: false,
+        hasGlobalGrant: false,
+        countryIds: [],
+      });
+    });
+
+    it('resolves unscoped grant on ANY permission as global access', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([
+          {
+            roleScopeType: null,
+            roleScopeId: null,
+            permissionScopeType: 'ANY',
+          },
+        ]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'admin.dashboard.read');
+      expect(res).toEqual({
+        granted: true,
+        hasGlobalGrant: true,
+        countryIds: [],
+      });
+    });
+
+    it('resolves distinct COUNTRY grants on ANY permission without global elevation', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([
+          {
+            roleScopeType: 'COUNTRY',
+            roleScopeId: 'country-ke',
+            permissionScopeType: 'ANY',
+          },
+          {
+            roleScopeType: 'COUNTRY',
+            roleScopeId: 'country-ug',
+            permissionScopeType: 'ANY',
+          },
+          {
+            roleScopeType: 'COUNTRY',
+            roleScopeId: 'country-ke',
+            permissionScopeType: 'ANY',
+          },
+        ]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'resource.admin.read');
+      expect(res).toEqual({
+        granted: true,
+        hasGlobalGrant: false,
+        countryIds: ['country-ke', 'country-ug'],
+      });
+    });
+
+    it('rejects COUNTRY-only role assignment when permission scopeType is GLOBAL', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([
+          {
+            roleScopeType: 'COUNTRY',
+            roleScopeId: 'country-ke',
+            permissionScopeType: 'GLOBAL',
+          },
+        ]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'analytics.read');
+      expect(res).toEqual({
+        granted: false,
+        hasGlobalGrant: false,
+        countryIds: [],
+      });
+    });
+
+    it('accepts unscoped role assignment when permission scopeType is GLOBAL', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([
+          {
+            roleScopeType: null,
+            roleScopeId: null,
+            permissionScopeType: 'GLOBAL',
+          },
+        ]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'retention.read');
+      expect(res).toEqual({
+        granted: true,
+        hasGlobalGrant: true,
+        countryIds: [],
+      });
+    });
+
+    it('fails closed (granted: false) when user only holds SCHOOL or RESOURCE scoped grants', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([
+          {
+            roleScopeType: 'SCHOOL',
+            roleScopeId: 'school-uuid',
+            permissionScopeType: 'ANY',
+          },
+          {
+            roleScopeType: 'RESOURCE',
+            roleScopeId: 'resource-uuid',
+            permissionScopeType: 'ANY',
+          },
+        ]),
+      });
+
+      const res = await service.resolvePermissionAccess('user-uuid', 'resource.admin.read');
+      expect(res).toEqual({
+        granted: false,
+        hasGlobalGrant: false,
+        countryIds: [],
+      });
+    });
+  });
 });

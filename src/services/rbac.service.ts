@@ -32,6 +32,12 @@ export interface UserRoleWithDetails extends UserRole {
   roleType: string;
 }
 
+export interface PermissionAccessResolution {
+  granted: boolean;
+  hasGlobalGrant: boolean;
+  countryIds: string[];
+}
+
 export interface RbacService {
   getUserPermissions(userId: string): Promise<string[]>;
   getUserRoles(userId: string): Promise<UserRoleWithDetails[]>;
@@ -40,6 +46,10 @@ export interface RbacService {
     permissionName: string,
     scope?: ScopeFilter,
   ): Promise<boolean>;
+  resolvePermissionAccess(
+    userId: string,
+    permissionName: string,
+  ): Promise<PermissionAccessResolution>;
   assignRole(params: AssignRoleParams): Promise<UserRole>;
   revokeRole(userRoleId: string): Promise<void>;
   listRoles(): Promise<Role[]>;
@@ -187,6 +197,75 @@ export class DefaultRbacService implements RbacService {
     }
 
     return false;
+  }
+
+  /**
+   * Resolves effective global vs country-scoped access for a specific permission.
+   * - Enforces permissions.scopeType ('GLOBAL' requires unscoped userRoles grant; 'ANY'/'SCOPED' accepts COUNTRY grants).
+   * - Fails closed (granted: false) for SCHOOL/RESOURCE-only grants when evaluating country/global administrative surfaces.
+   */
+  async resolvePermissionAccess(
+    userId: string,
+    permissionName: string,
+  ): Promise<PermissionAccessResolution> {
+    const now = new Date();
+
+    const matchingGrants = await this.db
+      .select({
+        roleScopeType: userRoles.scopeType,
+        roleScopeId: userRoles.scopeId,
+        permissionScopeType: permissions.scopeType,
+      })
+      .from(userRoles)
+      .innerJoin(users, eq(userRoles.userId, users.id))
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .innerJoin(rolePermissions, eq(roles.id, rolePermissions.roleId))
+      .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+      .where(
+        and(
+          eq(userRoles.userId, userId),
+          eq(permissions.name, permissionName),
+          eq(userRoles.status, 'ACTIVE'),
+          eq(users.status, 'ACTIVE'),
+          isNull(users.deletedAt),
+          eq(roles.status, 'ACTIVE'),
+          eq(permissions.status, 'ACTIVE'),
+          or(isNull(userRoles.startsAt), sql`${userRoles.startsAt} <= ${now}`),
+          or(isNull(userRoles.endsAt), sql`${userRoles.endsAt} > ${now}`),
+        ),
+      );
+
+    if (matchingGrants.length === 0) {
+      return { granted: false, hasGlobalGrant: false, countryIds: [] };
+    }
+
+    const permScopeType = matchingGrants[0].permissionScopeType;
+    const hasUnscopedRoleGrant = matchingGrants.some(
+      (g) => g.roleScopeType === null || g.roleScopeType === undefined,
+    );
+
+    if (permScopeType === 'GLOBAL') {
+      return {
+        granted: hasUnscopedRoleGrant,
+        hasGlobalGrant: hasUnscopedRoleGrant,
+        countryIds: [],
+      };
+    }
+
+    const hasGlobalGrant = permScopeType === 'ANY' && hasUnscopedRoleGrant;
+    const countryIdSet = new Set<string>();
+    for (const grant of matchingGrants) {
+      if (grant.roleScopeType === 'COUNTRY' && grant.roleScopeId) {
+        countryIdSet.add(grant.roleScopeId);
+      }
+    }
+
+    const countryIds = Array.from(countryIdSet);
+    return {
+      granted: hasGlobalGrant || countryIds.length > 0,
+      hasGlobalGrant,
+      countryIds,
+    };
   }
 
   /**

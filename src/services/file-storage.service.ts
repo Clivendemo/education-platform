@@ -14,6 +14,8 @@ import {
   getSafeExtension,
 } from './storage/file-key.js';
 import { env } from '../config/env.js';
+import { db as defaultDb } from '../db/index.js';
+import { defaultStorageProvider } from './download.service.js';
 
 export const ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -420,3 +422,10 @@ export class FileStorageService {
     };
   }
 }
+
+export const defaultFileStorageService = new FileStorageService(
+  defaultDb,
+  defaultStorageProvider,
+);
+
+

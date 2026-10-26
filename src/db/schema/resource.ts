@@ -277,6 +277,51 @@ export const resources = contentSchema.table(
       table.status,
       sql`(lower(${table.title})) text_pattern_ops`,
     ),
+    index('idx_resources_updated_at_id_desc').on(
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_created_at_id_desc').on(
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_country_updated_desc').on(
+      table.countryId,
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_country_created_desc').on(
+      table.countryId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_status_updated_desc').on(
+      table.status,
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_country_status_updated_desc').on(
+      table.countryId,
+      table.status,
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    index('idx_resources_lower_title_id_asc').on(
+      sql`(lower(${table.title}))`,
+      table.id.asc(),
+    ),
+    index('idx_resources_review_queue_updated_desc')
+      .on(table.updatedAt.desc(), table.id.desc())
+      .where(sql`${table.status} IN ('IN_REVIEW', 'APPROVED')`),
+    index('idx_resources_review_queue_created_desc')
+      .on(table.createdAt.desc(), table.id.desc())
+      .where(sql`${table.status} IN ('IN_REVIEW', 'APPROVED')`),
+    index('idx_resources_country_review_queue_updated_desc')
+      .on(table.countryId, table.updatedAt.desc(), table.id.desc())
+      .where(sql`${table.status} IN ('IN_REVIEW', 'APPROVED')`),
+    index('idx_resources_country_review_queue_created_desc')
+      .on(table.countryId, table.createdAt.desc(), table.id.desc())
+      .where(sql`${table.status} IN ('IN_REVIEW', 'APPROVED')`),
   ],
 );
 

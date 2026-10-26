@@ -813,26 +813,26 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 
 | Component                   | Status      | Notes |
 | --------------------------- | ----------- | ----- |
-| Admin application           | NOT_STARTED |       |
-| Resource management         | NOT_STARTED |       |
-| Version management          | NOT_STARTED |       |
-| File management             | NOT_STARTED |       |
+| Admin application           | NOT_STARTED | Frontend UI not yet started; Prompt 31 backend operational APIs verified |
+| Resource management         | VERIFIED    | Prompt 31; centralized admin resource listing (`GET /api/v1/admin/resources`), 6-flag attention filtering, detail inspection (`GET /api/v1/admin/resources/:id`), and country-scoped publication hardening |
+| Version management          | VERIFIED    | Prompt 31; full version history inspection and candidate-version review queue (`GET /api/v1/admin/publications/review-queue`) |
+| File management             | VERIFIED    | Prompt 31; sanitized admin file listing (`GET /api/v1/admin/files`), detail inspection (`GET /api/v1/admin/files/:id`), and rate-limited read-only storage integrity verification (`POST /api/v1/admin/files/:id/verify-integrity`) |
 | Taxonomy management         | NOT_STARTED |       |
 | School management           | NOT_STARTED |       |
 | Collection management       | NOT_STARTED |       |
 | Bundle management           | NOT_STARTED |       |
 | User management             | NOT_STARTED |       |
 | Role management             | NOT_STARTED |       |
-| Verification management     | NOT_STARTED |       |
+| Verification management     | VERIFIED    | Prompt 24 pedagogical quality verification and revocation workflows |
 | Contributor management      | VERIFIED    | Prompt 21 administrative status and review workflows |
-| Education update management | NOT_STARTED |       |
+| Education update management | VERIFIED    | Prompt 23 administrative draft, publish, and archive workflows |
 | Calendar management         | NOT_STARTED |       |
 | Request management          | NOT_STARTED |       |
 | Feedback management         | VERIFIED    | Queue listing, triage lifecycle, RBAC separation of duties (read-only for reviewers) |
 | Report management           | NOT_STARTED |       |
 | Commerce management         | NOT_STARTED |       |
-| Analytics dashboard         | NOT_STARTED |       |
-| Governance dashboard        | NOT_STARTED |       |
+| Analytics dashboard         | VERIFIED    | Prompt 27 `GET /api/v1/admin/analytics/overview` and Prompt 29 search demand analytics |
+| Governance dashboard        | VERIFIED    | Prompt 31 centralized operational overview (`GET /api/v1/admin/dashboard/overview`), cross-resource publication event ledger (`GET /api/v1/admin/publications/events`), per-resource admin event timeline (`GET /api/v1/admin/resources/:id/events`), and audit log explorer (`GET /api/v1/admin/audit-logs`) |
 
 ---
 
@@ -867,8 +867,8 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 
 | Component              | Status      | Notes |
 | ---------------------- | ----------- | ----- |
-| Database indexing      | NOT_STARTED |       |
-| Query optimization     | NOT_STARTED |       |
+| Database indexing      | VERIFIED    | Prompt 31 (`drizzle/0020_admin_dashboard_indexes.sql`); 18 composite and partial B-tree indexes verified via live `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
+| Query optimization     | VERIFIED    | Prompt 31; zero-`Sort` index-ordered plans across global and country-scoped admin resource lists and review queues |
 | API performance        | NOT_STARTED |       |
 | Search performance     | NOT_STARTED |       |
 | Pagination             | NOT_STARTED |       |
@@ -1042,9 +1042,9 @@ Every major implementation stage should have a Git checkpoint.
 | Feedback                 | VERIFIED    | Prompt 25 implemented & verified |
 | Notifications            | VERIFIED    | Prompt 26 implemented & verified |
 | Analytics                | VERIFIED    | Prompt 27 implemented & verified |
-| Search intelligence      | NOT_STARTED |        |
-| Recommendations          | NOT_STARTED |        |
-| Admin dashboard          | NOT_STARTED |        |
+| Search intelligence      | VERIFIED    | Prompt 29 implemented & verified |
+| Recommendations          | VERIFIED    | Prompt 30 implemented & verified |
+| Admin dashboard          | VERIFIED    | Prompt 31 implemented & verified |
 | Homepage intelligence    | NOT_STARTED |        |
 | Security audit           | NOT_STARTED |        |
 | Performance audit        | NOT_STARTED |        |
@@ -1055,6 +1055,93 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-25 — Prompt 31: Centralized Admin Dashboard & Operational Oversight Backend
+
+Status:
+VERIFIED
+
+Implemented:
+- RBAC Scope Resolution & Dedicated Permissions (`src/services/rbac.service.ts` & `src/db/seeds/roles-permissions.ts`):
+  * Seeded 4 dedicated Prompt-31 permissions (`admin.dashboard.read`, `resource.admin.read`, `file.admin.read`, `file.admin.verify` — all `scopeType: 'ANY'`), bringing canonical seeded totals to 45 permissions (41 pre-Prompt-31 + 4 Prompt-31), 6 canonical roles, and 99 canonical `role_permissions` mappings (88 pre-Prompt-31 + 11 Prompt-31: `system_admin` 45, `content_manager` 31, `content_reviewer` 12, `contributor` 5, `verified_teacher` 4, `standard_user` 2).
+  * Hardened `seedRolesAndPermissions` fast-path to verify canonical mapping count (`>= 99`), `ACTIVE` status on milestone permissions, and all 11 Prompt-31 role-permission mappings (reactivating `INACTIVE` canonical permissions on re-seed after rollback).
+  * Enforced strict separation of duties: `content_reviewer` receives read-only permissions (`admin.dashboard.read`, `resource.admin.read`, `file.admin.read`) while `file.admin.verify` is withheld.
+  * Added `resolvePermissionAccess(userId, permissionName)` enforcing `GLOBAL` vs `COUNTRY` scope resolution across `GLOBAL`, `ANY`, and `SCOPED` permissions and failing closed (`granted: false`) when a user holds only `SCHOOL` or `RESOURCE`-scoped grants.
+- Canonical 6-Flag Attention Engine (`src/services/admin-attention.ts`):
+  * Implemented shared SQL select/where/row-mapping helpers for the 6 operational attention flags (`PENDING_REVIEW`, `APPROVED_AWAITING_PUBLISH`, `PUBLISHED_WITHOUT_AVAILABLE_FILE`, `IN_REVIEW_WITHOUT_CANDIDATE_VERSION`, `HAS_PROBLEMATIC_FILES`, `HAS_OPEN_DEFECT_FEEDBACK`; `NO_VERSIONS` excluded per Revision 4) with explicit table qualification (`"content"."resources"."id"`, `"content"."resources"."status"`).
+  * Guaranteed 4-way cross-endpoint parity across overview counts, resource list/filter queries, review queue items, and resource detail payloads, including resources with multiple overlapping flags.
+- Centralized Admin Dashboard Service (`src/services/admin-dashboard.service.ts`):
+  * Implemented `DefaultAdminDashboardService` covering operational overview metrics (with sub-permission section gating and `scope.redactedSections` reporting), admin resource inventory listing/filtering, comprehensive admin resource detail (versions, sanitized files, taxonomy, provenance, quality checks, verification history, feedback summary, publication events), editorial review queue, cross-resource admin publication event ledger, sanitized file listing & detail, and read-only storage integrity verification.
+  * Exposed `buildAdminResourcesListQuery` and `buildReviewQueueListQuery` for deterministic SQL plan verification.
+  * Implemented per-actor 20 requests/minute sliding-window rate limiter on `verifyFileIntegrity` prior to object-storage `HEAD` calls, preserving strict immutability of `PUBLISHED` resource versions (zero DB mutations).
+- Publication Workflow Hardening (`src/services/publication.service.ts` & `src/routes/api/v1/publications.ts`):
+  * Added `actorContext` (`actorUserId`, `actorSnapshot`, `requestId`) across all 6 publication lifecycle operations (`submitResourceForReview`, `approveResource`, `rejectResource`, `publishResourceVersion`, `archiveResource`, `returnResourceToDraft`).
+  * Enforced `COUNTRY` scope isolation and synchronous transactional `governance.audit_logs` inserts inside `db.transaction(async (tx) => ...)` so audit entries commit or roll back atomically with resource/version state transitions.
+  * Preserved Prompt 14 `GET /api/v1/resources/:id/events` (`resource.read`) backward compatibility while introducing dedicated admin `GET /api/v1/admin/resources/:id/events` (`resource.admin.read` + `COUNTRY` scope + `Cache-Control: private, no-store`).
+
+Database:
+- Additive index-only migration `drizzle/0020_admin_dashboard_indexes.sql` (18 B-tree indexes total) applied to live Neon PostgreSQL and synchronized in `drizzle/meta/_journal.json`, `src/db/schema/resource.ts`, `src/db/schema/files.ts`, and `docs/DATABASE_SPEC.md` Section 45.1 (zero table, column, trigger, or constraint modifications):
+  * `content.resources` (11 indexes): `idx_resources_updated_at_id_desc`, `idx_resources_created_at_id_desc`, `idx_resources_lower_title_id_asc`, `idx_resources_country_updated_desc`, `idx_resources_country_created_desc`, `idx_resources_status_updated_desc`, `idx_resources_country_status_updated_desc`, plus 4 partial review-queue indexes (`idx_resources_review_queue_updated_desc`, `idx_resources_review_queue_created_desc`, `idx_resources_country_review_queue_updated_desc`, `idx_resources_country_review_queue_created_desc` `WHERE "status" IN ('IN_REVIEW', 'APPROVED')`) supporting both `DESC` and backward-scan `ASC` ordering with zero `Sort` plan nodes.
+  * `content.publication_events` (3 indexes): `idx_pub_events_created_id_desc`, `idx_pub_events_type_created_id_desc`, `idx_pub_events_resource_created_id_desc`.
+  * `files.resource_files` (4 indexes): `idx_res_files_created_id_desc`, `idx_res_files_updated_id_desc`, `idx_res_files_size_id_desc`, `idx_res_files_status_created_id_desc`.
+
+API:
+- Mounted `src/routes/api/v1/admin-dashboard.ts` in `src/app.ts` with `.strict()` Zod query/param/body validation and `Cache-Control: private, no-store` across all 8 Prompt-31 endpoints:
+  * `GET /api/v1/admin/dashboard/overview` (`admin.dashboard.read`)
+  * `GET /api/v1/admin/resources` (`resource.admin.read`)
+  * `GET /api/v1/admin/resources/:id` (`resource.admin.read` + `COUNTRY` scope)
+  * `GET /api/v1/admin/publications/review-queue` (`resource.review`)
+  * `GET /api/v1/admin/publications/events` (`resource.admin.read`)
+  * `GET /api/v1/admin/files` (`file.admin.read`)
+  * `GET /api/v1/admin/files/:id` (`file.admin.read` + `COUNTRY` scope)
+  * `POST /api/v1/admin/files/:id/verify-integrity` (`file.admin.verify` + `COUNTRY` scope + 20 req/60s/actor rate limit)
+- Plus hardened per-resource event split in `src/routes/api/v1/publications.ts`:
+  * Preserved `GET /api/v1/resources/:id/events` (`resource.read`)
+  * Added `GET /api/v1/admin/resources/:id/events` (`resource.admin.read` + `COUNTRY` scope + `Cache-Control: private, no-store`)
+
+Frontend:
+- None (strictly backend-only per Prompt 31 specification).
+
+Tests:
+- Prompt-31 dedicated suites (45/45 tests passing):
+  * `tests/services/rbac.service.test.ts` (16 passed): `GLOBAL`, `COUNTRY`, `SCHOOL`/`RESOURCE` fail-closed, union grants, expired/inactive exclusions.
+  * `tests/services/admin-dashboard.service.test.ts` (12 passed): sub-permission redaction, controlled file DTO sanitization, rate-limit windowing, read-only integrity verification.
+  * `tests/db/admin-dashboard.integration.test.ts` (7 passed): all 18 `pg_indexes` verified, RBAC seed verification (45 permissions, 6 roles, 99 canonical mappings, 11 Prompt-31 mappings, and fast-path recovery), 6-flag overlapping attention matrix, 4-way cross-endpoint parity across Country A and Global scopes, live `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` zero-`Sort` verification, and `PUBLISHED` file trigger immutability.
+  * `tests/routes/admin-dashboard.integration.test.ts` (10 passed): 401/403 + `DENIED` audit logging across all 8 routes, `content_reviewer` read-only enforcement, `COUNTRY` isolation, `.strict()` parameter validation (including rejection of `NO_VERSIONS`), storage metadata non-leakage, 20 req/min rate limit, transactional publication audit rollback safety, and side-by-side `/resources/:id/events` vs `/admin/resources/:id/events` verification.
+- Full repository regression suite: 74/74 test files passed, 810/810 automated tests passed across all shards.
+
+Typecheck:
+PASS (`npm run lint` / `tsc --noEmit` — 0 errors)
+
+Build:
+PASS (`npm run build` / `tsc -p tsconfig.build.json` & applet compilation — 0 errors)
+
+Security:
+- Generic `403 FORBIDDEN` responses with synchronous `DENIED` audit log entries preventing cross-country resource/file IDOR enumeration.
+- Zero exposure of `storageBucket`, `objectKey`, `storageMetadata`, or presigned download URLs in any admin response or audit log payload.
+- Country scope verified prior to `FileStorageService.verifyFileIntegrity` so out-of-scope actors cannot trigger Cloudflare R2 `HEAD` operations.
+- Mandatory `Cache-Control: private, no-store` on all administrative responses.
+
+Rollback & Operational Safety:
+- Index rollback: `DROP INDEX IF EXISTS` restricted strictly to the 18 additive index names in `drizzle/0020_admin_dashboard_indexes.sql`.
+- RBAC procedures for the 4 Prompt-31-exclusive permissions (`admin.dashboard.read`, `resource.admin.read`, `file.admin.read`, `file.admin.verify`) are explicitly separated into two mutually exclusive options:
+  * **Full rollback**: Delete the 11 Prompt-31 `identity.role_permissions` mappings and delete the 4 exclusive `identity.permissions` records (verified safe under `fk_role_permissions_permission_id` `ON DELETE CASCADE`, the sole FK referencing `identity.permissions.id`).
+  * **Emergency disablement**: Retain the 4 `identity.permissions` records, remove their 11 Prompt-31 `identity.role_permissions` mappings, and set `status = 'INACTIVE'` on those 4 `identity.permissions` records (`chk_permissions_status` allows `'ACTIVE' | 'INACTIVE'`).
+  * Both procedures leave all 41 shared pre-Prompt-31 permissions and their 88 role mappings untouched, and `seedRolesAndPermissions` recovers cleanly (`45` active permissions, `99` mappings) from either state.
+
+Documentation:
+- `docs/API_SPEC.md` (Section 52: Centralized Admin Dashboard & Operational Oversight API, including Section 52.5 Rollback Safety Contract)
+- `docs/DATABASE_SPEC.md` (Section 45.1–45.2: Admin Dashboard & Review Queue Indexes and Rollback & Emergency Disablement Safety)
+- `docs/IMPLEMENTATION_STATUS.md` (Sections 36, 38, 45, and 46 updated; Prompt 31 closed as `VERIFIED`)
+
+Git commit:
+- Workspace has no `.git` directory initialized in this environment; create Prompt 31 checkpoint commit when syncing to `Clivendemo/education-platform`.
+
+Issues:
+- None.
+
+Next step:
+- Prompt 31 closed as `VERIFIED`. Stop and await explicit human authorization before starting Prompt 32 (Homepage Intelligence — currently `NOT_STARTED` and `UNAUTHORIZED`).
 
 ## 2026-10-18 — Prompt 27: Telemetry Architecture, Safe Capture, and Analytics Reporting
 
