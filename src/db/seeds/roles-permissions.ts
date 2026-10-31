@@ -377,6 +377,27 @@ export const CANONICAL_PERMISSIONS: SeedPermissionDefinition[] = [
     scopeType: 'ANY',
     description: 'Trigger controlled storage integrity verification checks on file records.',
   },
+  {
+    name: 'homepage.read',
+    resource: 'homepage',
+    action: 'read',
+    scopeType: 'ANY',
+    description: 'View administrative homepage configurations, schedules, previews, and history.',
+  },
+  {
+    name: 'homepage.manage',
+    resource: 'homepage',
+    action: 'manage',
+    scopeType: 'ANY',
+    description: 'Create, edit, pin items in, and discard homepage draft configurations.',
+  },
+  {
+    name: 'homepage.publish',
+    resource: 'homepage',
+    action: 'publish',
+    scopeType: 'ANY',
+    description: 'Schedule, unschedule, cancel schedules, publish, and roll back homepage configurations.',
+  },
 ];
 
 export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
@@ -426,6 +447,9 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.admin.read',
     'file.admin.read',
     'file.admin.verify',
+    'homepage.read',
+    'homepage.manage',
+    'homepage.publish',
   ],
   content_manager: [
     'resource.read',
@@ -459,6 +483,9 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'resource.admin.read',
     'file.admin.read',
     'file.admin.verify',
+    'homepage.read',
+    'homepage.manage',
+    'homepage.publish',
   ],
   content_reviewer: [
     'resource.read',
@@ -473,6 +500,7 @@ export const ROLE_PERMISSION_MATRIX: Record<string, string[]> = {
     'admin.dashboard.read',
     'resource.admin.read',
     'file.admin.read',
+    'homepage.read',
   ],
   verified_teacher: [
     'resource.read',
@@ -500,25 +528,32 @@ const PROMPT_31_PERMISSION_NAMES = [
   'file.admin.verify',
 ] as const;
 
+const PROMPT_32_PERMISSION_NAMES = [
+  'homepage.read',
+  'homepage.manage',
+  'homepage.publish',
+] as const;
+
 const CANONICAL_ROLE_SLUGS = CANONICAL_ROLES.map((r) => r.slug);
 const CANONICAL_MAPPING_COUNT = Object.values(ROLE_PERMISSION_MATRIX).reduce(
   (sum, perms) => sum + perms.length,
   0,
-); // 99 canonical mappings (45 + 31 + 12 + 5 + 4 + 2)
+); // 106 canonical mappings (48 + 34 + 13 + 5 + 4 + 2)
 const PROMPT_31_MAPPING_COUNT = 11; // 4 (system_admin) + 4 (content_manager) + 3 (content_reviewer)
+const PROMPT_32_MAPPING_COUNT = 7; // 3 (system_admin) + 3 (content_manager) + 1 (content_reviewer)
 
 /**
  * Idempotently seeds canonical roles, permissions, and role_permissions mappings.
  * Uses fast-path check against canonical roles, active milestone permissions, and
- * Prompt-31 role_permissions mappings so partial seeds or rollbacks never skip mappings.
+ * Prompt-31 / Prompt-32 role_permissions mappings so partial seeds or rollbacks never skip mappings.
  */
 export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultDb): Promise<{
   rolesCount: number;
   permissionsCount: number;
   mappingsCount: number;
 }> {
-  // Fast-path: verify canonical role_permissions count (>= 99), active milestone permissions,
-  // and all 11 Prompt-31 role_permissions mappings before returning early.
+  // Fast-path: verify canonical role_permissions count (>= 106), active milestone permissions,
+  // and all Prompt-31 & Prompt-32 role_permissions mappings before returning early.
   const [existingCanonical] = await dbInstance
     .select({ count: sql<string>`count(*)` })
     .from(rolePermissions)
@@ -554,6 +589,29 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
       ),
     );
 
+  const [activePrompt32Perms] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
+    .from(permissions)
+    .where(
+      and(
+        inArray(permissions.name, [...PROMPT_32_PERMISSION_NAMES]),
+        eq(permissions.status, 'ACTIVE'),
+      ),
+    );
+
+  const [existingPrompt32Mappings] = await dbInstance
+    .select({ count: sql<string>`count(*)` })
+    .from(rolePermissions)
+    .innerJoin(roles, eq(rolePermissions.roleId, roles.id))
+    .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+    .where(
+      and(
+        inArray(roles.slug, ['system_admin', 'content_manager', 'content_reviewer']),
+        inArray(permissions.name, [...PROMPT_32_PERMISSION_NAMES]),
+        eq(permissions.status, 'ACTIVE'),
+      ),
+    );
+
   const [activeMilestonePerms] = await dbInstance
     .select({ count: sql<string>`count(*)` })
     .from(permissions)
@@ -582,7 +640,9 @@ export async function seedRolesAndPermissions(dbInstance: AppDatabase = defaultD
     contributorRole &&
     Number(activeMilestonePerms?.count) === 12 &&
     Number(activePrompt31Perms?.count) === PROMPT_31_PERMISSION_NAMES.length &&
-    Number(existingPrompt31Mappings?.count) === PROMPT_31_MAPPING_COUNT
+    Number(existingPrompt31Mappings?.count) === PROMPT_31_MAPPING_COUNT &&
+    Number(activePrompt32Perms?.count) === PROMPT_32_PERMISSION_NAMES.length &&
+    Number(existingPrompt32Mappings?.count) === PROMPT_32_MAPPING_COUNT
   ) {
     return {
       rolesCount: CANONICAL_ROLES.length,

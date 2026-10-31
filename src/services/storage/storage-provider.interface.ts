@@ -1,3 +1,5 @@
+import type { Readable } from 'node:stream';
+
 /**
  * StorageProvider Abstraction
  * Provider-neutral interface for binary object storage operations (S3-compatible R2, memory, etc.)
@@ -8,6 +10,7 @@ export interface PutObjectParams {
   body: Buffer | Uint8Array;
   contentType: string;
   metadata?: Record<string, string>;
+  checksumSha256Hex?: string;
 }
 
 export interface PutObjectResult {
@@ -32,10 +35,30 @@ export interface GetObjectResult {
   metadata: Record<string, string>;
 }
 
+export interface GetObjectStreamOptions {
+  signal?: AbortSignal;
+}
+
+export interface GetObjectStreamResult {
+  key: string;
+  stream: Readable;
+  contentLength: number;
+  contentType: string;
+  metadata: Record<string, string>;
+}
+
+export interface CopyObjectParams {
+  sourceKey: string;
+  destinationKey: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+}
+
 export interface GetSignedUrlOptions {
   expiresInSeconds?: number;
   responseContentDisposition?: string;
   responseContentType?: string;
+  responseCacheControl?: string;
 }
 
 export interface StorageProvider {
@@ -54,6 +77,19 @@ export interface StorageProvider {
    * Fetch object binary contents and metadata.
    */
   getObject(key: string): Promise<GetObjectResult>;
+
+  /**
+   * Stream object binary contents without buffering the entire file in memory.
+   */
+  getObjectStream(
+    key: string,
+    options?: GetObjectStreamOptions,
+  ): Promise<GetObjectStreamResult>;
+
+  /**
+   * Server-side copy from sourceKey to destinationKey within the bucket.
+   */
+  copyObject(params: CopyObjectParams): Promise<void>;
 
   /**
    * Delete an object from the storage bucket.

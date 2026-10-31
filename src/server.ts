@@ -3,6 +3,8 @@ import { env } from './config/env.js';
 import { checkDatabaseHealth, closeDatabase } from './db/index.js';
 import { defaultNotificationService } from './services/notification.service.js';
 import { defaultRecommendationCacheService } from './services/recommendations/recommendation-cache.service.js';
+import { defaultMpesaReconciliationWorker } from './services/commerce/mpesa/mpesa-reconciliation.worker.js';
+import { defaultFileProcessingWorker } from './services/file-processing.worker.js';
 
 const app = buildApp({
   logger: {
@@ -11,10 +13,15 @@ const app = buildApp({
       'req.headers.cookie',
       'req.headers.authorization',
       '*.password',
+      '*.currentPassword',
+      '*.newPassword',
       '*.token',
       '*.sessionToken',
       '*.token_hash',
       '*.tokenHash',
+      '*.checkoutRequestId',
+      '*.phoneNumber',
+      '*.initiatedPhoneHash',
     ],
   },
 });
@@ -55,6 +62,14 @@ async function startServer(): Promise<void> {
     if (env.DATABASE_URL) {
       await defaultRecommendationCacheService.startListener();
       app.log.info('Recommendation cache LISTEN/NOTIFY subscriber active');
+
+      if (env.MPESA_ENABLED) {
+        defaultMpesaReconciliationWorker.start();
+        app.log.info('M-Pesa reconciliation background worker active');
+      }
+
+      defaultFileProcessingWorker.start();
+      app.log.info('File quarantine & malware scan background worker active');
     }
     app.log.info(`Server running at http://${env.HOST}:${port}`);
   } catch (err) {
@@ -69,6 +84,8 @@ for (const signal of signals) {
   process.on(signal, async () => {
     app.log.info(`Received ${signal}, shutting down gracefully...`);
     try {
+      defaultMpesaReconciliationWorker.stop();
+      defaultFileProcessingWorker.stop();
       await defaultRecommendationCacheService.stopListener();
       await app.close();
       await closeDatabase();

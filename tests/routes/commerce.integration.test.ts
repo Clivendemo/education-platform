@@ -6,6 +6,7 @@ import { buildApp } from '../../src/app.js';
 import {
   products,
   orders,
+  payments,
   entitlements,
   resources,
   countries,
@@ -13,12 +14,16 @@ import {
   users,
 } from '../../src/db/schemas.js';
 import { defaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
-import { defaultCommerceService } from '../../src/services/commerce/commerce.service.js';
+import { DefaultRbacService } from '../../src/services/rbac.service.js';
+import { CommerceService } from '../../src/services/commerce/commerce.service.js';
+import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 import { setupCommerceSchema } from '../../src/db/seeds/commerce-setup.js';
 
 describe('Commerce HTTP Route Integration Tests', () => {
   const db = getDb();
+  const rbacService = new DefaultRbacService(db);
+  let testCommerceService: CommerceService;
   let app: FastifyInstance;
   let testCountryId: string;
   let testResourceTypeId: string;
@@ -30,6 +35,8 @@ describe('Commerce HTTP Route Integration Tests', () => {
   let userAId: string;
   let userBToken: string;
   let userBId: string;
+  let adminToken: string;
+  let adminId: string;
 
   const createdProductIds: string[] = [];
   const createdOrderIds: string[] = [];
@@ -37,22 +44,31 @@ describe('Commerce HTTP Route Integration Tests', () => {
 
   beforeAll(async () => {
     await withDbRetry(() => setupCommerceSchema(db));
-    app = buildApp();
+    await withDbRetry(() => seedRolesAndPermissions(db));
+
+    testCommerceService = new CommerceService({
+      db,
+      allowSimulation: true,
+    });
+
+    app = buildApp({
+      services: {
+        commerceService: testCommerceService,
+        rbacService,
+      },
+    });
     await app.ready();
 
-    // 1. Resolve country
     const [c] = await withDbRetry(async () =>
       db.select().from(countries).where(eq(countries.status, 'ACTIVE')).limit(1),
     );
     testCountryId = c.id;
 
-    // 2. Resolve resource type
     const [rt] = await withDbRetry(async () =>
       db.select().from(resourceTypes).limit(1),
     );
     testResourceTypeId = rt.id;
 
-    // 3. Create test premium resource
     const [r] = await withDbRetry(async () =>
       db
         .insert(resources)
@@ -68,8 +84,7 @@ describe('Commerce HTTP Route Integration Tests', () => {
     );
     testResourceId = r.id;
 
-    // 4. Create product & offer
-    const prod = await defaultCommerceService.createProduct({
+    const prod = await testCommerceService.createProduct({
       name: 'Kenya Primary School Assessment Model Papers',
       productType: 'RESOURCE',
       resourceId: testResourceId,
@@ -77,14 +92,13 @@ describe('Commerce HTTP Route Integration Tests', () => {
     testProductId = prod.id;
     createdProductIds.push(prod.id);
 
-    const off = await defaultCommerceService.createOffer({
+    const off = await testCommerceService.createOffer({
       productId: testProductId,
       priceMinor: 20000n, // KES 200.00
       commercialStatus: 'ACTIVE',
     });
     testOfferId = off.id;
 
-    // 5. Register User A
     const regA = await withDbRetry(async () =>
       defaultAuthService.register({
         email: `comm-route-usera-${Date.now()}@example.com`,
@@ -95,7 +109,6 @@ describe('Commerce HTTP Route Integration Tests', () => {
     userAToken = regA.sessionToken;
     userAId = regA.user.id;
 
-    // 6. Register User B
     const regB = await withDbRetry(async () =>
       defaultAuthService.register({
         email: `comm-route-userb-${Date.now()}@example.com`,
@@ -105,6 +118,19 @@ describe('Commerce HTTP Route Integration Tests', () => {
     );
     userBToken = regB.sessionToken;
     userBId = regB.user.id;
+
+    const regAdmin = await withDbRetry(async () =>
+      defaultAuthService.register({
+        email: `comm-route-admin-${Date.now()}@example.com`,
+        password: 'AdminPassword123!',
+        displayName: 'Commerce System Admin',
+      }),
+    );
+    adminToken = regAdmin.sessionToken;
+    adminId = regAdmin.user.id;
+    await withDbRetry(() =>
+      rbacService.assignRole({ userId: adminId, roleSlug: 'system_admin' }),
+    );
   }, 180000);
 
   afterAll(async () => {
@@ -115,6 +141,8 @@ describe('Commerce HTTP Route Integration Tests', () => {
     }
     for (const ordId of createdOrderIds) {
       await withDbRetry(async () => {
+        await db.delete(entitlements).where(eq(entitlements.sourceOrderId, ordId));
+        await db.delete(payments).where(eq(payments.orderId, ordId));
         await db.delete(orders).where(eq(orders.id, ordId));
       }).catch(() => {});
     }
@@ -128,15 +156,12 @@ describe('Commerce HTTP Route Integration Tests', () => {
         await db.delete(resources).where(eq(resources.id, testResourceId));
       }).catch(() => {});
     }
-    if (userAId) {
-      await withDbRetry(async () => {
-        await db.delete(users).where(eq(users.id, userAId));
-      }).catch(() => {});
-    }
-    if (userBId) {
-      await withDbRetry(async () => {
-        await db.delete(users).where(eq(users.id, userBId));
-      }).catch(() => {});
+    for (const uid of [userAId, userBId, adminId]) {
+      if (uid) {
+        await withDbRetry(async () => {
+          await db.delete(users).where(eq(users.id, uid));
+        }).catch(() => {});
+      }
     }
     await app.close();
     await closeDatabase();
@@ -144,6 +169,7 @@ describe('Commerce HTTP Route Integration Tests', () => {
 
   const getCookieA = () => `${SESSION_COOKIE_NAME}=${userAToken}`;
   const getCookieB = () => `${SESSION_COOKIE_NAME}=${userBToken}`;
+  const getAdminCookie = () => `${SESSION_COOKIE_NAME}=${adminToken}`;
 
   describe('1. Public Product Discovery', () => {
     it('GET /api/v1/products returns product catalog with active offers without authentication', async () => {
@@ -197,7 +223,7 @@ describe('Commerce HTTP Route Integration Tests', () => {
     });
   });
 
-  describe('3. Authenticated Checkout, Payment & Entitlement Flow', () => {
+  describe('3. Authenticated Checkout, Payment & Admin-Guarded Simulation Flow', () => {
     let createdOrderId: string;
     let createdPaymentId: string;
 
@@ -215,7 +241,7 @@ describe('Commerce HTTP Route Integration Tests', () => {
       const json = res.json();
       expect(json.data.id).toBeDefined();
       expect(json.data.currencyCode).toBe('KES');
-      expect(json.data.totalMinor).toBe('40000'); // 2 * 20000
+      expect(json.data.totalMinor).toBe('40000');
       expect(json.data.status).toBe('PENDING');
       expect(json.data.items.length).toBe(1);
       expect(json.data.items[0].unitPriceMinor).toBe('20000');
@@ -250,13 +276,14 @@ describe('Commerce HTTP Route Integration Tests', () => {
       expect(json.data.some((o: any) => o.id === createdOrderId)).toBe(true);
     });
 
-    it('POST /api/v1/payments initiates payment and transitions order to PROCESSING', async () => {
+    it('POST /api/v1/payments initiates non-prod SIMULATION payment when explicitly enabled', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/payments',
         headers: { cookie: getCookieA() },
         payload: {
           orderId: createdOrderId,
+          providerCode: 'SIMULATION',
         },
       });
 
@@ -265,12 +292,13 @@ describe('Commerce HTTP Route Integration Tests', () => {
       expect(json.data.payment.id).toBeDefined();
       expect(json.data.payment.amountMinor).toBe('40000');
       expect(json.data.payment.status).toBe('PENDING');
+      expect(json.data.payment.providerReference).toBeNull();
       expect(json.data.order.status).toBe('PROCESSING');
 
       createdPaymentId = json.data.payment.id;
     });
 
-    it('GET /api/v1/payments/:id returns payment status for authorized owner', async () => {
+    it('GET /api/v1/payments/:id returns redacted payment status for authorized owner', async () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/payments/${createdPaymentId}`,
@@ -281,17 +309,26 @@ describe('Commerce HTTP Route Integration Tests', () => {
       const json = res.json();
       expect(json.data.id).toBe(createdPaymentId);
       expect(json.data.amountMinor).toBe('40000');
+      expect(json.data.providerReference).toBeNull();
     });
 
-    it('POST /api/v1/payments/:id/simulate-success completes payment and provisions entitlement (Correction 8)', async () => {
-      const res = await app.inject({
+    it('POST /api/v1/payments/:id/simulate-success rejects standard learner with 403 FORBIDDEN and requires system_admin (W1-AC-03)', async () => {
+      const learnerAttempt = await app.inject({
         method: 'POST',
         url: `/api/v1/payments/${createdPaymentId}/simulate-success`,
         headers: { cookie: getCookieA() },
       });
+      expect(learnerAttempt.statusCode).toBe(403);
+      expect(learnerAttempt.json().error.code).toBe('FORBIDDEN');
 
-      expect(res.statusCode).toBe(200);
-      const json = res.json();
+      const adminRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/payments/${createdPaymentId}/simulate-success`,
+        headers: { cookie: getAdminCookie() },
+      });
+
+      expect(adminRes.statusCode).toBe(200);
+      const json = adminRes.json();
       expect(json.data.payment.status).toBe('COMPLETED');
       expect(json.data.order.status).toBe('COMPLETED');
       expect(json.data.entitlementsGranted).toBe(1);
@@ -315,7 +352,6 @@ describe('Commerce HTTP Route Integration Tests', () => {
 
   describe('4. Cross-User Isolation & Security Invariants', () => {
     it('prevents User B from accessing User A order (403 FORBIDDEN)', async () => {
-      // User A creates order
       const orderRes = await app.inject({
         method: 'POST',
         url: '/api/v1/checkout',
@@ -327,7 +363,6 @@ describe('Commerce HTTP Route Integration Tests', () => {
       const orderAId = orderRes.json().data.id;
       createdOrderIds.push(orderAId);
 
-      // User B attempts to access User A's order
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/orders/${orderAId}`,

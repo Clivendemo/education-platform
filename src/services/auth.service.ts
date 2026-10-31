@@ -30,6 +30,13 @@ export interface LoginInput {
   deviceMetadata?: Record<string, unknown>;
 }
 
+export interface ChangePasswordInput {
+  userId: string;
+  currentPassword: string;
+  newPassword: string;
+  deviceMetadata?: Record<string, unknown>;
+}
+
 export interface AuthResult {
   user: User;
   sessionToken: string;
@@ -78,6 +85,8 @@ export interface AuthService {
   login(input: LoginInput): Promise<AuthResult>;
   logout(rawToken: string): Promise<void>;
   validateSession(rawToken: string): Promise<SessionValidationResult | null>;
+  changePassword?(input: ChangePasswordInput): Promise<AuthResult>;
+  revokeAllUserSessions?(userId: string): Promise<number>;
 }
 
 export class DefaultAuthService implements AuthService {
@@ -184,7 +193,6 @@ export class DefaultAuthService implements AuthService {
         };
       });
     } catch (err: any) {
-      // PostgreSQL unique constraint violation error code: 23505 (direct or wrapped in DrizzleQueryError)
       const isUniqueViolation =
         err?.code === '23505' ||
         err?.cause?.code === '23505' ||
@@ -206,7 +214,6 @@ export class DefaultAuthService implements AuthService {
   async login(input: LoginInput): Promise<AuthResult> {
     const normalizedEmail = input.email.trim().toLowerCase();
 
-    // Query auth identity joined with user profile
     const records = await this.db
       .select({
         authIdentity: authIdentities,
@@ -223,7 +230,6 @@ export class DefaultAuthService implements AuthService {
       .limit(1);
 
     if (records.length === 0) {
-      // Run dummy verification to ensure constant-time response against user enumeration
       await argon2.verify(await this.getDummyHash(), input.password);
       throw new InvalidCredentialsError();
     }
@@ -244,13 +250,10 @@ export class DefaultAuthService implements AuthService {
       throw new InvalidCredentialsError();
     }
 
-    // Strict account state validation:
-    // User must be ACTIVE and deleted_at must be NULL
     if (user.deletedAt !== null || user.status !== 'ACTIVE' || authIdentity.status !== 'ACTIVE') {
       throw new InvalidCredentialsError();
     }
 
-    // Generate fresh session (session fixation protection)
     const rawSessionToken = this.generateSessionToken();
     const tokenHash = this.hashSessionToken(rawSessionToken);
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
@@ -267,6 +270,122 @@ export class DefaultAuthService implements AuthService {
       sessionToken: rawSessionToken,
       expiresAt,
     };
+  }
+
+  /**
+   * Atomically updates a user's password, revokes ALL active sessions across every device,
+   * and issues one fresh rotated session for the authenticated caller (W1-AC-10).
+   */
+  async changePassword(input: ChangePasswordInput): Promise<AuthResult> {
+    const records = await this.db
+      .select({
+        authIdentity: authIdentities,
+        user: users,
+      })
+      .from(authIdentities)
+      .innerJoin(users, eq(authIdentities.userId, users.id))
+      .where(
+        and(
+          eq(authIdentities.userId, input.userId),
+          eq(authIdentities.provider, 'LOCAL_PASSWORD'),
+        ),
+      )
+      .limit(1);
+
+    if (records.length === 0) {
+      await argon2.verify(await this.getDummyHash(), input.currentPassword);
+      throw new InvalidCredentialsError('Current password is invalid.');
+    }
+
+    const { authIdentity, user } = records[0];
+
+    if (
+      !authIdentity.passwordHash ||
+      user.deletedAt !== null ||
+      user.status !== 'ACTIVE' ||
+      authIdentity.status !== 'ACTIVE'
+    ) {
+      await argon2.verify(await this.getDummyHash(), input.currentPassword);
+      throw new InvalidCredentialsError('Current password is invalid.');
+    }
+
+    const currentMatches = await argon2.verify(
+      authIdentity.passwordHash,
+      input.currentPassword,
+    );
+    if (!currentMatches) {
+      throw new InvalidCredentialsError('Current password is invalid.');
+    }
+
+    if (input.currentPassword === input.newPassword) {
+      throw new AuthError(
+        'New password must differ from the current password.',
+        400,
+        'PASSWORD_UNCHANGED',
+      );
+    }
+
+    const newPasswordHash = await argon2.hash(input.newPassword, {
+      type: argon2.argon2id,
+    });
+    const rawSessionToken = this.generateSessionToken();
+    const tokenHash = this.hashSessionToken(rawSessionToken);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(authIdentities)
+        .set({
+          passwordHash: newPasswordHash,
+          updatedAt: now,
+        })
+        .where(eq(authIdentities.id, authIdentity.id));
+
+      // Revoke ALL existing active sessions for this user across all devices (W1-AC-10)
+      await tx
+        .update(userSessions)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(userSessions.userId, user.id),
+            isNull(userSessions.revokedAt),
+          ),
+        );
+
+      // Issue a single fresh rotated session for the caller
+      await tx.insert(userSessions).values({
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+        deviceMetadata: input.deviceMetadata ?? {},
+      });
+    });
+
+    return {
+      user,
+      sessionToken: rawSessionToken,
+      expiresAt,
+    };
+  }
+
+  /**
+   * Revokes all active sessions for a user (used on administrative password reset / credential compromise).
+   */
+  async revokeAllUserSessions(userId: string): Promise<number> {
+    const now = new Date();
+    const revoked = await this.db
+      .update(userSessions)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(userSessions.userId, userId),
+          isNull(userSessions.revokedAt),
+        ),
+      )
+      .returning({ id: userSessions.id });
+
+    return revoked.length;
   }
 
   /**
@@ -303,12 +422,10 @@ export class DefaultAuthService implements AuthService {
 
     const { session, user } = records[0];
 
-    // Every authenticated request must verify that user is ACTIVE and NOT logically deleted
     if (user.deletedAt !== null || user.status !== 'ACTIVE') {
       return null;
     }
 
-    // Touch lastSeenAt asynchronously without blocking
     this.db
       .update(userSessions)
       .set({ lastSeenAt: now })

@@ -120,7 +120,9 @@ export const orders = commerceSchema.table(
     ),
     check('chk_orders_currency', sql`${table.currencyCode} = 'KES'`),
     check('chk_orders_total', sql`${table.totalMinor} >= 0`),
-    uniqueIndex('uq_orders_idempotency_key').on(table.idempotencyKey),
+    uniqueIndex('uq_orders_user_idempotency_key')
+      .on(table.userId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
     index('idx_orders_user_status').on(table.userId, table.status),
   ],
 );
@@ -159,8 +161,7 @@ export const orderItems = commerceSchema.table(
 
 /**
  * 28.1 commerce.payments
- * Tracks payment records linked to orders.
- * Note: payment_provider_id removed per Prompt 18 Correction 4.
+ * Canonical Wave 1 payment table tracking authoritative verification & reconciliation state.
  */
 export const payments = commerceSchema.table(
   'payments',
@@ -171,18 +172,29 @@ export const payments = commerceSchema.table(
       .references(() => orders.id, { onDelete: 'restrict' }),
     providerCode: varchar('provider_code', { length: 50 }).notNull(),
     providerReference: varchar('provider_reference', { length: 100 }),
+    providerMerchantRequestId: varchar('provider_merchant_request_id', { length: 100 }),
     providerTransactionId: varchar('provider_transaction_id', { length: 100 }),
+    initiatedPhoneHash: varchar('initiated_phone_hash', { length: 64 }),
+    callbackReceiptCandidate: varchar('callback_receipt_candidate', { length: 100 }),
+    verifiedReceiptNumber: varchar('verified_receipt_number', { length: 100 }),
+    receiptVerificationSource: varchar('receipt_verification_source', { length: 40 }),
     amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
     currencyCode: varchar('currency_code', { length: 3 })
       .notNull()
       .default('KES'),
-    status: varchar('status', { length: 20 }).notNull().default('PENDING'),
+    status: varchar('status', { length: 30 }).notNull().default('PENDING'),
     requestedAt: timestamp('requested_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     failedAt: timestamp('failed_at', { withTimezone: true }),
     failureReason: text('failure_reason'),
+    verificationAttempts: integer('verification_attempts').notNull().default(0),
+    nextVerificationAt: timestamp('next_verification_at', { withTimezone: true }),
+    verificationLockedAt: timestamp('verification_locked_at', { withTimezone: true }),
+    verificationLockedBy: varchar('verification_locked_by', { length: 100 }),
     providerPayload: jsonb('provider_payload'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -194,14 +206,35 @@ export const payments = commerceSchema.table(
   (table) => [
     check(
       'chk_payments_status',
-      sql`${table.status} IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED')`,
+      sql`${table.status} IN ('PENDING', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'COMPLETED', 'FAILED', 'CANCELLED')`,
     ),
     check('chk_payments_currency', sql`${table.currencyCode} = 'KES'`),
     check('chk_payments_amount', sql`${table.amountMinor} >= 0`),
+    check(
+      'chk_payments_verified_receipt_provenance',
+      sql`(
+        (${table.verifiedReceiptNumber} IS NULL AND ${table.receiptVerificationSource} IS NULL)
+        OR
+        (
+          ${table.verifiedReceiptNumber} IS NOT NULL
+          AND length(btrim(${table.verifiedReceiptNumber})) > 0
+          AND ${table.receiptVerificationSource} IS NOT NULL
+          AND ${table.receiptVerificationSource} IN ('PROVIDER_VERIFIED_RECEIPT', 'ADMIN_RECONCILED_RECEIPT')
+        )
+      )`,
+    ),
     uniqueIndex('uq_payments_provider_ref')
       .on(table.providerCode, table.providerReference)
       .where(sql`${table.providerReference} IS NOT NULL`),
+    uniqueIndex('uq_payments_verified_receipt')
+      .on(table.providerCode, table.verifiedReceiptNumber)
+      .where(sql`${table.verifiedReceiptNumber} IS NOT NULL`),
     index('idx_payments_order_id').on(table.orderId),
+    index('idx_payments_reconciliation_due')
+      .on(table.providerCode, table.status, table.nextVerificationAt)
+      .where(
+        sql`${table.providerCode} = 'MPESA' AND ${table.status} IN ('PENDING', 'PROCESSING') AND ${table.nextVerificationAt} IS NOT NULL`,
+      ),
   ],
 );
 

@@ -1,5 +1,5 @@
 /**
- * Safaricom Daraja M-Pesa types and interfaces
+ * Safaricom Daraja M-Pesa types and interfaces (Wave 1 Hardened)
  */
 
 export interface MpesaConfig {
@@ -39,6 +39,41 @@ export interface DarajaStkPushResponse {
   CustomerMessage: string;
 }
 
+export interface DarajaStkQueryPayload {
+  BusinessShortCode: string;
+  Password: string;
+  Timestamp: string;
+  CheckoutRequestID: string;
+}
+
+export interface DarajaStkQueryRawResponse {
+  ResponseCode?: string | number;
+  ResponseDescription?: string;
+  MerchantRequestID?: string;
+  CheckoutRequestID?: string;
+  ResultCode?: string | number;
+  ResultDesc?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export type DarajaQueryClassification =
+  | 'TRANSACTION_CONFIRMED_COMPLETED'
+  | 'TRANSACTION_CONFIRMED_CANCELLED'
+  | 'TRANSACTION_CONFIRMED_FAILED'
+  | 'QUERY_INCONCLUSIVE_RETRYABLE'
+  | 'QUERY_TRANSPORT_ERROR';
+
+export interface DarajaStkQueryResult {
+  classification: DarajaQueryClassification;
+  responseCode: string | null;
+  resultCode: string | null;
+  resultDesc: string;
+  merchantRequestId: string | null;
+  checkoutRequestId: string | null;
+  httpStatus: number | null;
+}
+
 export interface DarajaCallbackItem {
   Name: string;
   Value?: string | number;
@@ -67,13 +102,14 @@ export interface NormalizedMpesaCallback {
   checkoutRequestId: string;
   resultCode: number;
   resultDesc: string;
-  isSuccessful: boolean;
-  isCancelled: boolean;
-  amountKes?: number;
+  isSuccessfulClaim: boolean;
+  isCancelledClaim: boolean;
+  amountRawString?: string;
+  amountMinor: bigint | null;
   mpesaReceiptNumber?: string;
   transactionDate?: string;
-  phoneNumber?: string;
-  rawPayload: Record<string, unknown>;
+  callbackPhoneHash?: string;
+  sanitizedSummary: Record<string, unknown>;
 }
 
 export interface DarajaAckResponse {

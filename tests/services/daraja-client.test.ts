@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { DarajaClient } from '../../src/services/commerce/mpesa/daraja-client.js';
+import {
+  DarajaClient,
+  DARAJA_CONFIRMED_FAILURE_CODES,
+} from '../../src/services/commerce/mpesa/daraja-client.js';
 import { MpesaProviderError } from '../../src/services/commerce/commerce.interface.js';
 
 describe('Daraja API Client Unit Tests', () => {
@@ -9,13 +12,14 @@ describe('Daraja API Client Unit Tests', () => {
     consumerSecret: 'test_consumer_secret_456',
     shortcode: '174379',
     passkey: 'test_passkey_abc',
-    callbackUrl: 'https://example.com/api/v1/payments/mpesa/callback',
+    callbackUrl: 'https://example.com/api/v1/commerce/webhooks/mpesa',
   };
 
   describe('1. Authentication & Token Management', () => {
     it('obtains Daraja access token using Basic Auth credentials', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
+        status: 200,
         json: async () => ({
           access_token: 'mock_token_abc123',
           expires_in: '3599',
@@ -45,6 +49,7 @@ describe('Daraja API Client Unit Tests', () => {
     it('caches access token and does not re-fetch while valid', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
+        status: 200,
         json: async () => ({
           access_token: 'cached_token_xyz',
           expires_in: '3599',
@@ -83,6 +88,7 @@ describe('Daraja API Client Unit Tests', () => {
     it('uses production URL when environment is production', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
+        status: 200,
         json: async () => ({
           access_token: 'prod_token_123',
           expires_in: '3599',
@@ -105,21 +111,21 @@ describe('Daraja API Client Unit Tests', () => {
     });
   });
 
-  describe('2. STK Push Request Initiation', () => {
-    it('constructs correct STK push payload with timestamp, password, and authoritative amount', async () => {
+  describe('2. STK Push Request Initiation (Integer Minor Units Only)', () => {
+    it('constructs correct STK push payload from bigint amountMinor with zero float math', async () => {
       const mockFetch = vi
         .fn()
-        // 1st call: OAuth token
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({
             access_token: 'stk_bearer_token',
             expires_in: '3599',
           }),
         })
-        // 2nd call: STK push
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({
             MerchantRequestID: '29115-34620561-1',
             CheckoutRequestID: 'ws_CO_191220231024531234567890',
@@ -136,7 +142,7 @@ describe('Daraja API Client Unit Tests', () => {
 
       const result = await client.initiateStkPush({
         phoneNumber: '254712345678',
-        amountKes: 250,
+        amountMinor: 25000n,
         accountReference: 'ORDER-1234',
         transactionDesc: 'Revision Kit',
       });
@@ -164,11 +170,31 @@ describe('Daraja API Client Unit Tests', () => {
       expect(body.Timestamp).toBeTruthy();
     });
 
+    it('rejects fractional cent amounts before calling Daraja STK Push (W1-AC-05)', async () => {
+      const mockFetch = vi.fn();
+      const client = new DarajaClient({
+        config: dummyConfig,
+        fetchFn: mockFetch as any,
+      });
+
+      await expect(
+        client.initiateStkPush({
+          phoneNumber: '254712345678',
+          amountMinor: 25050n, // KES 250.50 not divisible by 100
+          accountReference: 'ORD1',
+          transactionDesc: 'Payment',
+        }),
+      ).rejects.toThrow(MpesaProviderError);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('rejects when upstream Daraja returns non-zero ResponseCode', async () => {
       const mockFetch = vi
         .fn()
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({
             access_token: 'stk_bearer_token',
             expires_in: '3599',
@@ -176,6 +202,7 @@ describe('Daraja API Client Unit Tests', () => {
         })
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({
             MerchantRequestID: '29115-34620561-1',
             CheckoutRequestID: 'ws_CO_191220231024531234567890',
@@ -193,11 +220,24 @@ describe('Daraja API Client Unit Tests', () => {
       await expect(
         client.initiateStkPush({
           phoneNumber: '254712345678',
-          amountKes: 100,
+          amountMinor: 10000n,
           accountReference: 'ORD1',
           transactionDesc: 'Payment',
         }),
       ).rejects.toThrow(MpesaProviderError);
+    });
+  });
+
+  describe('3. Authoritative STK Push Query Classification', () => {
+    it('exports strictly evidence-backed DARAJA_CONFIRMED_FAILURE_CODES excluding 1001 and 1025', () => {
+      expect([...DARAJA_CONFIRMED_FAILURE_CODES].sort()).toEqual([
+        '1',
+        '1019',
+        '1037',
+        '2001',
+      ]);
+      expect(DARAJA_CONFIRMED_FAILURE_CODES.has('1001')).toBe(false);
+      expect(DARAJA_CONFIRMED_FAILURE_CODES.has('1025')).toBe(false);
     });
   });
 });

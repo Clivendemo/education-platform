@@ -30,6 +30,8 @@ describe('DownloadService Unit Tests', () => {
       putObject: vi.fn(),
       headObject: vi.fn(),
       getObject: vi.fn(),
+      getObjectStream: vi.fn(),
+      copyObject: vi.fn(),
       deleteObject: vi.fn(),
       objectExists: vi.fn(),
       getSignedDownloadUrl: vi

@@ -128,6 +128,7 @@ export const downloadRoutes: FastifyPluginAsync<DownloadRoutesOptions> = async (
       },
     });
 
+    reply.header('Cache-Control', 'private, no-store');
     return reply.status(200).send({
       data: result,
     });

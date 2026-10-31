@@ -2358,56 +2358,62 @@ Premium status must not dominate recommendations.
 
 # 60. Homepage API
 
-The homepage may consume a dedicated discovery endpoint:
+Country-aware public discovery endpoints backed by live PostgreSQL eligibility re-validation and bounded candidate-skeleton caching (`Cache-Control: no-store` on all `2xx/4xx/5xx` responses).
+
+## 60.1 Public Endpoints (`P1–P2`)
 
 ```text
 GET /api/v1/homepage
+GET /api/v1/countries/:countryCode/homepage
 ```
 
-The response may contain:
+* **`P1` (`GET /api/v1/homepage`)**: Optional `country` query parameter (`^[A-Za-z0-9-]{1,64}$`, no implicit `.trim()`; defaults to `'KE'` when omitted). Unknown query keys return `400 VALIDATION_ERROR`.
+* **`P2` (`GET /api/v1/countries/:countryCode/homepage`)**: Explicit `countryCode` path parameter (`^[A-Za-z0-9-]{1,64}$`, matching active country UUID, ISO code, or URL prefix).
+* Single-slot public routes (`/homepage/slots/:slotKey`) are intentionally **not** registered (`404 NOT_FOUND`).
 
-* discovery sections
-* trending
-* most downloaded
-* curated resources
-* Teacher Hub
-* Student Hub
-* calendar highlights
-* education updates
-* collections
-* free/premium discovery
+## 60.2 Canonical 6 Homepage Slots (`1..6` Locked Order)
 
-Anonymous users receive useful cold-start discovery.
+1. `trending_resources` (`RESOURCE`) — 30-day weighted engagement (`download*3 + save*2 + share*2 + preview*1 + view*1`), canonical quality tier tie-break, `published_at DESC`, `id ASC`.
+2. `most_downloaded_resources` (`RESOURCE`) — total confirmed downloads, 30-day downloads, canonical quality tier, `published_at DESC`, `id ASC`.
+3. `curated_resources` (`RESOURCE`) — active `VERIFIED` tier, active editorial recommendation `PIN` priority, canonical quality tier, `verified_at DESC`, `published_at DESC`, `id ASC`.
+4. `education_updates` (`UPDATE`) — published country advisories (`published_at <= evalTime`), `published_at DESC`, `id ASC`.
+5. `calendar_highlights` (`CALENDAR_EVENT`) — active uncontaminated `OFFICIAL` public events (`COALESCE(end_date, start_date) >= UTC evalDate`), `start_date ASC`, `display_order ASC`, `id ASC`.
+6. `curriculum_shortcuts` (`SUBJECT`) — active curriculum subjects (`CURRENT` curriculum version) with `CurriculumShortcutCardDto` (`publishedResourceCount` prioritized, then `educationLevel.sequenceOrder ASC`, `grade.sequenceOrder ASC`, `subject.sequenceOrder ASC`, `id ASC`).
 
-Authenticated users may receive deeper personalization where permitted.
+## 60.3 Runtime Guarantees
+
+* **Mandatory `Cache-Control: no-store`**: Enforced across `2xx`, `4xx`, and `5xx` responses via dual `onRequest`/`onSend` hooks and error handler.
+* **Live Eligibility Filtering & Bounded Underfill Recovery**: In-memory candidate skeleton (`<= 10` IDs/slot, `<= 60` IDs/country, max `32` countries LRU, `60s` TTL) stores candidate UUIDs only. Every read re-evaluates `content.fn_is_homepage_entity_eligible` and pin `[starts_at, ends_at)` windows live in PostgreSQL, performing at most one coalesced rebuild on underfill (`5,000ms` cooldown when no candidates exist beyond the 10-ID cap; `0` rebuilds on sparse countries).
+* **Expired Schedule Fallback (`D4`)**: When an active `PUBLISHED` configuration reaches `scheduled_until_at <= evalTime` with no due `SCHEDULED` replacement, lazy reconciliation under `pg_advisory_xact_lock` transitions `PUBLISHED -> ARCHIVED` (`SYSTEM` audit `homepage.configuration.expire_archive`) and serves deterministic `DEFAULT_FALLBACK` (`6` `AUTOMATED` slots, `maxItems = 6`).
+* **Zero Storage Leakage**: Public and preview payloads never expose `storageBucket`, `objectKey`, `storageMetadata`, checksums, or presigned URLs.
 
 ---
 
 # 61. Homepage Editorial Controls
 
-Admin operations:
+Country-scoped administrative editorial workflow (`Cache-Control: private, no-store` on all `2xx/4xx/5xx` responses).
+
+## 61.1 Administrative Endpoints (`A1–A9`)
 
 ```text
-GET /api/v1/admin/homepage
-POST /api/v1/admin/homepage/drafts
-PATCH /api/v1/admin/homepage/drafts/:id
-POST /api/v1/admin/homepage/drafts/:id/preview
-POST /api/v1/admin/homepage/drafts/:id/publish
-POST /api/v1/admin/homepage/drafts/:id/discard
-POST /api/v1/admin/homepage/rollback
+A1: POST   /api/v1/admin/homepage/drafts                       (homepage.manage,  explicit-country -> 403)
+A2: GET    /api/v1/admin/homepage                              (homepage.read,    explicit-country -> 403)
+A3: GET    /api/v1/admin/homepage/configurations/:id           (homepage.read,    opaque-ID -> hidden 404)
+A4: PATCH  /api/v1/admin/homepage/drafts/:id                   (homepage.manage,  opaque-ID -> hidden 404)
+A5: POST   /api/v1/admin/homepage/preview                      (homepage.read,    hybrid: configurationId -> 404, countryId -> 403)
+A6: POST   /api/v1/admin/homepage/configurations/:id/schedule  (homepage.publish, opaque-ID -> hidden 404; actions: SCHEDULE | UNSCHEDULE | CANCEL)
+A7: POST   /api/v1/admin/homepage/configurations/:id/publish   (homepage.publish, opaque-ID -> hidden 404)
+A8: POST   /api/v1/admin/homepage/drafts/:id/discard           (homepage.manage,  opaque-ID -> hidden 404; DRAFT -> DISCARDED only)
+A9: POST   /api/v1/admin/homepage/rollback                     (homepage.publish, explicit-country -> 403; atomic xid8 clone-forward)
 ```
 
-Controls include:
+## 61.2 RBAC, Anti-Enumeration & Audit Guarantees
 
-* pin
-* schedule
-* expiry
-* override
-* preview
-* publish
-* rollback
-
-Only one active draft is allowed.
+* **Permissions (`scopeType = 'ANY'`)**: `homepage.read` (`system_admin`, `content_manager`, `content_reviewer`), `homepage.manage` (`system_admin`, `content_manager`), `homepage.publish` (`system_admin`, `content_manager`). Coarse capability checks invoke `rbacService.resolvePermissionAccess` directly (`SCHOOL`/`RESOURCE`-only grants fail closed).
+* **Opaque-ID Anti-Enumeration**: On `:id` routes (`A3`, `A4`, `A6`, `A7`, `A8`) and `A5` when `configurationId` is supplied, cross-country IDs write a `DENIED` audit event (`COUNTRY_SCOPE_MISMATCH`) and return the identical `404 HOMEPAGE_CONFIGURATION_NOT_FOUND` response as nonexistent IDs before any business query/mutation executes.
+* **Non-Disclosing Denied Audit Resilience**: Actor role snapshot (`C4`) and audit insert (`C5`) failures (including secondary logger exceptions) degrade cleanly without altering the `403` / `404` HTTP response.
+* **Fail-Closed `evaluateAt`**: `A5` rejects `evaluateAt: null` or malformed timestamps with `400 INVALID_EVALUATION_TIMESTAMP`; omitted `evaluateAt` defaults to server UTC wall clock.
+* **Lifecycle & Atomic Rollback (`D3`)**: At most one active `DRAFT` and one active `PUBLISHED` configuration per country. Overlapping `SCHEDULED` windows return `409 SCHEDULE_WINDOW_OVERLAP` (`SQLSTATE 23P01`). Rollback atomically pairs `PUBLISHED -> ROLLED_BACK` with a newly versioned unscheduled `PUBLISHED` clone via `content.homepage_configuration_rollbacks` (`txid = pg_current_xact_id()`).
 
 ---
 

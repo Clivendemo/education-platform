@@ -14,6 +14,7 @@ import {
 import { CommerceService } from '../../src/services/commerce/commerce.service.js';
 import { MpesaPaymentProvider } from '../../src/services/commerce/mpesa/mpesa-payment-provider.js';
 import { DarajaClient } from '../../src/services/commerce/mpesa/daraja-client.js';
+import type { DarajaStkQueryResult } from '../../src/services/commerce/mpesa/mpesa.types.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 import { setupCommerceSchema } from '../../src/db/seeds/commerce-setup.js';
 
@@ -21,6 +22,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
   const db = getDb();
   let commerceService: CommerceService;
   let mockDarajaClient: DarajaClient;
+  const queryStatusByCheckoutId = new Map<string, DarajaStkQueryResult>();
 
   let testCountryId: string;
   let testResourceTypeId: string;
@@ -43,6 +45,19 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         ResponseDescription: 'Success. Request accepted for processing',
         CustomerMessage: 'Success. Request accepted for processing',
       })),
+      queryStkPushStatus: vi.fn().mockImplementation(async (checkoutRequestId: string) => {
+        return (
+          queryStatusByCheckoutId.get(checkoutRequestId) ?? {
+            classification: 'TRANSACTION_CONFIRMED_COMPLETED' as const,
+            checkoutRequestId,
+            merchantRequestId: 'MERCHANT-VERIFIED',
+            responseCode: '0',
+            resultCode: '0',
+            resultDesc: 'The service request is processed successfully.',
+            httpStatus: 200,
+          }
+        );
+      }),
       getAccessToken: vi.fn().mockResolvedValue('test_token'),
     } as unknown as DarajaClient;
 
@@ -93,7 +108,6 @@ describe('CommerceService M-Pesa Integration Tests', () => {
     );
     userAId = uA.id;
 
-    // Create product & offer: KES 200.00 = 20000n
     const prod = await commerceService.createProduct({
       name: 'Kenya Secondary Mathematics Past Papers',
       productType: 'RESOURCE',
@@ -139,8 +153,17 @@ describe('CommerceService M-Pesa Integration Tests', () => {
     await closeDatabase();
   });
 
+  async function getInternalCheckoutId(paymentId: string): Promise<string> {
+    const [row] = await db
+      .select({ providerReference: payments.providerReference })
+      .from(payments)
+      .where(eq(payments.id, paymentId))
+      .limit(1);
+    return row.providerReference!;
+  }
+
   describe('1. M-Pesa STK Push Initiation', () => {
-    it('initiates STK push and transitions order to PROCESSING', async () => {
+    it('initiates STK push, redacts providerReference from learner DTO (W1-AC-03), and schedules reconciliation', async () => {
       const order = await commerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
@@ -154,12 +177,11 @@ describe('CommerceService M-Pesa Integration Tests', () => {
       );
 
       expect(initResult.payment.providerCode).toBe('MPESA');
-      expect(initResult.payment.status).toBe('PENDING');
+      expect(initResult.payment.status).toBe('PROCESSING');
       expect(initResult.payment.amountMinor).toBe('20000');
-      expect(initResult.payment.providerReference).toMatch(/^ws_CO_/);
+      expect(initResult.payment.providerReference).toBeNull();
       expect(initResult.order.status).toBe('PROCESSING');
 
-      // Verify payment in database
       const [dbPayment] = await db
         .select()
         .from(payments)
@@ -167,14 +189,15 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         .limit(1);
 
       expect(dbPayment).toBeDefined();
-      expect(dbPayment.status).toBe('PENDING');
+      expect(dbPayment.status).toBe('PROCESSING');
       expect(dbPayment.providerCode).toBe('MPESA');
-      expect(dbPayment.providerReference).toBe(initResult.payment.providerReference);
+      expect(dbPayment.providerReference).toMatch(/^ws_CO_/);
+      expect(dbPayment.nextVerificationAt).not.toBeNull();
     });
   });
 
-  describe('2. M-Pesa Callback Handling & Entitlement Provisioning', () => {
-    it('confirms payment, marks order COMPLETED, and provisions resource entitlement on successful callback', async () => {
+  describe('2. M-Pesa Callback Wake-Up + Authoritative Daraja Query Verification', () => {
+    it('verifies via Daraja STK Query, marks order COMPLETED, and provisions entitlement', async () => {
       const order = await commerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
@@ -187,10 +210,19 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
       const mpesaReceipt = `NLJ${Date.now().toString().slice(-7)}`;
 
-      // Construct Daraja successful callback
+      queryStatusByCheckoutId.set(checkoutRequestId, {
+        classification: 'TRANSACTION_CONFIRMED_COMPLETED',
+        checkoutRequestId,
+        merchantRequestId: '29115-34620561-1',
+        responseCode: '0',
+        resultCode: '0',
+        resultDesc: 'The service request is processed successfully.',
+        httpStatus: 200,
+      });
+
       const callbackPayload = {
         Body: {
           stkCallback: {
@@ -200,7 +232,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
             ResultDesc: 'The service request is processed successfully.',
             CallbackMetadata: {
               Item: [
-                { Name: 'Amount', Value: 200.0 }, // Exact KES 200.00
+                { Name: 'Amount', Value: 200.0 },
                 { Name: 'MpesaReceiptNumber', Value: mpesaReceipt },
                 { Name: 'TransactionDate', Value: 20261008120000 },
                 { Name: 'PhoneNumber', Value: 254712345678 },
@@ -219,23 +251,23 @@ describe('CommerceService M-Pesa Integration Tests', () => {
       expect(callbackResponse.result?.status).toBe('COMPLETED');
       expect(callbackResponse.result?.entitlementsGranted).toBe(1);
 
-      // Verify payment row updated in database
       const [updatedPayment] = await db
         .select()
         .from(payments)
         .where(eq(payments.id, initResult.payment.id));
       expect(updatedPayment.status).toBe('COMPLETED');
-      expect(updatedPayment.providerTransactionId).toBe(mpesaReceipt);
+      // Unverified callback receipt stays in callback_receipt_candidate (W1-AC-04 / W1-AC-07)
+      expect(updatedPayment.callbackReceiptCandidate).toBe(mpesaReceipt);
+      expect(updatedPayment.verifiedReceiptNumber).toBeNull();
+      expect(updatedPayment.receiptVerificationSource).toBeNull();
       expect(updatedPayment.completedAt).toBeDefined();
 
-      // Verify order row updated in database
       const [updatedOrder] = await db
         .select()
         .from(orders)
         .where(eq(orders.id, order.id));
       expect(updatedOrder.status).toBe('COMPLETED');
 
-      // Verify user now holds active entitlement
       const hasEnt = await commerceService.hasEntitlement(userAId, testResourceId);
       expect(hasEnt).toBe(true);
 
@@ -266,7 +298,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
       const mpesaReceipt = `NLJ${Date.now().toString().slice(-7)}`;
 
       const callbackPayload = {
@@ -286,17 +318,14 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         },
       };
 
-      // First callback execution
       const res1 = await commerceService.handleMpesaCallback(callbackPayload);
       expect(res1.result?.status).toBe('COMPLETED');
 
-      // Second identical callback execution (e.g. Daraja retry)
       const res2 = await commerceService.handleMpesaCallback(callbackPayload);
       expect(res2.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
       expect(res2.result?.status).toBe('COMPLETED');
       expect(res2.result?.entitlementsGranted).toBe(0);
 
-      // Verify payment was not duplicated
       const paymentCount = await db
         .select()
         .from(payments)
@@ -304,7 +333,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
       expect(paymentCount.length).toBe(1);
     });
 
-    it('handles user cancellation (ResultCode 1032) by marking payment and order CANCELLED', async () => {
+    it('marks payment CANCELLED only when authoritative Daraja query confirms ResultCode 1032', async () => {
       const order = await commerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
@@ -317,7 +346,16 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
+      queryStatusByCheckoutId.set(checkoutRequestId, {
+        classification: 'TRANSACTION_CONFIRMED_CANCELLED',
+        checkoutRequestId,
+        merchantRequestId: '29115-34620561-1',
+        responseCode: '0',
+        resultCode: '1032',
+        resultDesc: 'Request cancelled by user.',
+        httpStatus: 200,
+      });
 
       const cancelPayload = {
         Body: {
@@ -349,7 +387,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
       expect(dbOrder.status).toBe('CANCELLED');
     });
 
-    it('rejects amount mismatch: underpayment or overpayment transitions payment to FAILED without granting entitlements', async () => {
+    it('flags callback amount mismatch into RECONCILIATION_REQUIRED instead of blindly auto-settling (W1-AC-05 / W1-AC-07)', async () => {
       const order = await commerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
@@ -362,9 +400,8 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
 
-      // Order total is 200 KES. Callback supplies 150.00 (underpayment)
       const underpayPayload = {
         Body: {
           stkCallback: {
@@ -374,7 +411,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
             ResultDesc: 'The service request is processed successfully.',
             CallbackMetadata: {
               Item: [
-                { Name: 'Amount', Value: 150.0 }, // Mismatch!
+                { Name: 'Amount', Value: 150.0 },
                 { Name: 'MpesaReceiptNumber', Value: 'NLJMISMATCH1' },
               ],
             },
@@ -384,18 +421,18 @@ describe('CommerceService M-Pesa Integration Tests', () => {
 
       const res = await commerceService.handleMpesaCallback(underpayPayload);
       expect(res.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
-      expect(res.result?.status).toBe('FAILED');
+      expect(res.result?.status).toBe('RECONCILIATION_REQUIRED');
       expect(res.result?.entitlementsGranted).toBe(0);
 
       const [dbPayment] = await db
         .select()
         .from(payments)
         .where(eq(payments.id, initResult.payment.id));
-      expect(dbPayment.status).toBe('FAILED');
-      expect(dbPayment.failureReason).toContain('Payment amount or currency mismatch');
+      expect(dbPayment.status).toBe('RECONCILIATION_REQUIRED');
+      expect(dbPayment.failureReason).toContain('CALLBACK_AMOUNT_ANOMALY');
     });
 
-    it('safely handles unknown checkoutRequestId without leaking record presence', async () => {
+    it('safely handles unknown checkoutRequestId without leaking record presence or querying Daraja', async () => {
       const unknownPayload = {
         Body: {
           stkCallback: {
@@ -428,7 +465,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
       const mpesaReceipt = `NLJRACE${Date.now().toString().slice(-6)}`;
 
       const callbackPayload = {
@@ -448,26 +485,22 @@ describe('CommerceService M-Pesa Integration Tests', () => {
         },
       };
 
-      // Dispatch 3 concurrent callback requests simultaneously
       const results = await Promise.all([
         commerceService.handleMpesaCallback(callbackPayload),
         commerceService.handleMpesaCallback(callbackPayload),
         commerceService.handleMpesaCallback(callbackPayload),
       ]);
 
-      // All must acknowledge with standard Daraja response
       for (const r of results) {
         expect(r.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
       }
 
-      // Sum of entitlements granted across all parallel calls must not exceed 1
       const totalGranted = results.reduce(
         (sum, r) => sum + (r.result?.entitlementsGranted || 0),
         0,
       );
       expect(totalGranted).toBeLessThanOrEqual(1);
 
-      // Payment in DB is COMPLETED
       const [finalPayment] = await db
         .select()
         .from(payments)

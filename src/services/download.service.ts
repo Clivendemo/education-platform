@@ -1,4 +1,4 @@
-import { eq, and, asc, desc, sql, lte, or, isNull, gt } from 'drizzle-orm';
+import { eq, and, asc, desc, sql, lte, or, isNull, gt, notInArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { db } from '../db/index.js';
 import { env } from '../config/env.js';
@@ -10,6 +10,7 @@ import { CloudflareR2StorageProvider } from './storage/r2-storage-provider.js';
 import { MemoryStorageProvider } from './storage/memory-storage-provider.js';
 
 export const DEFAULT_DOWNLOAD_URL_TTL_SECONDS = 300; // 5 minutes
+export const PRIVATE_DOWNLOAD_CACHE_CONTROL = 'private, no-store';
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,10 +99,10 @@ export class DefaultDownloadService implements DownloadService {
   ) {}
 
   /**
-   * Generates a short-lived presigned download URL for an eligible free published resource.
+   * Generates a short-lived presigned download URL for an eligible published resource.
    *
-   * All database validation and eligibility checks (publication, quality tier, file status, version isolation)
-   * occur prior to any storage provider interaction.
+   * All database validation and eligibility checks (publication, quality tier, file status,
+   * malware scan gate, quarantine prefix exclusion, and version isolation) occur prior to any storage interaction.
    */
   async generateDownloadUrl(
     request: DownloadFileRequest,
@@ -136,16 +137,12 @@ export class DefaultDownloadService implements DownloadService {
       throw new ResourceNotFoundError(`Resource "${resourceId}" not found.`);
     }
 
-    // Must be PUBLISHED
     if (resourceRecord.status !== 'PUBLISHED') {
       throw new ResourceNotFoundError(
         `Resource "${resourceId}" is not publicly published.`,
       );
     }
 
-    // Prompt 16 & Prompt 20 Free vs Premium Rule:
-    // Resources with qualityLabel !== 'PREMIUM' are free to download anonymously or authenticated.
-    // Resources with qualityLabel === 'PREMIUM' strictly require authentication and active entitlement.
     if (resourceRecord.qualityLabel === 'PREMIUM') {
       if (!userId) {
         throw new PremiumResourceLockedError(
@@ -211,10 +208,10 @@ export class DefaultDownloadService implements DownloadService {
       fileSizeBytes: number;
       checksumSha256: string;
       status: string;
+      malwareScanStatus: string;
     };
 
     if (fileId) {
-      // Explicit file ID requested: must belong to the active published version and be AVAILABLE
       const [explicitFile] = await this.db
         .select({
           id: resourceFiles.id,
@@ -227,6 +224,7 @@ export class DefaultDownloadService implements DownloadService {
           fileSizeBytes: resourceFiles.fileSizeBytes,
           checksumSha256: resourceFiles.checksumSha256,
           status: resourceFiles.status,
+          malwareScanStatus: resourceFiles.malwareScanStatus,
         })
         .from(resourceFiles)
         .where(eq(resourceFiles.id, fileId))
@@ -236,15 +234,18 @@ export class DefaultDownloadService implements DownloadService {
         throw new FileNotFoundDownloadError(`File "${fileId}" not found.`);
       }
 
-      // Cross-version file isolation: file must belong strictly to this published version
       if (explicitFile.resourceVersionId !== publishedVersion.id) {
         throw new FileNotFoundDownloadError(
           `File "${fileId}" does not belong to the active published version of this resource.`,
         );
       }
 
-      // File availability status check
-      if (explicitFile.status !== 'AVAILABLE') {
+      if (
+        explicitFile.status !== 'AVAILABLE' ||
+        explicitFile.malwareScanStatus === 'INFECTED' ||
+        explicitFile.malwareScanStatus === 'SCAN_ERROR' ||
+        explicitFile.objectKey.startsWith('quarantine/')
+      ) {
         throw new FileNotAvailableError(
           `File "${fileId}" is not available for download (status: ${explicitFile.status}).`,
         );
@@ -252,12 +253,6 @@ export class DefaultDownloadService implements DownloadService {
 
       targetFile = explicitFile;
     } else {
-      // Deterministic primary-file selection when fileId is omitted:
-      // 1. isPrimary: true
-      // 2. fileType = 'MAIN_DOCUMENT'
-      // 3. lowest sequenceOrder ASC
-      // 4. earliest createdAt ASC
-      // 5. id ASC (deterministic tie-breaker)
       const availableFiles = await this.db
         .select({
           id: resourceFiles.id,
@@ -270,12 +265,14 @@ export class DefaultDownloadService implements DownloadService {
           fileSizeBytes: resourceFiles.fileSizeBytes,
           checksumSha256: resourceFiles.checksumSha256,
           status: resourceFiles.status,
+          malwareScanStatus: resourceFiles.malwareScanStatus,
         })
         .from(resourceFiles)
         .where(
           and(
             eq(resourceFiles.resourceVersionId, publishedVersion.id),
             eq(resourceFiles.status, 'AVAILABLE'),
+            notInArray(resourceFiles.malwareScanStatus, ['INFECTED', 'SCAN_ERROR']),
           ),
         )
         .orderBy(
@@ -287,7 +284,10 @@ export class DefaultDownloadService implements DownloadService {
         )
         .limit(1);
 
-      if (availableFiles.length === 0) {
+      if (
+        availableFiles.length === 0 ||
+        availableFiles[0].objectKey.startsWith('quarantine/')
+      ) {
         throw new NoAvailableFilesError(
           `Resource "${resourceId}" has no available files attached to its published version.`,
         );
@@ -296,7 +296,7 @@ export class DefaultDownloadService implements DownloadService {
       targetFile = availableFiles[0];
     }
 
-    // 5. Database validation passed. Now request presigned download URL from storage provider.
+    // 5. Request short-lived presigned download URL with private, no-store cache headers (W1-AC-09)
     const expiresInSeconds = this.downloadUrlTtlSeconds;
     const downloadUrl = await this.storageProvider.getSignedDownloadUrl(
       targetFile.objectKey,
@@ -304,13 +304,12 @@ export class DefaultDownloadService implements DownloadService {
         expiresInSeconds,
         responseContentDisposition: `attachment; filename="${encodeURIComponent(targetFile.originalFilename)}"`,
         responseContentType: targetFile.mimeType,
+        responseCacheControl: PRIVATE_DOWNLOAD_CACHE_CONTROL,
       },
     );
 
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
-    // 6. Return controlled download payload.
-    // Strictly omit storage_metadata, storage_bucket, object_key, and provider identifiers.
     return {
       downloadUrl,
       expiresAt,
@@ -341,6 +340,13 @@ export function createDefaultStorageProvider(): StorageProvider {
       endpoint: env.R2_ENDPOINT,
     });
   }
+
+  if (env.NODE_ENV === 'production') {
+    throw new Error(
+      'SECURITY_CONFIG_ERROR: MemoryStorageProvider fallback is strictly prohibited in production; configure Cloudflare R2 credentials.',
+    );
+  }
+
   return new MemoryStorageProvider(env.R2_BUCKET_NAME);
 }
 

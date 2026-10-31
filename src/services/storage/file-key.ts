@@ -96,8 +96,12 @@ export interface StorageKeyParams {
   safeExtension?: string;
 }
 
+export interface QuarantineStorageKeyParams extends StorageKeyParams {
+  envName?: string;
+}
+
 /**
- * Generates an immutable, UUID-derived storage object key.
+ * Generates an immutable, UUID-derived storage object key for promoted clean files.
  *
  * Invariant:
  * The original filename is NEVER used as part of the storage key in Cloudflare R2.
@@ -113,4 +117,20 @@ export function generateStorageKey(params: StorageKeyParams): string {
 
   const ext = safeExtension ? `.${safeExtension.replace(/^\./, '').toLowerCase()}` : '';
   return `resources/${resourceId}/versions/${resourceVersionId}/${fileId}${ext}`;
+}
+
+/**
+ * Generates an isolated staging key under the unexposed `quarantine/` prefix (W1-AC-09).
+ * Format: quarantine/{envName}/resources/{resourceId}/versions/{resourceVersionId}/{fileId}[.{safeExtension}]
+ */
+export function generateQuarantineStorageKey(params: QuarantineStorageKeyParams): string {
+  const { envName = 'development', resourceId, resourceVersionId, fileId, safeExtension } = params;
+
+  if (!resourceId || !resourceVersionId || !fileId) {
+    throw new Error('resourceId, resourceVersionId, and fileId are all strictly required for quarantine key generation');
+  }
+
+  const safeEnv = envName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase() || 'development';
+  const ext = safeExtension ? `.${safeExtension.replace(/^\./, '').toLowerCase()}` : '';
+  return `quarantine/${safeEnv}/resources/${resourceId}/versions/${resourceVersionId}/${fileId}${ext}`;
 }

@@ -21,7 +21,7 @@ import { DefaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth
 import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { contributorService } from '../../src/services/contributor.service.js';
 import { defaultContributorFinanceService } from '../../src/services/contributor-finance.service.js';
-import { defaultCommerceService } from '../../src/services/commerce/commerce.service.js';
+import { CommerceService } from '../../src/services/commerce/commerce.service.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { buildApp } from '../../src/app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
@@ -29,13 +29,17 @@ import { withDbRetry } from '../helpers/db-retry.js';
 describe('Contributor Finance HTTP Route & Commerce Integration Tests', () => {
   const authService = new DefaultAuthService(db);
   const rbacService = new DefaultRbacService(db);
+  const testCommerceService = new CommerceService({
+    db,
+    allowSimulation: true,
+  });
   const app: FastifyInstance = buildApp({
     services: {
       authService,
       rbacService,
       contributorService,
       contributorFinanceService: defaultContributorFinanceService,
-      commerceService: defaultCommerceService,
+      commerceService: testCommerceService,
     },
   });
 
@@ -398,7 +402,7 @@ describe('Contributor Finance HTTP Route & Commerce Integration Tests', () => {
       testPaymentId = payRes.json().data.payment.id;
 
       // 3. Process payment success (simulating payment provider completion)
-      const successResult = await defaultCommerceService.processPaymentSuccess({
+      const successResult = await testCommerceService.processPaymentSuccess({
         paymentId: testPaymentId,
         providerTransactionId: `SIM-TXN-${Date.now()}`,
       });
@@ -444,7 +448,7 @@ describe('Contributor Finance HTTP Route & Commerce Integration Tests', () => {
 
     it('duplicate payment completion callback is idempotent and produces 0 duplicate earnings', async () => {
       // Re-run processPaymentSuccess on already COMPLETED payment
-      const repeatResult = await defaultCommerceService.processPaymentSuccess({
+      const repeatResult = await testCommerceService.processPaymentSuccess({
         paymentId: testPaymentId,
         providerTransactionId: `SIM-TXN-REPEAT`,
       });

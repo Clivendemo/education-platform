@@ -786,24 +786,24 @@ No general public resource commenting/discussion system.
 
 | Component              | Status      | Notes |
 | ---------------------- | ----------- | ----- |
-| Homepage discovery API | NOT_STARTED |       |
-| Dynamic sections       | NOT_STARTED |       |
-| Trending               | NOT_STARTED |       |
-| Most Downloaded        | NOT_STARTED |       |
-| Curated content        | NOT_STARTED |       |
-| Teacher discovery      | NOT_STARTED |       |
-| Student discovery      | NOT_STARTED |       |
-| Calendar section       | NOT_STARTED |       |
-| Updates section        | NOT_STARTED |       |
-| Collections            | NOT_STARTED |       |
-| Free/Premium discovery | NOT_STARTED |       |
-| Admin pinning          | NOT_STARTED |       |
-| Scheduling             | NOT_STARTED |       |
-| Expiry                 | NOT_STARTED |       |
-| Override               | NOT_STARTED |       |
-| Preview                | NOT_STARTED |       |
-| Publish                | NOT_STARTED |       |
-| Rollback               | NOT_STARTED |       |
+| Homepage discovery API | VERIFIED    | Prompt 32; `GET /api/v1/homepage` (Kenya `KE` default) and `GET /api/v1/countries/:countryCode/homepage` with `Cache-Control: no-store` (`P1`, `P2`; `/homepage/slots/:slotKey` intentionally unregistered per C63) |
+| Dynamic sections       | VERIFIED    | Prompt 32; locked 6-slot architecture (`trending_resources`, `most_downloaded_resources`, `curated_resources`, `education_updates`, `calendar_highlights`, `curriculum_shortcuts`) enforced by DB constraint trigger + API contract |
+| Trending               | VERIFIED    | Prompt 32; `trending_resources` slot with live SQL eligibility gate and country-scoped trending fallback |
+| Most Downloaded        | VERIFIED    | Prompt 32; `most_downloaded_resources` slot with live SQL eligibility gate and country-scoped download ranking fallback |
+| Curated content        | VERIFIED    | Prompt 32; `curated_resources` (`RESOURCE`) and `curriculum_shortcuts` (`SUBJECT`) editorial curation & discovery slots |
+| Teacher discovery      | NOT_STARTED | Frontend teacher hub UI phase not yet started |
+| Student discovery      | NOT_STARTED | Frontend student hub UI phase not yet started |
+| Calendar section       | VERIFIED    | Prompt 32; `calendar_highlights` slot restricted to `OFFICIAL`, `PUBLIC`, `ACTIVE` country-scoped upcoming academic milestones |
+| Updates section        | VERIFIED    | Prompt 32; `education_updates` slot restricted to `PUBLISHED` country-scoped updates with active category and curricula |
+| Collections            | DEFERRED    | Decision D1 / R17-02: no `collections` table exists yet; `curriculum_shortcuts` (`SUBJECT`) serves as the canonical 6th homepage slot |
+| Free/Premium discovery | VERIFIED    | Prompt 32; public resource cards surface `commercialAccessStatus` (`FREE` \| `PREMIUM`) with zero storage secret leakage |
+| Admin pinning          | VERIFIED    | Prompt 32; per-slot `PINNED_ITEMS`, `HYBRID`, and `DYNAMIC_ONLY` strategies with optional `[pinStartsAt, pinEndsAt)` windows |
+| Scheduling             | VERIFIED    | Prompt 32; `SCHEDULED` lifecycle backed by PostgreSQL `btree_gist` exclusion constraint `excl_homepage_cfg_country_schedule_window` |
+| Expiry                 | VERIFIED    | Prompt 32; Decision D4 lazy `scheduled_until_at` expiry transitioning `PUBLISHED -> ARCHIVED` with `SYSTEM` audit log and `DEFAULT_FALLBACK` recovery |
+| Override               | VERIFIED    | Prompt 32; country-scoped editorial overrides superseding prior `PUBLISHED` configuration atomically |
+| Preview                | VERIFIED    | Prompt 32; `POST /api/v1/admin/homepage/preview` supporting draft/configuration or inline payloads, explicit `evaluationTimestamp`, and per-item diagnostics |
+| Publish                | VERIFIED    | Prompt 32; `POST /api/v1/admin/homepage/configurations/:id/publish` gated by deferred 6-slot completeness and live SQL entity eligibility |
+| Rollback               | VERIFIED    | Prompt 32; Decision D3 clone-forward rollback (`POST /api/v1/admin/homepage/configurations/:id/rollback`) with bidirectional same-`xid8` trigger handshake |
 
 Exactly six major dynamic homepage content cards/sections must be active at any one time according to the locked product design.
 
@@ -833,6 +833,7 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 | Commerce management         | NOT_STARTED |       |
 | Analytics dashboard         | VERIFIED    | Prompt 27 `GET /api/v1/admin/analytics/overview` and Prompt 29 search demand analytics |
 | Governance dashboard        | VERIFIED    | Prompt 31 centralized operational overview (`GET /api/v1/admin/dashboard/overview`), cross-resource publication event ledger (`GET /api/v1/admin/publications/events`), per-resource admin event timeline (`GET /api/v1/admin/resources/:id/events`), and audit log explorer (`GET /api/v1/admin/audit-logs`) |
+| Homepage editorial management | VERIFIED  | Prompt 32 administrative endpoints (`A1`–`A9` under `/api/v1/admin/homepage/*`) for country-scoped draft CRUD, schedule/unschedule, preview, publish, discard, and clone-forward rollback |
 
 ---
 
@@ -1045,7 +1046,7 @@ Every major implementation stage should have a Git checkpoint.
 | Search intelligence      | VERIFIED    | Prompt 29 implemented & verified |
 | Recommendations          | VERIFIED    | Prompt 30 implemented & verified |
 | Admin dashboard          | VERIFIED    | Prompt 31 implemented & verified |
-| Homepage intelligence    | NOT_STARTED |        |
+| Homepage intelligence    | VERIFIED    | Prompt 32 implemented & verified |
 | Security audit           | NOT_STARTED |        |
 | Performance audit        | NOT_STARTED |        |
 | Final launch audit       | NOT_STARTED |        |
@@ -1055,6 +1056,88 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-10-29 — Prompt 32: Homepage Intelligence, Editorial Scheduling, Atomic Rollback & Live SQL Eligibility Gate
+
+Status:
+VERIFIED
+
+Implemented:
+- PostgreSQL `btree_gist` Preflight & Eligibility Parity Engine (`src/services/homepage-gist-preflight.ts`, `src/services/homepage-eligibility.ts`):
+  * Implemented read-only catalog inspection (`runLiveGistPreflight`) and pure evaluator (`evaluateGistPreflightSnapshot`) verifying PostgreSQL 14–18 version compatibility, GiST strategy-3 `tstzrange`/`anyrange` `&&` and `uuid` `=` operator-class readiness, and `CreateExtensionInternal` / `extension_is_trusted` database `CREATE` + `public` schema `CREATE`/`USAGE` installability privileges.
+  * Implemented fail-closed `parseEvaluationTimestamp`, depth-16 recursive `evaluateTopicAncestry` (`TOPIC_ANCESTRY_CYCLE`, `TOPIC_ANCESTOR_MISSING`, `TOPIC_ANCESTRY_TOO_DEEP`, `TOPIC_INACTIVE`, `TOPIC_ANCESTOR_INACTIVE`), and 1-for-1 TypeScript mirrors of SQL projection classifiers across `RESOURCE`, `SUBJECT`, `UPDATE`, and `CALENDAR_EVENT`.
+- Bounded Candidate-ID Cache & R17-03 Underfill Recovery (`src/services/homepage-cache.ts`):
+  * Implemented `HomepageCacheService` caching candidate entity UUIDs only (`<= 10` UUIDs/slot, `<= 60` UUIDs/country, max 32 countries LRU, 60s TTL clamped to `scheduledUntilAtMs`), single-flight stampede coalescing, and deterministic R17-03 underfill recovery (`0` rebuilds on genuinely sparse countries where `cachedIds.length < slotTargetCount`, immediate rebuild when `hasMoreBeyondCap = true`, and `5,000ms` cooldown when exhausted without bypassing live SQL eligibility).
+- Public & Editorial Homepage Services (`src/services/homepage.service.ts`, `src/services/homepage-admin.service.ts`):
+  * Implemented public country resolution (`KE` default on `GET /api/v1/homepage`, case-insensitive ISO code, lowercase URL prefix, or UUID on `P1`/`P2`), lazy `SCHEDULED -> PUBLISHED` window promotion, and Decision D4 lazy `scheduled_until_at` expiry (`PUBLISHED -> ARCHIVED` with `SYSTEM` audit `homepage.configuration.expire_archive` and automatic `DEFAULT_FALLBACK` recovery).
+  * Implemented canonical 6-slot composition (`trending_resources`, `most_downloaded_resources`, `curated_resources`, `education_updates`, `calendar_highlights`, `curriculum_shortcuts` per Decision D1 / R17-02) with live SQL eligibility re-validation on every serve and preview request.
+  * Implemented administrative draft creation/cloning, full-state slot/item replacement, schedule/unschedule/cancel, preview (supporting `configurationId` or inline country + slots at arbitrary `evaluationTimestamp`), publish, discard (`DRAFT -> DISCARDED`), and Decision D3 clone-forward atomic rollback (`POST .../rollback` creating a new `PUBLISHED` revision paired with a same-`xid8` `homepage_configuration_rollbacks` row and transactional `governance.audit_logs` record).
+- RBAC Seed Expansion (`src/db/seeds/roles-permissions.ts`):
+  * Added 3 canonical permissions (`homepage.read`, `homepage.manage`, `homepage.publish`, all `scopeType: 'ANY'`) and 7 canonical `role_permissions` mappings (`system_admin` +3, `content_manager` +3, `content_reviewer` +1 read-only `homepage.read`), bringing canonical seeded totals to 48 permissions, 6 roles, and 106 `role_permissions` mappings (`system_admin` 48, `content_manager` 34, `content_reviewer` 13, `contributor` 5, `verified_teacher` 4, `standard_user` 2).
+
+Database:
+- Forward-only migration `drizzle/0021_homepage_intelligence.sql` applied to live Neon PostgreSQL and synchronized in `drizzle/meta/_journal.json` (idx `21`), `src/db/schema/homepage.ts`, `src/db/schemas.ts`, and `docs/DATABASE_SPEC.md` Section 45.3:
+  * Enabled `btree_gist` extension and created 4 enums (`homepage_configuration_status_enum`, `homepage_slot_key_enum`, `homepage_slot_strategy_enum`, `homepage_item_entity_type_enum`).
+  * Created pure `IMMUTABLE` SQL projection classifiers (`content.fn_diag_homepage_resource_projection`, `content.fn_diag_homepage_subject_projection`), recursive depth-16 `content.fn_diag_homepage_topic_ancestry`, and live `STABLE` evaluators (`content.fn_evaluate_homepage_entity_eligibility`, `content.fn_is_homepage_entity_eligible`).
+  * Created 4 tables (`content.homepage_configurations`, `content.homepage_configuration_slots`, `content.homepage_configuration_items`, `content.homepage_configuration_rollbacks`) with `CHECK` invariants, partial unique active-published index `uq_homepage_cfg_one_published_per_country`, GiST schedule-window exclusion constraint `excl_homepage_cfg_country_schedule_window`, and triggers `T1`–`T6` (parent/slot immutability when non-`DRAFT`, lifecycle state machine transitions, deferred 6-slot completeness + live entity eligibility gate on `SCHEDULED`/`PUBLISHED`, append-only rollback ledger, and bidirectional same-`pg_current_xact_id()` rollback handshake).
+
+API:
+- Mounted `src/routes/api/v1/homepage.ts` (2 public routes, `Cache-Control: no-store`) and `src/routes/api/v1/admin-homepage.ts` (9 admin routes, `Cache-Control: private, no-store`) in `src/app.ts` (11 routes total):
+  * `P1`: `GET /api/v1/homepage`
+  * `P2`: `GET /api/v1/countries/:countryCode/homepage` (`/api/v1/homepage/slots/:slotKey` intentionally unregistered per C63)
+  * `A1`: `GET /api/v1/admin/homepage/configurations` (`homepage.read`)
+  * `A2`: `GET /api/v1/admin/homepage/configurations/:id` (`homepage.read`, opaque-ID hidden `404`)
+  * `A3`: `POST /api/v1/admin/homepage/drafts` (`homepage.manage`, explicit-country `403` vs opaque `sourceConfigurationId` hidden `404`)
+  * `A4`: `PUT /api/v1/admin/homepage/configurations/:id` (`homepage.manage`, opaque-ID hidden `404`)
+  * `A5`: `POST /api/v1/admin/homepage/preview` (`homepage.read`, opaque `configurationId` hidden `404` vs inline `countryId` `403`)
+  * `A6`: `POST /api/v1/admin/homepage/configurations/:id/schedule` (`homepage.publish`, opaque-ID hidden `404`)
+  * `A7`: `POST /api/v1/admin/homepage/configurations/:id/publish` (`homepage.publish`, opaque-ID hidden `404`)
+  * `A8`: `POST /api/v1/admin/homepage/configurations/:id/discard` (`homepage.manage`, opaque-ID hidden `404`)
+  * `A9`: `POST /api/v1/admin/homepage/configurations/:id/rollback` (`homepage.publish`, opaque-ID hidden `404`)
+
+Frontend:
+- None (strictly backend-only per Prompt 32 specification).
+
+Tests:
+- Prompt-32 dedicated suites (6/6 files, 40/40 tests passing):
+  * `tests/services/homepage-gist-preflight.test.ts` (11 passed): PostgreSQL 14–18 version boundaries, strategy-3 operator checks, trusted vs superuser installability, and missing DB `CREATE` negative fixtures (C66).
+  * `tests/services/homepage-eligibility.test.ts` (13 passed): fail-closed evaluation timestamp parsing (C61), depth-16/17 topic ancestry priority ordering (C54), and all resource/subject/update/calendar-event projection diagnostic codes (C52/C60/C65).
+  * `tests/services/homepage-cache.test.ts` (4 passed): candidate-ID-only payload bounds (`<= 10`/slot, `<= 60`/country, 32-country LRU), `scheduledUntilAt` TTL clamping, single-flight stampede protection, and R17-03 sparse vs `hasMoreBeyondCap` vs `5,000ms` cooldown recovery.
+  * `tests/routes/homepage-admin-unit.test.ts` (4 passed): C1–C6 instrumentation counters (`C4 === 0 && C5 === 0 && C6 === 0`) and FM-0..FM-3b non-disclosing denied-audit failure resilience (C53/C55/C58/R17-04).
+  * `tests/db/homepage.integration.test.ts` (5 passed): live Neon GiST catalog preflight, SQL-vs-TS eligibility parity across live schema-valid & pure projection fixtures, SQLSTATE constraint/trigger taxonomy (`23514`, `23P01`, `23505`, `P0001`), deferred 6-slot completeness, and atomic `xid8` rollback handshake rollback-on-failure proofs.
+  * `tests/routes/homepage.integration.test.ts` (3 passed): `P1`/`P2` country resolution (`KE` default untouched), `C63` unregistered slot route `404`, `A1`–`A9` full lifecycle (`DRAFT -> SCHEDULED -> PUBLISHED -> Rollback / Discard`), `D4` lazy expiry archival + `SYSTEM` audit, and cross-country anti-enumeration hidden `404` vs explicit `403`.
+- Updated `tests/db/admin-dashboard.integration.test.ts` canonical RBAC seed expectations (`48` permissions, `106` role-permission mappings) and isolated test `academicYear` (`2099`) + `afterAll` calendar cleanup in homepage integration suites.
+- Full repository regression suite: 82/82 test files passed (`24` service + `28` DB + `30` route suites), 868/868 automated tests passed across all shards.
+
+Typecheck:
+PASS (`npm run lint` / `tsc --noEmit` — 0 errors)
+
+Build:
+PASS (`npm run build` / `tsc -p tsconfig.build.json` & applet compilation — 0 errors)
+
+Security:
+- Uniform hidden `404 HOMEPAGE_CONFIGURATION_NOT_FOUND` on cross-country opaque configuration IDs (`A2`–`A9`, `A3` `sourceConfigurationId`, `A5` `configurationId`) paired with synchronous `DENIED` audit logging and zero side-effect mutations (`C4 = C5 = C6 = 0`), while explicit unauthorized `countryId` filter/body inputs return generic `403 FORBIDDEN`.
+- Denied-audit failure modes (`FM-1` actor snapshot error, `FM-2` audit insert error, `FM-3a`/`FM-3b` logger error) preserve identical HTTP status/body and never leak stack traces, SQL errors, or permission slugs.
+- Zero exposure of `storageBucket`, `objectKey`, `storageMetadata`, checksums, or presigned download URLs in public, preview, or admin responses and candidate cache entries.
+- Mandatory `Cache-Control: no-store` on public homepage routes and `Cache-Control: private, no-store` on all administrative homepage routes.
+
+Rollback & Operational Safety:
+- Editorial rollback (`D3`) is strictly clone-forward and append-only: historical `ARCHIVED` revisions are never mutated in place; rolling back clones a validated 6-slot revision into a new `PUBLISHED` row linked via `homepage_configuration_rollbacks` in the same `pg_current_xact_id()` transaction.
+- Schema/RBAC emergency disablement follows `docs/DATABASE_SPEC.md` Section 45.3 without touching pre-existing permissions or `btree_gist`.
+
+Documentation:
+- `docs/API_SPEC.md` (Sections 60 & 61: Public Homepage Intelligence API and Administrative Homepage Editorial Management API)
+- `docs/DATABASE_SPEC.md` (Section 45.3: Prompt 32 Homepage Intelligence Schema, Triggers, Eligibility Functions & Rollback Handshake)
+- `docs/IMPLEMENTATION_STATUS.md` (Sections 35, 36, 45, and 46 updated; Prompt 32 closed as `VERIFIED`)
+
+Git commit:
+- Workspace has no `.git` directory initialized in this environment; create Prompt 32 checkpoint commit when syncing to `Clivendemo/education-platform`.
+
+Issues:
+- None.
+
+Next step:
+- Prompt 32 closed as `VERIFIED`. Stop and await explicit human authorization before starting the next milestone.
 
 ## 2026-10-25 — Prompt 31: Centralized Admin Dashboard & Operational Oversight Backend
 

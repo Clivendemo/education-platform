@@ -17,6 +17,7 @@ import { defaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth
 import { CommerceService } from '../../src/services/commerce/commerce.service.js';
 import { MpesaPaymentProvider } from '../../src/services/commerce/mpesa/mpesa-payment-provider.js';
 import { DarajaClient } from '../../src/services/commerce/mpesa/daraja-client.js';
+import type { DarajaStkQueryResult } from '../../src/services/commerce/mpesa/mpesa.types.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 import { setupCommerceSchema } from '../../src/db/seeds/commerce-setup.js';
 
@@ -25,6 +26,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
   let app: FastifyInstance;
   let testCommerceService: CommerceService;
   let mockDarajaClient: DarajaClient;
+  const queryStatusByCheckoutId = new Map<string, DarajaStkQueryResult>();
 
   let testCountryId: string;
   let testResourceTypeId: string;
@@ -49,6 +51,19 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
         ResponseDescription: 'Success. Request accepted for processing',
         CustomerMessage: 'Success. Request accepted for processing',
       })),
+      queryStkPushStatus: vi.fn().mockImplementation(async (checkoutRequestId: string) => {
+        return (
+          queryStatusByCheckoutId.get(checkoutRequestId) ?? {
+            classification: 'COMPLETED',
+            checkoutRequestId,
+            merchantRequestId: '29115-34620561-1',
+            responseCode: '0',
+            resultCode: '0',
+            resultDesc: 'The service request is processed successfully.',
+            verifiedReceiptNumber: null,
+          }
+        );
+      }),
       getAccessToken: vi.fn().mockResolvedValue('test_token'),
     } as unknown as DarajaClient;
 
@@ -70,19 +85,16 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     });
     await app.ready();
 
-    // 1. Resolve country
     const [c] = await withDbRetry(async () =>
       db.select().from(countries).where(eq(countries.status, 'ACTIVE')).limit(1),
     );
     testCountryId = c.id;
 
-    // 2. Resolve resource type
     const [rt] = await withDbRetry(async () =>
       db.select().from(resourceTypes).limit(1),
     );
     testResourceTypeId = rt.id;
 
-    // 3. Create test premium resource
     const [r] = await withDbRetry(async () =>
       db
         .insert(resources)
@@ -98,7 +110,6 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     );
     testResourceId = r.id;
 
-    // 4. Create product & offer
     const prod = await testCommerceService.createProduct({
       name: 'Kenya Primary Assessment M-Pesa Revision Kit',
       productType: 'RESOURCE',
@@ -113,7 +124,6 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     });
     testOfferId = off.id;
 
-    // 5. Create user
     const regA = await withDbRetry(async () =>
       defaultAuthService.register({
         email: `comm-route-mpesa-${Date.now()}@example.com`,
@@ -158,9 +168,17 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     await closeDatabase();
   });
 
+  async function getInternalCheckoutId(paymentId: string): Promise<string> {
+    const [row] = await db
+      .select({ providerReference: payments.providerReference })
+      .from(payments)
+      .where(eq(payments.id, paymentId))
+      .limit(1);
+    return row.providerReference!;
+  }
+
   describe('1. POST /api/v1/payments (M-Pesa STK Push Initiation)', () => {
-    it('initiates M-Pesa STK push for valid order and normalized phone number', async () => {
-      // Create order
+    it('initiates M-Pesa STK push and redacts CheckoutRequestID from learner DTO (W1-AC-03)', async () => {
       const checkoutRes = await app.inject({
         method: 'POST',
         url: '/api/v1/checkout',
@@ -173,7 +191,6 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
       const order = checkoutRes.json().data;
       createdOrderIds.push(order.id);
 
-      // Initiate M-Pesa payment
       const payRes = await app.inject({
         method: 'POST',
         url: '/api/v1/payments',
@@ -188,9 +205,10 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
       expect(payRes.statusCode).toBe(201);
       const payData = payRes.json().data;
       expect(payData.payment.providerCode).toBe('MPESA');
-      expect(payData.payment.status).toBe('PENDING');
+      expect(payData.payment.status).toBe('PROCESSING');
       expect(payData.payment.amountMinor).toBe('25000');
-      expect(payData.payment.providerReference).toMatch(/^ws_CO_/);
+      expect(payData.payment.providerReference).toBeNull();
+      expect(JSON.stringify(payData)).not.toContain('ws_CO_');
       expect(payData.order.status).toBe('PROCESSING');
     });
 
@@ -207,7 +225,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
         payload: {
           orderId: order.id,
           providerCode: 'MPESA',
-          phoneNumber: '0201234567', // landline
+          phoneNumber: '0201234567',
         },
       });
 
@@ -217,8 +235,8 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     });
   });
 
-  describe('2. POST /api/v1/payments/mpesa/callback (Daraja Callback Endpoint)', () => {
-    it('processes successful callback without session cookie and provisions user entitlement', async () => {
+  describe('2. POST /api/v1/commerce/webhooks/mpesa (Canonical Daraja Webhook Endpoint)', () => {
+    it('processes callback wake-up via authoritative Daraja query and provisions entitlement', async () => {
       const order = await testCommerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
@@ -231,7 +249,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
         { phoneNumber: '0712345678' },
       );
 
-      const checkoutRequestId = initResult.payment.providerReference!;
+      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
       const mpesaReceipt = `NLJROUTE${Date.now().toString().slice(-6)}`;
 
       const callbackPayload = {
@@ -243,7 +261,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
             ResultDesc: 'The service request is processed successfully.',
             CallbackMetadata: {
               Item: [
-                { Name: 'Amount', Value: 250.0 }, // Exact KES 250.00
+                { Name: 'Amount', Value: 250.0 },
                 { Name: 'MpesaReceiptNumber', Value: mpesaReceipt },
                 { Name: 'TransactionDate', Value: 20261008123000 },
                 { Name: 'PhoneNumber', Value: 254712345678 },
@@ -253,10 +271,9 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
         },
       };
 
-      // Unauthenticated POST (no cookie)
       const callbackRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/payments/mpesa/callback',
+        url: '/api/v1/commerce/webhooks/mpesa',
         payload: callbackPayload,
       });
 
@@ -266,7 +283,6 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
         ResultDesc: 'Accepted',
       });
 
-      // Verify user now has active entitlement via GET /api/v1/me/entitlements
       const entRes = await app.inject({
         method: 'GET',
         url: '/api/v1/me/entitlements',
@@ -285,7 +301,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
     it('rejects malformed callback payload with 400 INVALID_CALLBACK_PAYLOAD', async () => {
       const badRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/payments/mpesa/callback',
+        url: '/api/v1/commerce/webhooks/mpesa',
         payload: {
           invalid: 'payload without Body.stkCallback',
         },
@@ -295,32 +311,51 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
       expect(badRes.json().error.code).toBe('INVALID_CALLBACK_PAYLOAD');
     });
 
-    it('supports alternative endpoint alias POST /api/v1/mpesa/callback', async () => {
-      const unknownPayload = {
-        Body: {
-          stkCallback: {
-            MerchantRequestID: '29115-34620561-1',
-            CheckoutRequestID: 'ws_CO_UNKNOWN_ALIAS_TEST',
-            ResultCode: 0,
-            ResultDesc: 'The service request is processed successfully.',
-            CallbackMetadata: {
-              Item: [{ Name: 'Amount', Value: 250.0 }],
+    it('leaves legacy callback aliases unmounted (404) by default unless explicitly enabled (W1-AC-08)', async () => {
+      const defaultLegacyRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/payments/mpesa/callback',
+        payload: {},
+      });
+      expect(defaultLegacyRes.statusCode).toBe(404);
+
+      const legacyApp = buildApp({
+        services: {
+          commerceService: testCommerceService,
+          enableLegacyCallbackAlias: true,
+        },
+      });
+      await legacyApp.ready();
+
+      try {
+        const unknownPayload = {
+          Body: {
+            stkCallback: {
+              MerchantRequestID: '29115-34620561-1',
+              CheckoutRequestID: 'ws_CO_UNKNOWN_ALIAS_TEST',
+              ResultCode: 0,
+              ResultDesc: 'The service request is processed successfully.',
+              CallbackMetadata: {
+                Item: [{ Name: 'Amount', Value: 250.0 }],
+              },
             },
           },
-        },
-      };
+        };
 
-      const aliasRes = await app.inject({
-        method: 'POST',
-        url: '/api/v1/mpesa/callback',
-        payload: unknownPayload,
-      });
+        const aliasRes = await legacyApp.inject({
+          method: 'POST',
+          url: '/api/v1/mpesa/callback',
+          payload: unknownPayload,
+        });
 
-      expect(aliasRes.statusCode).toBe(200);
-      expect(aliasRes.json()).toEqual({
-        ResultCode: 0,
-        ResultDesc: 'Accepted',
-      });
+        expect(aliasRes.statusCode).toBe(200);
+        expect(aliasRes.json()).toEqual({
+          ResultCode: 0,
+          ResultDesc: 'Accepted',
+        });
+      } finally {
+        await legacyApp.close();
+      }
     });
   });
 });

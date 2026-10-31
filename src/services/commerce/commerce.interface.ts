@@ -14,9 +14,14 @@ export type OrderStatus =
 export type PaymentStatus =
   | 'PENDING'
   | 'PROCESSING'
+  | 'RECONCILIATION_REQUIRED'
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED';
+
+export type ReceiptVerificationSource =
+  | 'PROVIDER_VERIFIED_RECEIPT'
+  | 'ADMIN_RECONCILED_RECEIPT';
 
 export type EntitlementStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
 
@@ -68,12 +73,20 @@ export interface OrderDto {
   updatedAt: Date;
 }
 
+/**
+ * Learner-facing Payment DTO (`W1-AC-03`):
+ * Redacts `CheckoutRequestID` (`providerReference` is `null` for M-Pesa),
+ * `MerchantRequestID`, `callbackReceiptCandidate`, `initiatedPhoneHash`,
+ * and internal `providerPayload` so no learner can forge a webhook callback.
+ */
 export interface PaymentDto {
   id: string;
   orderId: string;
   providerCode: string;
   providerReference: string | null;
   providerTransactionId: string | null;
+  verifiedReceiptNumber: string | null;
+  receiptVerificationSource: ReceiptVerificationSource | null;
   amountMinor: string; // Serialized string representation of bigint
   currencyCode: 'KES';
   status: PaymentStatus;
@@ -83,6 +96,30 @@ export interface PaymentDto {
   failureReason: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * Administrative Payment DTO (`W1-AC-06`):
+ * Exposed exclusively on `system_admin` reconciliation endpoints.
+ */
+export interface AdminPaymentDto extends PaymentDto {
+  providerMerchantRequestId: string | null;
+  initiatedPhoneHash: string | null;
+  callbackReceiptCandidate: string | null;
+  callbackReceivedAt: Date | null;
+  verifiedAt: Date | null;
+  verificationAttempts: number;
+  nextVerificationAt: Date | null;
+  verificationLockedAt: Date | null;
+  verificationLockedBy: string | null;
+}
+
+export interface ResolveReconciliationInput {
+  paymentId: string;
+  outcome: 'COMPLETE_WITH_RECEIPT' | 'MARK_FAILED' | 'MARK_CANCELLED';
+  verifiedReceiptNumber?: string;
+  reason: string;
+  actorUserId: string;
 }
 
 export interface EntitlementDto {
@@ -187,6 +224,22 @@ export class InvalidStateTransitionError extends CommerceError {
   }
 }
 
+export class OrderPaymentInProgressError extends CommerceError {
+  constructor(
+    message = 'An active payment verification or reconciliation is already in progress for this order',
+  ) {
+    super(message, 'ORDER_PAYMENT_IN_PROGRESS', 409);
+    this.name = 'OrderPaymentInProgressError';
+  }
+}
+
+export class SimulationDisabledError extends CommerceError {
+  constructor(message = 'Payment simulation provider is disabled') {
+    super(message, 'PAYMENT_SIMULATION_DISABLED', 403);
+    this.name = 'SimulationDisabledError';
+  }
+}
+
 export class PaymentAmountMismatchError extends CommerceError {
   constructor(message = 'Payment amount or currency does not match order total') {
     super(message, 'PAYMENT_AMOUNT_MISMATCH', 400);
@@ -202,7 +255,9 @@ export class DuplicatePaymentReferenceError extends CommerceError {
 }
 
 export class MpesaPhoneValidationError extends CommerceError {
-  constructor(message = 'Invalid Kenyan M-Pesa phone number. Format must be a valid Kenyan mobile number (e.g. 07XXXXXXXX, 01XXXXXXXX, or 254XXXXXXXXX)') {
+  constructor(
+    message = 'Invalid Kenyan M-Pesa phone number. Format must be a valid Kenyan mobile number (e.g. 07XXXXXXXX, 01XXXXXXXX, or 254XXXXXXXXX)',
+  ) {
     super(message, 'MPESA_PHONE_INVALID', 400);
     this.name = 'MpesaPhoneValidationError';
   }
@@ -228,4 +283,3 @@ export class PaymentProviderNotFoundError extends CommerceError {
     this.name = 'PaymentProviderNotFoundError';
   }
 }
-

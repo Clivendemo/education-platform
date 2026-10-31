@@ -2,6 +2,7 @@ import { sql, relations } from 'drizzle-orm';
 import {
   uuid,
   varchar,
+  text,
   integer,
   bigint,
   boolean,
@@ -26,6 +27,29 @@ export const FILE_STATUSES = [
   'FAILED',
 ] as const;
 export type FileStatus = (typeof FILE_STATUSES)[number];
+
+/**
+ * Controlled Malware Scan Statuses (Wave 1 WP6)
+ */
+export const MALWARE_SCAN_STATUSES = [
+  'PENDING',
+  'CLEAN',
+  'INFECTED',
+  'SCAN_ERROR',
+] as const;
+export type MalwareScanStatus = (typeof MALWARE_SCAN_STATUSES)[number];
+
+/**
+ * Controlled File Processing Job Statuses
+ */
+export const FILE_PROCESSING_JOB_STATUSES = [
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'QUARANTINED',
+  'FAILED',
+] as const;
+export type FileProcessingJobStatus = (typeof FILE_PROCESSING_JOB_STATUSES)[number];
 
 /**
  * Supported Storage Providers
@@ -76,7 +100,12 @@ export const resourceFiles = filesSchema.table(
     fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }).notNull(),
     checksumSha256: varchar('checksum_sha256', { length: 64 }).notNull(),
     storageMetadata: jsonb('storage_metadata').default(sql`'{}'::jsonb`),
-    status: varchar('status', { length: 20 }).notNull().default('AVAILABLE'),
+    status: varchar('status', { length: 20 }).notNull().default('PENDING'),
+    malwareScanStatus: varchar('malware_scan_status', { length: 30 })
+      .notNull()
+      .default('PENDING'),
+    malwareScanSignature: varchar('malware_scan_signature', { length: 255 }),
+    scannedAt: timestamp('scanned_at', { withTimezone: true }),
     isPrimary: boolean('is_primary').notNull().default(false),
     sequenceOrder: integer('sequence_order').notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true })
@@ -105,6 +134,10 @@ export const resourceFiles = filesSchema.table(
     check(
       'chk_resource_files_status',
       sql`${table.status} IN ('PENDING', 'AVAILABLE', 'QUARANTINED', 'ARCHIVED', 'FAILED')`,
+    ),
+    check(
+      'chk_resource_files_scan_status',
+      sql`${table.malwareScanStatus} IN ('PENDING', 'CLEAN', 'INFECTED', 'SCAN_ERROR')`,
     ),
     check(
       'chk_resource_files_storage_provider',
@@ -155,6 +188,88 @@ export const resourceFiles = filesSchema.table(
       table.status,
       table.createdAt.desc(),
       table.id.desc(),
+    ),
+  ],
+);
+
+/**
+ * files.file_processing_jobs
+ * Durable queue & lease-fenced state machine for asynchronous malware scanning and promotion.
+ */
+export const fileProcessingJobs = filesSchema.table(
+  'file_processing_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => resourceFiles.id, { onDelete: 'cascade' }),
+    stagedObjectKey: varchar('staged_object_key', { length: 512 }).notNull(),
+    targetObjectKey: varchar('target_object_key', { length: 512 }).notNull(),
+    expectedSha256: varchar('expected_sha256', { length: 64 }).notNull(),
+    expectedSizeBytes: bigint('expected_size_bytes', { mode: 'number' }).notNull(),
+    cleanVerifiedSha256: varchar('clean_verified_sha256', { length: 64 }),
+    status: varchar('status', { length: 24 }).notNull().default('PENDING'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(5),
+    fencingToken: bigint('fencing_token', { mode: 'number' }).notNull().default(0),
+    lockedBy: varchar('locked_by', { length: 100 }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique('uq_file_processing_jobs_file_id').on(table.fileId),
+    check(
+      'chk_file_processing_jobs_status',
+      sql`${table.status} IN ('PENDING', 'RUNNING', 'COMPLETED', 'QUARANTINED', 'FAILED')`,
+    ),
+    check('chk_file_processing_jobs_size', sql`${table.expectedSizeBytes} > 0`),
+    check(
+      'chk_file_processing_jobs_attempts',
+      sql`${table.attemptCount} >= 0 AND ${table.maxAttempts} >= 1`,
+    ),
+    index('idx_file_processing_jobs_claim').on(
+      table.status,
+      table.nextRunAt,
+      table.leaseExpiresAt,
+    ),
+  ],
+);
+
+/**
+ * files.file_processing_history
+ * Immutable audit trail of scan, lease, promotion, and recovery transitions.
+ */
+export const fileProcessingHistory = filesSchema.table(
+  'file_processing_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => fileProcessingJobs.id, { onDelete: 'cascade' }),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => resourceFiles.id, { onDelete: 'cascade' }),
+    eventType: varchar('event_type', { length: 40 }).notNull(),
+    fencingToken: bigint('fencing_token', { mode: 'number' }).notNull().default(0),
+    workerId: varchar('worker_id', { length: 100 }),
+    details: jsonb('details').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_file_processing_history_file_id').on(
+      table.fileId,
+      table.createdAt.desc(),
     ),
   ],
 );

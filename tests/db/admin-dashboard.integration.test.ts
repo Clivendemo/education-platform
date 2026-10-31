@@ -807,7 +807,7 @@ describe.skipIf(!isDbAvailable)(
         }
       });
 
-      it('verifies the 4 Prompt-31 permissions, 99 canonical role_permissions mappings, read-only content_reviewer mappings, and seed fast-path recovery', async () => {
+      it('verifies the 4 Prompt-31 permissions, 106 canonical role_permissions mappings, read-only content_reviewer mappings, and seed fast-path recovery', async () => {
         const pRows = await db
           .select()
           .from(permissions)
@@ -838,7 +838,7 @@ describe.skipIf(!isDbAvailable)(
         expect(reviewerPermSet.has('file.admin.read')).toBe(true);
         expect(reviewerPermSet.has('file.admin.verify')).toBe(false);
 
-        // Verify canonical matrix total = 99 (45 + 31 + 12 + 5 + 4 + 2)
+        // Verify canonical matrix total = 106 (48 + 34 + 13 + 5 + 4 + 2)
         const canonicalCounts = await db
           .select({
             slug: roles.slug,
@@ -859,15 +859,15 @@ describe.skipIf(!isDbAvailable)(
           .groupBy(roles.slug);
         const bySlug = Object.fromEntries(canonicalCounts.map((r) => [r.slug, r.cnt]));
         expect(bySlug).toEqual({
-          system_admin: 45,
-          content_manager: 31,
-          content_reviewer: 12,
+          system_admin: 48,
+          content_manager: 34,
+          content_reviewer: 13,
           contributor: 5,
           verified_teacher: 4,
           standard_user: 2,
         });
         const totalCanonicalMappings = Object.values(bySlug).reduce((a, b) => a + b, 0);
-        expect(totalCanonicalMappings).toBe(99);
+        expect(totalCanonicalMappings).toBe(106);
 
         // Verify fast-path does NOT skip missing Prompt-31 mappings or INACTIVE Prompt-31 permissions
         // Executed inside an isolated rolled-back transaction so parallel Vitest workers are unaffected.
@@ -895,7 +895,7 @@ describe.skipIf(!isDbAvailable)(
               .where(eq(permissions.id, dashPerm.id));
 
             const reseeded = await seedRolesAndPermissions(tx as any);
-            expect(reseeded.mappingsCount).toBe(99);
+            expect(reseeded.mappingsCount).toBe(106);
 
             const [restoredDash] = await tx
               .select()
@@ -917,20 +917,20 @@ describe.skipIf(!isDbAvailable)(
             const fastPathResult = await seedRolesAndPermissions(tx as any);
             expect(fastPathResult).toEqual({
               rolesCount: 6,
-              permissionsCount: 45,
-              mappingsCount: 99,
+              permissionsCount: 48,
+              mappingsCount: 106,
             });
 
             throw new Error('INTENTIONAL_TX_ROLLBACK');
           }),
         ).rejects.toThrow('INTENTIONAL_TX_ROLLBACK');
 
-        // Confirm live DB fast-path also returns exact 6 / 45 / 99 counts
+        // Confirm live DB fast-path also returns exact 6 / 48 / 106 counts
         const liveFastPath = await seedRolesAndPermissions(db);
         expect(liveFastPath).toEqual({
           rolesCount: 6,
-          permissionsCount: 45,
-          mappingsCount: 99,
+          permissionsCount: 48,
+          mappingsCount: 106,
         });
       });
     });

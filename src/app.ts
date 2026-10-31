@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fastify, { type FastifyInstance, type FastifyServerOptions, type FastifyError } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
+import { env } from './config/env.js';
 import { healthRoutes } from './routes/api/v1/health.js';
 import { countriesRoutes } from './routes/api/v1/countries.js';
 import { geographyRoutes } from './routes/api/v1/geography.js';
@@ -26,6 +27,18 @@ import { auditRoutes } from './routes/api/v1/audit.js';
 import { retentionRoutes } from './routes/api/v1/retention.js';
 import { recommendationRoutes } from './routes/api/v1/recommendations.js';
 import { adminDashboardRoutes } from './routes/api/v1/admin-dashboard.js';
+import { homepageRoutes } from './routes/api/v1/homepage.js';
+import {
+  adminHomepageRoutes,
+  type HomepageAdminInstrumentation,
+} from './routes/api/v1/admin-homepage.js';
+import {
+  MPESA_WEBHOOK_BODY_LIMIT_BYTES,
+  MpesaWebhookRateLimiter,
+  defaultMpesaWebhookRateLimiter,
+  createMpesaWebhookPreHandler,
+  registerRawDecimalWebhookJsonParser,
+} from './routes/middleware/mpesa-webhook-guard.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -52,13 +65,77 @@ import type { RetentionService } from './services/retention.service.js';
 import type { RecommendationService } from './services/recommendations/recommendation.service.js';
 import type { FileStorageService } from './services/file-storage.service.js';
 import type { AdminDashboardService } from './services/admin-dashboard.service.js';
+import type { HomepageService } from './services/homepage.service.js';
+import type { HomepageAdminService } from './services/homepage-admin.service.js';
 import { defaultCommerceService } from './services/commerce/commerce.service.js';
 
 // Fastify Request ID validation rule:
 // 1 to 64 characters, allowed characters: alphanumeric, hyphen, underscore
 const VALID_REQUEST_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
 
-export interface AppOptions extends FastifyServerOptions {
+/**
+ * Validates and resolves the effective Fastify `trustProxy` setting (W1-AC-08).
+ * - Rejects `trustProxy: true` and all non-hop forms (strings, arrays, functions, negative/float/>5) in ALL environments.
+ * - Requires explicit `configuredHops` (0..5) in `production` and forbids programmatic overrides that deviate from it.
+ */
+export function resolveEffectiveTrustProxy(
+  optsTrustProxy: unknown,
+  configuredHops: number | undefined,
+  nodeEnv: string = env.NODE_ENV,
+): number | false {
+  if (nodeEnv === 'production' && configuredHops === undefined) {
+    throw new Error(
+      'SECURITY_CONFIG_ERROR: TRUST_PROXY_HOPS (0..5) must be explicitly configured in production.',
+    );
+  }
+
+  const envHops = configuredHops ?? 0;
+  if (!Number.isInteger(envHops) || envHops < 0 || envHops > 5) {
+    throw new Error(
+      `Invalid TRUST_PROXY_HOPS value (${String(configuredHops)}): must be an integer between 0 and 5.`,
+    );
+  }
+
+  let effectiveHops = envHops;
+
+  if (optsTrustProxy !== undefined) {
+    let normalizedOverrideHops: number;
+    if (optsTrustProxy === false) {
+      normalizedOverrideHops = 0;
+    } else if (
+      typeof optsTrustProxy === 'number' &&
+      Number.isInteger(optsTrustProxy) &&
+      optsTrustProxy >= 0 &&
+      optsTrustProxy <= 5
+    ) {
+      normalizedOverrideHops = optsTrustProxy;
+    } else {
+      throw new Error(
+        'Invalid trustProxy configuration: boolean true or unbounded proxy trust is forbidden; use an integer hop count between 0 and 5.',
+      );
+    }
+
+    if (nodeEnv === 'production' && normalizedOverrideHops !== envHops) {
+      throw new Error(
+        `In production, buildApp trustProxy override (${normalizedOverrideHops}) cannot deviate from validated TRUST_PROXY_HOPS (${envHops}).`,
+      );
+    }
+
+    effectiveHops = normalizedOverrideHops;
+  }
+
+  return effectiveHops === 0 ? false : effectiveHops;
+}
+
+export interface AppOptions extends Omit<FastifyServerOptions, 'trustProxy'> {
+  trustProxy?:
+    | number
+    | boolean
+    | string
+    | string[]
+    | ((address: string, hop: number) => boolean);
+  nodeEnvOverride?: 'development' | 'test' | 'production';
+  configuredTrustProxyHopsOverride?: number;
   services?: {
     geographyService?: GeographyService;
     schoolService?: SchoolService;
@@ -86,11 +163,40 @@ export interface AppOptions extends FastifyServerOptions {
     recommendationService?: RecommendationService;
     fileStorageService?: FileStorageService;
     adminDashboardService?: AdminDashboardService;
+    homepageService?: HomepageService;
+    homepageAdminService?: HomepageAdminService;
+    homepageAdminInstrumentation?: HomepageAdminInstrumentation;
+    webhookRateLimiter?: MpesaWebhookRateLimiter;
+    enableLegacyCallbackAlias?: boolean;
   };
 }
 
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
-  const { services, ...serverOpts } = opts;
+  const {
+    services,
+    trustProxy: optsTrustProxy,
+    nodeEnvOverride,
+    configuredTrustProxyHopsOverride,
+    ...restServerOpts
+  } = opts;
+
+  const effectiveNodeEnv = nodeEnvOverride ?? env.NODE_ENV;
+  const effectiveConfiguredHops =
+    configuredTrustProxyHopsOverride !== undefined
+      ? configuredTrustProxyHopsOverride
+      : env.TRUST_PROXY_HOPS;
+
+  const effectiveTrustProxy = resolveEffectiveTrustProxy(
+    optsTrustProxy,
+    effectiveConfiguredHops,
+    effectiveNodeEnv,
+  );
+
+  // Fastify 5.8+ fails closed on raw numeric trustProxy; compile validated hop count into an exact N-hop TrustProxyFunction
+  const fastifyTrustProxy: false | ((address: string, hop: number) => boolean) =
+    effectiveTrustProxy === false
+      ? false
+      : (_address: string, hop: number) => hop < effectiveTrustProxy;
 
   const app = fastify({
     requestIdHeader: false, // Prevents Fastify from blindly adopting unvalidated headers
@@ -104,7 +210,9 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     childLoggerFactory: function (logger, bindings, options) {
       return logger.child({ ...bindings, requestId: bindings.reqId }, options);
     },
-    ...serverOpts,
+    ...restServerOpts,
+    // Placed strictly AFTER ...restServerOpts so unvalidated options can never overwrite trustProxy
+    trustProxy: fastifyTrustProxy,
   });
 
   // Ensure accepted/generated request ID is always included in response headers
@@ -225,6 +333,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     prefix: '/api/v1',
     commerceService: services?.commerceService,
     authService: services?.authService,
+    rbacService: services?.rbacService,
+    auditService: services?.auditService,
+    webhookRateLimiter: services?.webhookRateLimiter,
+    enableLegacyCallbackAlias: services?.enableLegacyCallbackAlias,
   });
   app.register(contributorRoutes, {
     prefix: '/api/v1',
@@ -269,18 +381,18 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     authService: services?.authService,
     rbacService: services?.rbacService,
   });
-  app.register(retentionRoutes, {
-    prefix: '/api/v1',
-    retentionService: services?.retentionService,
-    authService: services?.authService,
-    rbacService: services?.rbacService,
-  });
   app.register(recommendationRoutes, {
     prefix: '/api/v1',
     recommendationService: services?.recommendationService,
     authService: services?.authService,
     rbacService: services?.rbacService,
     auditService: services?.auditService,
+  });
+  app.register(retentionRoutes, {
+    prefix: '/api/v1',
+    retentionService: services?.retentionService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
   app.register(adminDashboardRoutes, {
     prefix: '/api/v1',
@@ -289,20 +401,58 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     rbacService: services?.rbacService,
     auditService: services?.auditService,
   });
+  app.register(homepageRoutes, {
+    prefix: '/api/v1',
+    homepageService: services?.homepageService,
+  });
+  app.register(adminHomepageRoutes, {
+    prefix: '/api/v1',
+    homepageAdminService: services?.homepageAdminService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
+    auditService: services?.auditService,
+    instrumentation: services?.homepageAdminInstrumentation,
+  });
 
-  // Support unversioned /api/payments/mpesa/callback & /api/mpesa/callback
-  app.register(
-    async (sub) => {
-      const handleCallback = async (request: any, reply: any) => {
-        const cs = services?.commerceService ?? defaultCommerceService;
-        const response = await cs.handleMpesaCallback(request.body);
-        return reply.status(200).send(response.ack);
-      };
-      sub.post('/payments/mpesa/callback', handleCallback);
-      sub.post('/mpesa/callback', handleCallback);
-    },
-    { prefix: '/api' },
-  );
+  // Legacy unversioned callback aliases are disabled by default (W1-AC-08).
+  // When explicitly enabled via MPESA_ENABLE_LEGACY_CALLBACK_ALIAS=true, enforce identical 32 KiB body limit,
+  // raw decimal lexeme extraction, and bounded-LRU per-IP rate limiting.
+  const enableLegacyAlias =
+    services?.enableLegacyCallbackAlias ?? env.MPESA_ENABLE_LEGACY_CALLBACK_ALIAS;
+  if (enableLegacyAlias) {
+    const rateLimiter = services?.webhookRateLimiter ?? defaultMpesaWebhookRateLimiter;
+    const webhookPreHandler = createMpesaWebhookPreHandler(rateLimiter);
+
+    app.register(
+      async (sub) => {
+        registerRawDecimalWebhookJsonParser(sub);
+
+        const handleCallback = async (request: any, reply: any) => {
+          const cs = services?.commerceService ?? defaultCommerceService;
+          const response = await cs.handleMpesaCallback(request.body, request.rawWebhookBody);
+          return reply.status(200).send(response.ack);
+        };
+
+        sub.post(
+          '/payments/mpesa/callback',
+          {
+            bodyLimit: MPESA_WEBHOOK_BODY_LIMIT_BYTES,
+            preHandler: [webhookPreHandler],
+          },
+          handleCallback,
+        );
+        sub.post(
+          '/mpesa/callback',
+          {
+            bodyLimit: MPESA_WEBHOOK_BODY_LIMIT_BYTES,
+            preHandler: [webhookPreHandler],
+          },
+          handleCallback,
+        );
+      },
+      { prefix: '/api' },
+    );
+  }
 
   return app;
 }

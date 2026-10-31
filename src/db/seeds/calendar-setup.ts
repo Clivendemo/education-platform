@@ -17,7 +17,13 @@ export const DEFAULT_CALENDAR_EVENT_TYPES = [
   { name: 'Other', slug: 'other', description: 'General calendar events', displayOrder: 11 },
 ];
 
-export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): Promise<void> {
+/**
+ * Structural DDL bootstrap ONLY for the `calendar` logical schema.
+ * Strictly free of reference data seeding so migrations remain structural-only.
+ */
+export async function ensureCalendarBaseDdl(
+  db: NodePgDatabase<typeof schemas>,
+): Promise<void> {
   // 1. Ensure schema exists
   await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "calendar"`);
 
@@ -50,10 +56,18 @@ export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): P
     )
   `);
 
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendars_scope_status" ON "calendar"."calendars" ("calendar_scope", "status")`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendars_user_id" ON "calendar"."calendars" ("user_id")`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendars_session" ON "calendar"."calendars" ("session_id", "expires_at")`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendars_country_year" ON "calendar"."calendars" ("country_id", "academic_year")`);
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendars_scope_status" ON "calendar"."calendars" ("calendar_scope", "status")`,
+  );
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendars_user_id" ON "calendar"."calendars" ("user_id")`,
+  );
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendars_session" ON "calendar"."calendars" ("session_id", "expires_at")`,
+  );
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendars_country_year" ON "calendar"."calendars" ("country_id", "academic_year")`,
+  );
 
   // 3. Create calendar.calendar_event_types
   await db.execute(sql`
@@ -120,8 +134,12 @@ export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): P
     )
   `);
 
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendar_events_calendar_date" ON "calendar"."calendar_events" ("calendar_id", "start_date")`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendar_events_type" ON "calendar"."calendar_events" ("event_type_id")`);
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendar_events_calendar_date" ON "calendar"."calendar_events" ("calendar_id", "start_date")`,
+  );
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendar_events_type" ON "calendar"."calendar_events" ("event_type_id")`,
+  );
 
   // 6. Create calendar.calendar_exports
   await db.execute(sql`
@@ -140,7 +158,9 @@ export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): P
     )
   `);
 
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_calendar_exports_calendar" ON "calendar"."calendar_exports" ("calendar_id")`);
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS "idx_calendar_exports_calendar" ON "calendar"."calendar_exports" ("calendar_id")`,
+  );
 
   // 7. Create calendar.calendar_templates
   await db.execute(sql`
@@ -156,8 +176,11 @@ export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): P
       CONSTRAINT "chk_calendar_templates_status" CHECK ("status" IN ('ACTIVE', 'INACTIVE'))
     )
   `);
+}
 
-  // 8. Seed default event types
+export async function seedCalendarEventTypes(
+  db: NodePgDatabase<typeof schemas>,
+): Promise<void> {
   for (const item of DEFAULT_CALENDAR_EVENT_TYPES) {
     await db.execute(sql`
       INSERT INTO "calendar"."calendar_event_types" ("id", "name", "slug", "description", "status", "display_order")
@@ -168,6 +191,13 @@ export async function setupCalendarSchema(db: NodePgDatabase<typeof schemas>): P
         "display_order" = EXCLUDED."display_order"
     `);
   }
+}
+
+export async function setupCalendarSchema(
+  db: NodePgDatabase<typeof schemas>,
+): Promise<void> {
+  await ensureCalendarBaseDdl(db);
+  await seedCalendarEventTypes(db);
 }
 
 // Allow direct execution via tsx

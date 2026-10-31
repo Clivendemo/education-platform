@@ -4,6 +4,7 @@ import {
   type AuthService,
   defaultAuthService,
   SESSION_COOKIE_NAME,
+  AuthError,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
 } from '../../../services/auth.service.js';
@@ -44,6 +45,16 @@ const LoginBodySchema = z.object({
   password: z
     .string({ required_error: 'Password is required' })
     .min(1, 'Password is required'),
+});
+
+const ChangePasswordBodySchema = z.object({
+  currentPassword: z
+    .string({ required_error: 'Current password is required' })
+    .min(1, 'Current password is required'),
+  newPassword: z
+    .string({ required_error: 'New password is required' })
+    .min(8, 'New password must be at least 8 characters')
+    .max(128, 'New password cannot exceed 128 characters'),
 });
 
 /**
@@ -280,4 +291,77 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
       },
     });
   });
+
+  /**
+   * POST /api/v1/auth/change-password
+   * Verifies current password, updates Argon2id hash, revokes ALL active sessions across devices,
+   * and sets a new rotated HttpOnly session cookie (W1-AC-10).
+   */
+  fastify.post(
+    '/auth/change-password',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const parseResult = ChangePasswordBodySchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_REQUEST_BODY',
+            message:
+              parseResult.error.issues[0]?.message ?? 'Invalid password change body',
+            requestId: request.id,
+          },
+        });
+      }
+
+      if (!service.changePassword) {
+        return reply.status(501).send({
+          error: {
+            code: 'NOT_IMPLEMENTED',
+            message: 'Password change is not supported by the active auth service.',
+            requestId: request.id,
+          },
+        });
+      }
+
+      try {
+        const result = await service.changePassword({
+          userId: request.user!.id,
+          currentPassword: parseResult.data.currentPassword,
+          newPassword: parseResult.data.newPassword,
+          deviceMetadata: {
+            userAgent: request.headers['user-agent'] ?? null,
+            ip: request.ip,
+          },
+        });
+
+        reply.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          expires: result.expiresAt,
+        });
+
+        return reply.status(200).send({
+          data: {
+            success: true,
+            session: {
+              expiresAt: result.expiresAt.toISOString(),
+            },
+          },
+        });
+      } catch (err: any) {
+        if (err instanceof AuthError) {
+          return reply.status(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: request.id,
+            },
+          });
+        }
+        throw err;
+      }
+    },
+  );
 };

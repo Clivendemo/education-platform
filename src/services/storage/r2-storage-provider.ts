@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   HeadObjectCommand,
   GetObjectCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
@@ -13,6 +14,9 @@ import type {
   PutObjectResult,
   HeadObjectResult,
   GetObjectResult,
+  GetObjectStreamOptions,
+  GetObjectStreamResult,
+  CopyObjectParams,
   GetSignedUrlOptions,
 } from './storage-provider.interface.js';
 
@@ -30,6 +34,13 @@ async function getPresigner(): Promise<{ getSignedUrl: typeof import('@aws-sdk/s
     }
   }
   return presignerModule;
+}
+
+function encodeCopySourceKey(key: string): string {
+  return key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
 }
 
 export interface CloudflareR2Config {
@@ -86,12 +97,17 @@ export class CloudflareR2StorageProvider implements StorageProvider {
   }
 
   async putObject(params: PutObjectParams): Promise<PutObjectResult> {
+    const checksumBase64 = params.checksumSha256Hex
+      ? Buffer.from(params.checksumSha256Hex, 'hex').toString('base64')
+      : undefined;
+
     const command = new PutObjectCommand({
       Bucket: this.bucketName,
       Key: params.key,
       Body: params.body,
       ContentType: params.contentType,
       Metadata: params.metadata,
+      ...(checksumBase64 ? { ChecksumSHA256: checksumBase64 } : {}),
     });
 
     const response = await this.client.send(command);
@@ -120,7 +136,6 @@ export class CloudflareR2StorageProvider implements StorageProvider {
         metadata: response.Metadata ?? {},
       };
     } catch (err: unknown) {
-      // In AWS S3 SDK, non-existent objects throw NotFound or 404
       const error = err as { name?: string; $metadata?: { httpStatusCode?: number } };
       if (
         error.name === 'NotFound' ||
@@ -153,7 +168,6 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       }
       buffer = Buffer.concat(chunks);
     } else {
-      // Web stream or Uint8Array
       const byteArray = await response.Body.transformToByteArray();
       buffer = Buffer.from(byteArray);
     }
@@ -165,6 +179,57 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       contentType: response.ContentType ?? 'application/octet-stream',
       metadata: response.Metadata ?? {},
     };
+  }
+
+  async getObjectStream(
+    key: string,
+    options: GetObjectStreamOptions = {},
+  ): Promise<GetObjectStreamResult> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+    });
+
+    const response = await this.client.send(
+      command,
+      options.signal ? { abortSignal: options.signal } : undefined,
+    );
+
+    if (!response.Body) {
+      throw new Error(`Empty body returned for object ${key}`);
+    }
+
+    let stream: Readable;
+    if (response.Body instanceof Readable) {
+      stream = response.Body;
+    } else if (typeof (response.Body as any).transformToWebStream === 'function') {
+      stream = Readable.fromWeb((response.Body as any).transformToWebStream());
+    } else {
+      const byteArray = await response.Body.transformToByteArray();
+      stream = Readable.from(Buffer.from(byteArray));
+    }
+
+    return {
+      key,
+      stream,
+      contentLength: response.ContentLength ?? 0,
+      contentType: response.ContentType ?? 'application/octet-stream',
+      metadata: response.Metadata ?? {},
+    };
+  }
+
+  async copyObject(params: CopyObjectParams): Promise<void> {
+    const hasMetadataOverride = params.metadata !== undefined || params.contentType !== undefined;
+    const command = new CopyObjectCommand({
+      Bucket: this.bucketName,
+      CopySource: `${this.bucketName}/${encodeCopySourceKey(params.sourceKey)}`,
+      Key: params.destinationKey,
+      MetadataDirective: hasMetadataOverride ? 'REPLACE' : 'COPY',
+      ...(params.contentType ? { ContentType: params.contentType } : {}),
+      ...(params.metadata ? { Metadata: params.metadata } : {}),
+    });
+
+    await this.client.send(command);
   }
 
   async deleteObject(key: string): Promise<void> {
@@ -189,6 +254,7 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       expiresInSeconds = 300,
       responseContentDisposition,
       responseContentType,
+      responseCacheControl,
     } = options;
 
     const command = new GetObjectCommand({
@@ -196,6 +262,7 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       Key: key,
       ResponseContentDisposition: responseContentDisposition,
       ResponseContentType: responseContentType,
+      ResponseCacheControl: responseCacheControl,
     });
 
     const presigner = await getPresigner();

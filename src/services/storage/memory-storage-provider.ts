@@ -1,9 +1,14 @@
+import crypto from 'node:crypto';
+import { Readable } from 'node:stream';
 import type {
   StorageProvider,
   PutObjectParams,
   PutObjectResult,
   HeadObjectResult,
   GetObjectResult,
+  GetObjectStreamOptions,
+  GetObjectStreamResult,
+  CopyObjectParams,
   GetSignedUrlOptions,
 } from './storage-provider.interface.js';
 
@@ -38,8 +43,17 @@ export class MemoryStorageProvider implements StorageProvider {
 
   async putObject(params: PutObjectParams): Promise<PutObjectResult> {
     const buffer = Buffer.isBuffer(params.body)
-      ? params.body
+      ? Buffer.from(params.body)
       : Buffer.from(params.body);
+
+    if (params.checksumSha256Hex) {
+      const actualHex = crypto.createHash('sha256').update(buffer).digest('hex');
+      if (actualHex.toLowerCase() !== params.checksumSha256Hex.toLowerCase()) {
+        throw new Error(
+          `BadDigest: The SHA256 you specified (${params.checksumSha256Hex}) did not match what we received (${actualHex}).`,
+        );
+      }
+    }
 
     // S3 downcases all custom metadata keys
     const normalizedMetadata: Record<string, string> = {};
@@ -49,7 +63,7 @@ export class MemoryStorageProvider implements StorageProvider {
       }
     }
 
-    const eTag = `"${Date.now()}"`;
+    const eTag = `"${crypto.createHash('md5').update(buffer).digest('hex')}"`;
     this.storage.set(params.key, {
       body: buffer,
       contentType: params.contentType,
@@ -95,6 +109,69 @@ export class MemoryStorageProvider implements StorageProvider {
     };
   }
 
+  async getObjectStream(
+    key: string,
+    options: GetObjectStreamOptions = {},
+  ): Promise<GetObjectStreamResult> {
+    const item = this.storage.get(key);
+    if (!item) {
+      throw new Error(`NoSuchKey: The specified key does not exist: ${key}`);
+    }
+
+    const snapshot = Buffer.from(item.body);
+    const chunkSize = 16 * 1024;
+    async function* generateChunks() {
+      for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
+        if (options.signal?.aborted) {
+          throw new Error('Object stream aborted');
+        }
+        yield snapshot.subarray(offset, offset + chunkSize);
+      }
+    }
+
+    const stream = Readable.from(generateChunks());
+    if (options.signal) {
+      options.signal.addEventListener(
+        'abort',
+        () => {
+          stream.destroy(new Error('Object stream aborted'));
+        },
+        { once: true },
+      );
+    }
+
+    return {
+      key,
+      stream,
+      contentLength: snapshot.length,
+      contentType: item.contentType,
+      metadata: { ...item.metadata },
+    };
+  }
+
+  async copyObject(params: CopyObjectParams): Promise<void> {
+    const source = this.storage.get(params.sourceKey);
+    if (!source) {
+      throw new Error(`NoSuchKey: The specified source key does not exist: ${params.sourceKey}`);
+    }
+
+    let nextMetadata = { ...source.metadata };
+    if (params.metadata) {
+      nextMetadata = {};
+      for (const [k, v] of Object.entries(params.metadata)) {
+        nextMetadata[k.toLowerCase()] = String(v);
+      }
+    }
+
+    this.storage.set(params.destinationKey, {
+      body: Buffer.from(source.body),
+      contentType: params.contentType ?? source.contentType,
+      metadata: nextMetadata,
+      lastModified: new Date(),
+      eTag: source.eTag,
+    });
+  }
+
   async deleteObject(key: string): Promise<void> {
     this.storage.delete(key);
   }
@@ -107,13 +184,34 @@ export class MemoryStorageProvider implements StorageProvider {
     key: string,
     options: GetSignedUrlOptions = {},
   ): Promise<string> {
-    const { expiresInSeconds = 300, responseContentDisposition } = options;
+    const {
+      expiresInSeconds = 300,
+      responseContentDisposition,
+      responseCacheControl,
+    } = options;
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
     const encodedKey = encodeURIComponent(key);
     const dispositionParam = responseContentDisposition
       ? `&response-content-disposition=${encodeURIComponent(responseContentDisposition)}`
       : '';
-    return `https://mock-storage.local/${this.bucketName}/${encodedKey}?expires=${encodeURIComponent(expiresAt)}&signature=mock-sig-${Date.now()}${dispositionParam}`;
+    const cacheControlParam = responseCacheControl
+      ? `&response-cache-control=${encodeURIComponent(responseCacheControl)}`
+      : '';
+    return `https://mock-storage.local/${this.bucketName}/${encodedKey}?expires=${encodeURIComponent(expiresAt)}&signature=mock-sig-${Date.now()}${dispositionParam}${cacheControlParam}`;
+  }
+
+  /**
+   * Test helper: simulate silent storage corruption or multipart truncation while preserving metadata/eTag (T-W1-SHA-01).
+   */
+  overwriteRawBytesForTesting(key: string, corruptedBody: Buffer): void {
+    const existing = this.storage.get(key);
+    if (!existing) {
+      throw new Error(`Key ${key} does not exist`);
+    }
+    this.storage.set(key, {
+      ...existing,
+      body: Buffer.from(corruptedBody),
+    });
   }
 
   /**

@@ -3,6 +3,8 @@ import { eq, and } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   resourceFiles,
+  fileProcessingJobs,
+  fileProcessingHistory,
   type ResourceFileType,
   RESOURCE_FILE_TYPES,
 } from '../db/schema/files.js';
@@ -10,9 +12,11 @@ import { resourceVersions } from '../db/schema/resource.js';
 import type { StorageProvider } from './storage/storage-provider.interface.js';
 import {
   generateStorageKey,
+  generateQuarantineStorageKey,
   sanitizeFilename,
   getSafeExtension,
 } from './storage/file-key.js';
+import { validateUploadedFileSignature } from './storage/file-signature-validator.js';
 import { env } from '../config/env.js';
 import { db as defaultDb } from '../db/index.js';
 import { defaultStorageProvider } from './download.service.js';
@@ -64,22 +68,22 @@ export class FileStorageService {
     private readonly db: NodePgDatabase<any>,
     private readonly storageProvider: StorageProvider,
     private readonly maxFileSizeBytes: number = env.MAX_FILE_SIZE_BYTES,
+    private readonly envName: string = env.NODE_ENV,
   ) {}
 
   /**
-   * Synchronous Resource File Upload Flow
+   * Quarantine-Staged Resource File Upload Flow (W1-AC-09)
    *
    * Flow:
-   * 1. Validate parent resource version exists and is not PUBLISHED.
-   * 2. Validate MIME type, size limit (>0 and <= max), file type, sequence order.
-   * 3. Compute SHA-256 digest of buffer locally.
-   * 4. Derive safe basename and safe extension (original filename is never in R2 key).
-   * 5. Generate UUID fileId and storage key: resources/{resourceId}/versions/{versionId}/{fileId}.ext
-   * 6. Put object to storage provider with metadata: sha256: computedDigest.
-   * 7. Head object from storage provider: verify existence, byte length, and returned sha256 metadata.
-   * 8. If verification fails: perform compensating cleanup (deleteObject from R2) and throw error.
-   * 9. Persist metadata record in PostgreSQL (files.resource_files) as AVAILABLE.
-   * 10. If DB insert fails: perform compensating cleanup (deleteObject from R2) and rethrow error.
+   * 1. Validate buffer size (>0 and <= max), declared MIME type, fileType, sequenceOrder.
+   * 2. Validate binary magic-byte signature & ZIP/OOXML structural safety BEFORE any storage call (415 on mismatch).
+   * 3. Verify parent resource version exists, matches resourceId, and is not PUBLISHED.
+   * 4. Compute SHA-256 digest of buffer locally.
+   * 5. Stage object exclusively to `quarantine/{env}/resources/{resourceId}/versions/{versionId}/{fileId}.ext` with ChecksumSHA256.
+   * 6. Verify staged object via `headObject` (existence, byte length, and sha256-checksum metadata).
+   * 7. Atomically insert `files.resource_files` (`status = 'PENDING'`, `malware_scan_status = 'PENDING'`)
+   *    and durable `files.file_processing_jobs` (`stagedObjectKey`, `targetObjectKey`, `expectedSha256`, `expectedSizeBytes`).
+   * 8. On any verification or DB failure, delete staged object from `quarantine/` before rethrowing.
    */
   async uploadResourceFile(input: UploadResourceFileInput) {
     const {
@@ -113,7 +117,7 @@ export class FileStorageService {
       );
     }
 
-    // 2. Validate MIME type
+    // 2. Validate MIME type allowlist
     const normalizedMime = mimeType.toLowerCase().trim();
     if (!ALLOWED_MIME_TYPES.includes(normalizedMime as AllowedMimeType)) {
       throw new FileStorageError(
@@ -123,7 +127,10 @@ export class FileStorageService {
       );
     }
 
-    // 3. Validate fileType enum
+    // 3. Validate binary magic bytes & archive structure BEFORE touching DB/storage (W1-AC-09)
+    validateUploadedFileSignature(buffer, normalizedMime as AllowedMimeType);
+
+    // 4. Validate fileType enum
     if (!RESOURCE_FILE_TYPES.includes(fileType)) {
       throw new FileStorageError(
         `File type "${fileType}" is invalid. Allowed: ${RESOURCE_FILE_TYPES.join(', ')}`,
@@ -132,7 +139,7 @@ export class FileStorageService {
       );
     }
 
-    // 4. Validate sequence order
+    // 5. Validate sequence order
     if (sequenceOrder < 1 || !Number.isInteger(sequenceOrder)) {
       throw new FileStorageError(
         'sequenceOrder must be a positive integer greater than or equal to 1.',
@@ -141,7 +148,7 @@ export class FileStorageService {
       );
     }
 
-    // 5. Verify parent resource version exists and verify publication status
+    // 6. Verify parent resource version exists and verify publication status
     const versionQuery = await this.db
       .select({
         id: resourceVersions.id,
@@ -178,20 +185,27 @@ export class FileStorageService {
       );
     }
 
-    // 6. Compute local SHA-256 digest
+    // 7. Compute local SHA-256 digest
     const checksumSha256 = crypto
       .createHash('sha256')
       .update(buffer)
       .digest('hex')
       .toLowerCase();
 
-    // 7. Sanitize filename (basename only, no path traversal)
+    // 8. Sanitize filename (basename only, no path traversal)
     const safeBasename = sanitizeFilename(originalFilename);
     const safeExt = getSafeExtension(safeBasename, normalizedMime);
 
-    // 8. Generate unique fileId and UUID-derived storage key (never includes original filename)
+    // 9. Generate UUID fileId, staged quarantine key, and promoted target key
     const fileId = crypto.randomUUID();
-    const objectKey = generateStorageKey({
+    const stagedObjectKey = generateQuarantineStorageKey({
+      envName: this.envName,
+      resourceId,
+      resourceVersionId,
+      fileId,
+      safeExtension: safeExt,
+    });
+    const targetObjectKey = generateStorageKey({
       resourceId,
       resourceVersionId,
       fileId,
@@ -201,12 +215,13 @@ export class FileStorageService {
     const bucketName = this.storageProvider.getBucketName();
     const providerName = this.storageProvider.getProviderName();
 
-    // 9. Upload object to storage provider with SHA-256 metadata (sha256-checksum)
+    // 10. Stage object to quarantine prefix with SHA-256 integrity metadata
     try {
       await this.storageProvider.putObject({
-        key: objectKey,
+        key: stagedObjectKey,
         body: buffer,
         contentType: normalizedMime,
+        checksumSha256Hex: checksumSha256,
         metadata: {
           'sha256-checksum': checksumSha256,
           'original-filename': encodeURIComponent(safeBasename),
@@ -220,12 +235,12 @@ export class FileStorageService {
       );
     }
 
-    // 10. Verification phase: Head object from storage provider and compare length & SHA-256
+    // 11. Verification phase: Head staged object and compare byte length & SHA-256 metadata
     try {
-      const headResult = await this.storageProvider.headObject(objectKey);
+      const headResult = await this.storageProvider.headObject(stagedObjectKey);
 
       if (!headResult) {
-        throw new Error('Object not found in storage immediately after upload');
+        throw new Error('Staged object not found in storage immediately after upload');
       }
 
       if (headResult.contentLength !== buffer.length) {
@@ -234,7 +249,6 @@ export class FileStorageService {
         );
       }
 
-      // Check SHA-256 in object metadata (sha256-checksum key match)
       const returnedSha256 =
         headResult.metadata['sha256-checksum'] ||
         headResult.metadata['SHA256-CHECKSUM'] ||
@@ -246,9 +260,8 @@ export class FileStorageService {
         );
       }
     } catch (verifyErr) {
-      // Verification failed: perform compensating cleanup on storage provider
       try {
-        await this.storageProvider.deleteObject(objectKey);
+        await this.storageProvider.deleteObject(stagedObjectKey);
       } catch (cleanupErr) {
         console.error('Compensating cleanup failed after verification failure:', cleanupErr);
       }
@@ -260,37 +273,68 @@ export class FileStorageService {
       );
     }
 
-    // 11. Persist file metadata record in PostgreSQL as AVAILABLE
+    // 12. Atomically persist PENDING resource_files row + durable file_processing_jobs row
     try {
-      const [insertedFile] = await this.db
-        .insert(resourceFiles)
-        .values({
-          id: fileId,
-          resourceVersionId,
-          storageProvider: providerName,
-          storageBucket: bucketName,
-          objectKey,
-          originalFilename: safeBasename,
-          fileExtension: safeExt,
-          fileType,
-          mimeType: normalizedMime,
-          fileSizeBytes: buffer.length,
-          checksumSha256,
-          storageMetadata: {
-            'sha256-checksum': checksumSha256,
-            'original-filename': safeBasename,
-          },
-          status: 'AVAILABLE',
-          isPrimary,
-          sequenceOrder,
-        })
-        .returning();
+      return await this.db.transaction(async (tx) => {
+        const [insertedFile] = await tx
+          .insert(resourceFiles)
+          .values({
+            id: fileId,
+            resourceVersionId,
+            storageProvider: providerName,
+            storageBucket: bucketName,
+            objectKey: stagedObjectKey,
+            originalFilename: safeBasename,
+            fileExtension: safeExt,
+            fileType,
+            mimeType: normalizedMime,
+            fileSizeBytes: buffer.length,
+            checksumSha256,
+            storageMetadata: {
+              'sha256-checksum': checksumSha256,
+              'original-filename': safeBasename,
+              staged: true,
+            },
+            status: 'PENDING',
+            malwareScanStatus: 'PENDING',
+            isPrimary,
+            sequenceOrder,
+          })
+          .returning();
 
-      return insertedFile;
+        const [job] = await tx
+          .insert(fileProcessingJobs)
+          .values({
+            fileId: insertedFile.id,
+            stagedObjectKey,
+            targetObjectKey,
+            expectedSha256: checksumSha256,
+            expectedSizeBytes: buffer.length,
+            status: 'PENDING',
+            attemptCount: 0,
+            maxAttempts: 5,
+            fencingToken: 0,
+          })
+          .returning();
+
+        await tx.insert(fileProcessingHistory).values({
+          jobId: job.id,
+          fileId: insertedFile.id,
+          eventType: 'STAGE_UPLOADED',
+          fencingToken: 0,
+          details: {
+            stagedObjectKey,
+            targetObjectKey,
+            expectedSizeBytes: buffer.length,
+            expectedSha256: checksumSha256,
+          },
+        });
+
+        return insertedFile;
+      });
     } catch (dbErr) {
-      // Database insert failed: perform compensating cleanup on storage provider
       try {
-        await this.storageProvider.deleteObject(objectKey);
+        await this.storageProvider.deleteObject(stagedObjectKey);
       } catch (cleanupErr) {
         console.error('Compensating cleanup failed after database insert failure:', cleanupErr);
       }
@@ -344,7 +388,7 @@ export class FileStorageService {
   /**
    * Controlled file deletion.
    * Only files belonging to non-PUBLISHED resource versions can be deleted.
-   * Removes PostgreSQL metadata and cleans up storage provider object.
+   * Removes PostgreSQL metadata (cascading processing job/history) and cleans up staged/promoted storage keys.
    */
   async deleteFile(fileId: string) {
     const file = await this.getFileById(fileId);
@@ -352,7 +396,6 @@ export class FileStorageService {
       throw new FileStorageError(`File "${fileId}" not found.`, 'FILE_NOT_FOUND', 404);
     }
 
-    // Verify parent version is not published
     const versionQuery = await this.db
       .select({
         id: resourceVersions.id,
@@ -370,14 +413,27 @@ export class FileStorageService {
       );
     }
 
-    // Delete DB record first (trigger will also reject if published)
+    const [job] = await this.db
+      .select({
+        stagedObjectKey: fileProcessingJobs.stagedObjectKey,
+        targetObjectKey: fileProcessingJobs.targetObjectKey,
+      })
+      .from(fileProcessingJobs)
+      .where(eq(fileProcessingJobs.fileId, fileId))
+      .limit(1);
+
     await this.db.delete(resourceFiles).where(eq(resourceFiles.id, fileId));
 
-    // Delete object from storage provider
-    try {
-      await this.storageProvider.deleteObject(file.objectKey);
-    } catch (storageErr) {
-      console.error(`Failed to delete object from storage: ${file.objectKey}`, storageErr);
+    const keysToDelete = new Set<string>([file.objectKey]);
+    if (job?.stagedObjectKey) keysToDelete.add(job.stagedObjectKey);
+    if (job?.targetObjectKey) keysToDelete.add(job.targetObjectKey);
+
+    for (const key of keysToDelete) {
+      try {
+        await this.storageProvider.deleteObject(key);
+      } catch (storageErr) {
+        console.error(`Failed to delete object from storage: ${key}`, storageErr);
+      }
     }
 
     return file;
@@ -427,5 +483,3 @@ export const defaultFileStorageService = new FileStorageService(
   defaultDb,
   defaultStorageProvider,
 );
-
-

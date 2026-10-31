@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { MpesaPaymentProvider } from '../../src/services/commerce/mpesa/mpesa-payment-provider.js';
+import {
+  MpesaPaymentProvider,
+  hashMpesaPhone,
+} from '../../src/services/commerce/mpesa/mpesa-payment-provider.js';
 import { DarajaClient } from '../../src/services/commerce/mpesa/daraja-client.js';
 import {
   MpesaPhoneValidationError,
@@ -13,11 +16,11 @@ describe('MpesaPaymentProvider Unit Tests', () => {
     consumerSecret: 'secret',
     shortcode: '174379',
     passkey: 'passkey',
-    callbackUrl: 'https://example.com/callback',
+    callbackUrl: 'https://example.com/api/v1/commerce/webhooks/mpesa',
   };
 
   describe('1. createPayment Initiation', () => {
-    it('successfully initiates STK push and returns providerReference', async () => {
+    it('successfully initiates STK push, hashes phone SHA-256, and omits raw MSISDN from persisted payload', async () => {
       const mockDarajaClient = {
         initiateStkPush: vi.fn().mockResolvedValue({
           MerchantRequestID: 'MERCHANT-REQ-1',
@@ -44,13 +47,15 @@ describe('MpesaPaymentProvider Unit Tests', () => {
 
       expect(result.providerCode).toBe('MPESA');
       expect(result.providerReference).toBe('ws_CO_TEST_123');
-      expect(result.status).toBe('PENDING');
-      expect(result.payload?.phoneNumber).toBe('254712345678');
+      expect(result.providerMerchantRequestId).toBe('MERCHANT-REQ-1');
+      expect(result.status).toBe('PROCESSING');
+      expect(result.initiatedPhoneHash).toBe(hashMpesaPhone('254712345678'));
+      expect(result.payload?.phoneNumber).toBeUndefined();
       expect(result.payload?.merchantRequestId).toBe('MERCHANT-REQ-1');
 
       expect(mockDarajaClient.initiateStkPush).toHaveBeenCalledWith({
         phoneNumber: '254712345678',
-        amountKes: 200,
+        amountMinor: 20000n,
         accountReference: expect.any(String),
         transactionDesc: expect.any(String),
       });
@@ -86,11 +91,11 @@ describe('MpesaPaymentProvider Unit Tests', () => {
     });
   });
 
-  describe('2. parseCallback Parsing & Validation', () => {
+  describe('2. parseCallback Parsing & Sanitization', () => {
     const provider = new MpesaPaymentProvider({ config: dummyConfig });
 
-    it('parses a successful Daraja callback with metadata', () => {
-      const successPayload = {
+    it('parses a successful Daraja callback with exact bigint minor units and sanitizes PhoneNumber', () => {
+      const rawJson = JSON.stringify({
         Body: {
           stkCallback: {
             MerchantRequestID: '29115-34620561-1',
@@ -108,19 +113,20 @@ describe('MpesaPaymentProvider Unit Tests', () => {
             },
           },
         },
-      };
+      });
 
-      const parsed = provider.parseCallback(successPayload);
-      expect(parsed.isSuccessful).toBe(true);
-      expect(parsed.isCancelled).toBe(false);
+      const parsed = provider.parseCallback(JSON.parse(rawJson), rawJson);
+      expect(parsed.isSuccessfulClaim).toBe(true);
+      expect(parsed.isCancelledClaim).toBe(false);
       expect(parsed.checkoutRequestId).toBe('ws_CO_191220231024531234567890');
       expect(parsed.merchantRequestId).toBe('29115-34620561-1');
-      expect(parsed.amountKes).toBe(200);
+      expect(parsed.amountMinor).toBe(20000n);
       expect(parsed.mpesaReceiptNumber).toBe('NLJ7RT61SV');
-      expect(parsed.phoneNumber).toBe('254712345678');
+      expect(parsed.callbackPhoneHash).toBe(hashMpesaPhone('254712345678'));
+      expect(JSON.stringify(parsed.sanitizedSummary)).not.toContain('254712345678');
     });
 
-    it('parses a user-cancelled callback (ResultCode 1032)', () => {
+    it('parses a user-cancelled callback claim (ResultCode 1032)', () => {
       const cancelledPayload = {
         Body: {
           stkCallback: {
@@ -133,13 +139,13 @@ describe('MpesaPaymentProvider Unit Tests', () => {
       };
 
       const parsed = provider.parseCallback(cancelledPayload);
-      expect(parsed.isSuccessful).toBe(false);
-      expect(parsed.isCancelled).toBe(true);
+      expect(parsed.isSuccessfulClaim).toBe(false);
+      expect(parsed.isCancelledClaim).toBe(true);
       expect(parsed.resultCode).toBe(1032);
       expect(parsed.resultDesc).toBe('Request cancelled by user.');
     });
 
-    it('parses a failure callback (ResultCode 1 - Insufficient funds)', () => {
+    it('parses a failure callback claim (ResultCode 1 - Insufficient funds)', () => {
       const failedPayload = {
         Body: {
           stkCallback: {
@@ -152,8 +158,8 @@ describe('MpesaPaymentProvider Unit Tests', () => {
       };
 
       const parsed = provider.parseCallback(failedPayload);
-      expect(parsed.isSuccessful).toBe(false);
-      expect(parsed.isCancelled).toBe(false);
+      expect(parsed.isSuccessfulClaim).toBe(false);
+      expect(parsed.isCancelledClaim).toBe(false);
       expect(parsed.resultCode).toBe(1);
     });
 
@@ -168,7 +174,6 @@ describe('MpesaPaymentProvider Unit Tests', () => {
           Body: {
             stkCallback: {
               MerchantRequestID: '123',
-              // missing CheckoutRequestID
               ResultCode: 0,
             },
           },

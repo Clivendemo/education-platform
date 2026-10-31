@@ -2623,6 +2623,27 @@ Prompt 31 adds 18 additive B-tree indexes (zero table/column/constraint changes)
    - **Emergency Disablement**: Retain the 4 `identity.permissions` records, remove their 11 Prompt-31 `identity.role_permissions` mappings, and set `status = 'INACTIVE'` on those 4 `identity.permissions` records (`chk_permissions_status` allows `'ACTIVE' | 'INACTIVE'`).
    - **Shared Permission Invariant**: Both procedures must leave all 41 shared pre-Prompt-31 permissions and their 88 role-permission mappings untouched.
 
+## 45.3 Homepage Intelligence Schema & Constraints (`0021_homepage_intelligence.sql`)
+
+Prompt 32 introduces country-scoped homepage configuration, editorial slot pinning, GiST schedule exclusion, authoritative SQL live eligibility evaluation, and transaction-paired rollback provenance in schema `content`:
+
+1. **Extension & Preflight**:
+   - Enables `CREATE EXTENSION IF NOT EXISTS "btree_gist" WITH SCHEMA "public"`.
+   - Read-only preflight (`src/services/homepage-gist-preflight.ts`) validates PostgreSQL version (`14..18`), core `tstzrange`/`anyrange` GiST `&&` strategy `3`, default `uuid` GiST `=` strategy `3`, and exact `CreateExtensionInternal` / `extension_is_trusted` privileges (`has_database_privilege(..., 'CREATE')` + `public` `CREATE` + `public` `USAGE`).
+2. **Controlled Enums (`content` schema)**:
+   - `homepage_config_status`: `'DRAFT' | 'SCHEDULED' | 'PUBLISHED' | 'SUPERSEDED' | 'ROLLED_BACK' | 'ARCHIVED' | 'DISCARDED'`
+   - `homepage_slot_key`: `'trending_resources' | 'most_downloaded_resources' | 'curated_resources' | 'education_updates' | 'calendar_highlights' | 'curriculum_shortcuts'`
+   - `homepage_slot_mode`: `'AUTOMATED' | 'CURATED_HYBRID' | 'MANUAL_OVERRIDE'`
+   - `homepage_entity_type`: `'RESOURCE' | 'UPDATE' | 'CALENDAR_EVENT' | 'SUBJECT'`
+3. **Tables (`content` schema)**:
+   - `content.homepage_configurations` (25 columns): country-versioned configuration header (`uq_homepage_cfg_country_version`), partial unique indexes `uq_homepage_cfg_one_active_draft_per_country` (`WHERE status = 'DRAFT'`) and `uq_homepage_cfg_one_published_per_country` (`WHERE status = 'PUBLISHED'`), finite timestamp checks (`isfinite(...)`), status invariant CHECK `chk_homepage_cfg_status_invariants`, and GiST exclusion constraint `excl_homepage_cfg_country_schedule_window` (`EXCLUDE USING gist (country_id WITH =, tstzrange(scheduled_start_at, COALESCE(scheduled_until_at, 'infinity'::timestamptz), '[)') WITH &&) WHERE (status = 'SCHEDULED')`).
+   - `content.homepage_configuration_slots`: 6 canonical slots (`slot_order 1..6`, `max_items 1..6`, `chk_homepage_slots_canonical_mapping`, composite FK `fk_homepage_slots_cfg_country`).
+   - `content.homepage_configuration_items`: ordered pinned items (`position 1..6`, strict entity XOR `chk_homepage_items_entity_xor`, composite country FK `fk_homepage_items_resource_country` + entity FKs, partial per-slot entity uniqueness indexes).
+   - `content.homepage_configuration_rollbacks`: append-only immutable rollback pairing ledger (`uq_homepage_rollbacks_predecessor`, `uq_homepage_rollbacks_clone`, `txid xid8 NOT NULL DEFAULT pg_current_xact_id()`, composite country FKs to predecessor, target source, and forward clone).
+4. **SQL Eligibility Gate & Triggers**:
+   - Pure `IMMUTABLE` SQL projection classifiers `content.fn_diag_homepage_resource_projection` and `content.fn_diag_homepage_subject_projection` (`IS NOT TRUE` / `IS DISTINCT FROM` null-safe three-valued logic), bounded depth-16 topic ancestry evaluator `content.fn_diag_homepage_topic_ancestry`, and live gateway `content.fn_evaluate_homepage_entity_eligibility` / `content.fn_is_homepage_entity_eligible`.
+   - Row/constraint triggers (`trg_homepage_cfg_lifecycle_guard`, `trg_homepage_cfg_publish_completeness` [`DEFERRABLE INITIALLY DEFERRED`], `trg_homepage_slots_mutation_guard`, `trg_homepage_items_mutation_guard`, `trg_homepage_rollbacks_immutable`, `trg_homepage_rollbacks_handshake` [`DEFERRABLE INITIALLY DEFERRED`]) forbid physical `DELETE`, freeze non-`DRAFT` slots/items, enforce 6-slot completeness & live item eligibility on `SCHEDULED`/`PUBLISHED`, and guarantee bidirectional same-`xid8` rollback pairing.
+
 ---
 
 # 46. UNIQUE CONSTRAINTS

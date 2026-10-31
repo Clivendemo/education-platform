@@ -1,0 +1,720 @@
+ → expected 400 to be 200 // Object.is equality
+   × Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public contributors with published resource count 1958ms
+     → expected undefined to be defined
+   × Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > retrieves public contributor profile by slug 280ms
+     → expected 404 to be 200 // Object.is equality
+   × Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public published resources attributed to contributor 284ms
+     → expected 404 to be 200 // Object.is equality
+   ✓ Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > returns 404 for unknown contributor slug 276ms
+   × Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > allows admin to suspend a contributor 554ms
+     → expected 400 to be 200 // Object.is equality
+   ✓ Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > hides suspended contributor from public profile discovery with 404 273ms
+   × Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from updating profile with 403 570ms
+     → expected 'FORBIDDEN' to be 'CONTRIBUTOR_SUSPENDED' // Object.is equality
+   × Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from creating submissions with 403 561ms
+     → expected 'FORBIDDEN' to be 'CONTRIBUTOR_SUSPENDED' // Object.is equality
+   × Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > re-activates contributor when admin sets status to ACTIVE 550ms
+     → expected 400 to be 200 // Object.is equality
+ ✓ tests/services/commerce.service.test.ts (6 tests) 66216ms
+   ✓ Commerce Service Unit & Functional Tests > 1. Offer Validity & Product Types > evaluates offer validity against current time: rejects expired offers (Correction 6)  1086ms
+   ✓ Commerce Service Unit & Functional Tests > 1. Offer Validity & Product Types > rejects BUNDLE checkout expansion in Prompt 18 (Correction 5)  1356ms
+   ✓ Commerce Service Unit & Functional Tests > 2. Server-Authoritative Totals & Historical Price Immutability > calculates order total server-side and preserves historical snapshot if offer later changes (Correction 7)  2972ms
+   ✓ Commerce Service Unit & Functional Tests > 2. Server-Authoritative Totals & Historical Price Immutability > enforces order idempotency via idempotencyKey  2977ms
+   ✓ Commerce Service Unit & Functional Tests > 3. Ownership Isolation > prevents User B from accessing User A order  2439ms
+   ✓ Commerce Service Unit & Functional Tests > 4. Payment Completion & Atomic Entitlement Flow > verifies exact payment amount & currency before completing order and provisioning entitlement (Correction 2)  20527ms
+ ✓ tests/db/file-storage.trigger.test.ts (15 tests) 43953ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully updates metadata on a file belonging to a DRAFT version (proving trigger is not over-broad)  599ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully moves a file between two DRAFT versions  567ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 1. Legitimate Pre-Publication File Mutation on DRAFT Versions > successfully deletes a file belonging to a DRAFT version  837ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 2. Direct SQL Publication Protection Triggers (Defense-in-Depth) > rejects direct SQL UPDATE on a file belonging to a PUBLISHED resource version  8513ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 2. Direct SQL Publication Protection Triggers (Defense-in-Depth) > rejects moving a file from a DRAFT version into a PUBLISHED version  2452ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces partial unique index for single primary file per version (uq_resource_files_primary_version)  2414ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces unique sequence_order per version (uq_resource_files_version_seq)  2469ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects non-positive byte size (chk_resource_files_file_size_bytes)  2494ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid SHA-256 length (chk_resource_files_sha256)  3491ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid status value (chk_resource_files_status)  2497ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > enforces unique (resource_version_id, checksum_sha256) constraint (uq_resource_files_version_checksum)  2501ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > rejects invalid storage_provider value (chk_resource_files_storage_provider)  1976ms
+   ✓ Prompt 09: File Storage Neon Database Integrity & Publication Triggers > 3. Database Constraints & Invariants > accepts QUARANTINED file status and persists storage_metadata JSONB  2596ms
+ ✓ tests/db/resource.integration.test.ts (15 tests) 47344ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates a general resource without curriculum relationship  4862ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates a fully curriculum-linked resource down to topic  854ms
+   ✓ Resource Engine Database Integration Tests > 1. Valid Resource Creation & Hierarchical Linking > creates multiple versions on a resource with version ordering  2137ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > prohibits modifying a PUBLISHED resource version through the application service  831ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > prohibits modifying a PUBLISHED resource version through direct database updates (trigger defense)  1430ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > allows modifying an unpublished (DRAFT) version through the application service  3585ms
+   ✓ Resource Engine Database Integration Tests > 2. Published Resource-Version Immutability & Version-Number Policy > enforces correction policy: corrections create a new version with higher version_number  1100ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > enforces composite foreign key fk_resources_school_country: rejects cross-country school assignment  553ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects duplicate version number for the same resource  3008ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects version number <= 0  2785ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects parent-dependency violation: topic provided without subject  2442ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects parent-dependency violation: subject provided without grade  2460ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects cross-country curriculum relationship: Kenya resource with Tanzania curriculum  2671ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > enforces RESTRICT on deleting a school referenced by a resource  3016ms
+   ✓ Resource Engine Database Integration Tests > 3. Database Integrity Constraints & Rejections > rejects invalid resource status and invalid quality label  4871ms
+ ✓ tests/db/commerce.integration.test.ts (12 tests) 48655ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects a RESOURCE product missing resource_id (chk_products_resource_ref)  2456ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > creates a valid offer in KES integer minor units (chk_offers_currency)  2735ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects an offer with negative price (chk_offers_price)  563ms
+   ✓ Commerce Database Integration Tests > 1. Products & Offers Constraints > rejects an offer with currency other than KES (chk_offers_currency)  2783ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > creates an order with snapshots of quantity, unit_price_minor, and total_minor  4150ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > rejects an order item where total_minor does not equal quantity * unit_price_minor (chk_order_items_total)  1098ms
+   ✓ Commerce Database Integration Tests > 2. Orders & Order Items Invariants > enforces cascade deletion: deleting an order deletes its order_items  3825ms
+   ✓ Commerce Database Integration Tests > 3. Payments & Provider Reference Uniqueness > enforces uniqueness of provider reference per provider_code (uq_payments_provider_ref)  825ms
+   ✓ Commerce Database Integration Tests > 4. Entitlements Invariants & Partial Unique Index > creates an entitlement linked to a resource and user without is_paid flag  5428ms
+ ✓ tests/services/commerce-mpesa.service.test.ts (7 tests) 42567ms
+   ✓ CommerceService M-Pesa Integration Tests > 1. M-Pesa STK Push Initiation > initiates STK push and transitions order to PROCESSING  3049ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > confirms payment, marks order COMPLETED, and provisions resource entitlement on successful callback  6814ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > ensures callback idempotency: duplicate successful callback does not re-grant entitlements or mutate records  6361ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > handles user cancellation (ResultCode 1032) by marking payment and order CANCELLED  4992ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > rejects amount mismatch: underpayment or overpayment transitions payment to FAILED without granting entitlements  5300ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > safely handles unknown checkoutRequestId without leaking record presence  820ms
+   ✓ CommerceService M-Pesa Integration Tests > 2. M-Pesa Callback Handling & Entitlement Provisioning > is race-safe when concurrent duplicate callbacks arrive simultaneously  6358ms
+ ✓ tests/routes/downloads.integration.test.ts (17 tests) 40034ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows anonymous download with NO session cookie  948ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows authenticated download with valid session cookie  3313ms
+   ✓ Free Downloads HTTP Route Integration Tests > 1. Anonymous & Authenticated Access (Correction 3) > allows download when session cookie is invalid or expired (treats as anonymous)  1108ms
+   ✓ Free Downloads HTTP Route Integration Tests > 2. Parameter Validation & File Selection > successfully downloads specific file when valid fileId is provided in body  826ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > blocks cross-version file access: returns 404 FILE_NOT_FOUND when requesting another resource file  851ms
+   ✓ Free Downloads HTTP Route Integration Tests > 3. Gating & Error Invariants > blocks quarantined file download with 400 FILE_NOT_AVAILABLE  827ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks authenticated user without entitlement from downloading PREMIUM resource (403)  832ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks authenticated user with EXPIRED entitlement from downloading PREMIUM resource (403)  827ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > blocks user when entitlement is for a different resource (resource-specific access check 403)  830ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > allows authenticated user with valid active entitlement to download published premium resource  1384ms
+   ✓ Free Downloads HTTP Route Integration Tests > 4. Prompt 20: Premium Download Route Authorization > allows entitled user to download explicit available file of premium resource  5821ms
+ ✓ tests/db/notifications.integration.test.ts (15 tests) 40398ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_priority on invalid priority  2499ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects UNREAD with read_at populated  2463ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects READ with read_at NULL  2434ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces chk_notifications_lifecycle: rejects ARCHIVED with archived_at NULL  2471ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > accepts ARCHIVED notification preserving prior read_at timestamp  2446ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > enforces uq_notifications_user_dedup: prevents duplicate non-null deduplicationKey for same user  545ms
+   ✓ Notifications Database Layer Integration Tests > 1. Notifications Table Invariants > allows multiple notifications with NULL deduplicationKey for the same user  2464ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects SENT with failed_at populated  2498ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects FAILED without error_message  2513ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects PROCESSING without locked_at or locked_by  2498ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_invariants: rejects SKIPPED with attempt_count > 0  2537ms
+   ✓ Notifications Database Layer Integration Tests > 2. Notification Deliveries Table Invariants > enforces chk_deliveries_attempts: rejects attempt_count > max_attempts  3531ms
+   ✓ Notifications Database Layer Integration Tests > 3. Foreign Key Cascades & Cleanup > cascades deletion of user to notifications, deliveries, and preferences  5117ms
+ ✓ tests/services/education-update.service.test.ts (8 tests) 43862ms
+   ✓ Prompt 23: Education Updates Service & Invariants > creates updates strictly as DRAFT and verifies canonical properties  2469ms
+   ✓ Prompt 23: Education Updates Service & Invariants > rejects duplicate slugs with a 409 DUPLICATE_SLUG error  2168ms
+   ✓ Prompt 23: Education Updates Service & Invariants > supports regional (nullable country_id) updates and builds regional canonical URLs  3048ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces country consistency: rejects curriculum from mismatched country  820ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces publication lifecycle: DRAFT -> PUBLISHED sets published_at and preserves on edit  10611ms
+   ✓ Prompt 23: Education Updates Service & Invariants > enforces publication lifecycle: ARCHIVED immediately hides from public endpoints and prevents edits  6529ms
+   ✓ Prompt 23: Education Updates Service & Invariants > prevents leakage: public response filters out draft attached resources  5697ms
+   ✓ Prompt 23: Education Updates Service & Invariants > provides deterministic OpenGraph, Twitter, and canonical SEO metadata  5025ms
+ ✓ tests/db/calendar.integration.test.ts (14 tests) 34493ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates a SCHOOL calendar bound to a school entity  2454ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates a USER calendar bound to an authenticated user  2530ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > creates an ANONYMOUS_SESSION calendar with explicit session_id and expires_at  2519ms
+   ✓ Calendar Database Integration Tests > 1. Calendar Scopes & Structural Ownership Constraints > rejects an invalid calendar scope value (chk_calendars_scope)  2485ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > creates a valid calendar event with date and time ordering  2822ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > rejects an event where end_date precedes start_date (chk_calendar_events_date_order)  584ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > rejects an event where end_time precedes start_time on same day (chk_calendar_events_time_order)  2742ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > supports structural recurrence rules without duplicate event cloning  2539ms
+   ✓ Calendar Database Integration Tests > 2. Calendar Events Integrity & Chronological Constraints > enforces cascade deletion: deleting calendar cascades to its events and exports  1660ms
+ ✓ tests/routes/commerce.integration.test.ts (13 tests) 39106ms
+   ✓ Commerce HTTP Route Integration Tests > 1. Public Product Discovery > GET /api/v1/products returns product catalog with active offers without authentication  2115ms
+   ✓ Commerce HTTP Route Integration Tests > 1. Public Product Discovery > GET /api/v1/products/:id returns specific product details with active offers  569ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/checkout creates order with server-calculated totals  3867ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/orders/:id retrieves order and snapshot items for owner  848ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/me/orders lists orders for authenticated user  833ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/payments initiates payment and transitions order to PROCESSING  1702ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/payments/:id returns payment status for authorized owner  1181ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > POST /api/v1/payments/:id/simulate-success completes payment and provisions entitlement (Correction 8)  7151ms
+   ✓ Commerce HTTP Route Integration Tests > 3. Authenticated Checkout, Payment & Entitlement Flow > GET /api/v1/me/entitlements exposes active entitlement for purchased resource  567ms
+   ✓ Commerce HTTP Route Integration Tests > 4. Cross-User Isolation & Security Invariants > prevents User B from accessing User A order (403 FORBIDDEN)  2281ms
+   ✓ Commerce HTTP Route Integration Tests > 4. Cross-User Isolation & Security Invariants > isolates entitlements: User B has no active entitlement for resource purchased by User A  565ms
+ ✓ tests/db/geography.integration.test.ts (12 tests) 22065ms
+   ✓ Geography Database Integration Tests > Seeded Kenya Geography Verification > contains the three-tier administrative area types (County -> Sub-County -> Ward)  551ms
+   ✓ Geography Database Integration Tests > Seeded Kenya Geography Verification > contains exactly 47 counties of Kenya with parent_id IS NULL  842ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces lowercase URL prefix constraint (chk_countries_url_prefix_lower)  2470ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces unique ISO code constraint (uq_countries_iso_code)  2543ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > enforces unique URL prefix constraint (uq_countries_url_prefix)  2475ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > prevents self-parenting on administrative areas  3046ms
+   ✓ Geography Database Integration Tests > Database Integrity & Constraints > ensures seed operation is strictly idempotent without duplicating records  4116ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service lists active countries  545ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service retrieves country by case-insensitive ISO code or URL prefix  541ms
+   ✓ Geography Database Integration Tests > Geography Service Live Integration > service lists areas with pagination metadata  813ms
+ ✓ tests/routes/audit-retention.integration.test.ts (13 tests) 37039ms
+   ✓ Audit & Retention Route Integration Tests > Audit Logs Endpoints & RBAC (audit.read) > allows system_admin to query audit logs  3359ms
+   ✓ Audit & Retention Route Integration Tests > Audit Logs Endpoints & RBAC (audit.read) > denies content_manager and standard_user from querying audit logs (403)  1110ms
+   ✓ Audit & Retention Route Integration Tests > Retention Policy Endpoints & RBAC (retention.read & retention.manage) > allows content_manager and system_admin to read retention policies  1711ms
+   ✓ Audit & Retention Route Integration Tests > Retention Policy Endpoints & RBAC (retention.read & retention.manage) > denies standard_user from reading retention policies (403)  547ms
+   ✓ Audit & Retention Route Integration Tests > Retention Policy Endpoints & RBAC (retention.read & retention.manage) > allows system_admin to create a retention policy  1965ms
+   ✓ Audit & Retention Route Integration Tests > Retention Policy Endpoints & RBAC (retention.read & retention.manage) > denies content_manager from creating a retention policy (403)  593ms
+   ✓ Audit & Retention Route Integration Tests > Retention Policy Endpoints & RBAC (retention.read & retention.manage) > allows system_admin to update a retention policy with mandatory changeReason  2219ms
+   ✓ Audit & Retention Route Integration Tests > Dry-Run & Live Execution Endpoints (retention.execute) > executes point-in-time dry run successfully for content_manager and system_admin  2028ms
+   ✓ Audit & Retention Route Integration Tests > Dry-Run & Live Execution Endpoints (retention.execute) > rejects live execution for content_manager (403)  613ms
+   ✓ Audit & Retention Route Integration Tests > Dry-Run & Live Execution Endpoints (retention.execute) > rejects live execution of an INACTIVE policy (400)  1218ms
+   ✓ Audit & Retention Route Integration Tests > Dry-Run & Live Execution Endpoints (retention.execute) > initiates live asynchronous execution for system_admin (202 Accepted)  7835ms
+   ✓ Audit & Retention Route Integration Tests > Dry-Run & Live Execution Endpoints (retention.execute) > rejects resuming already COMPLETED execution  1951ms
+ ✓ tests/routes/library.integration.test.ts (16 tests) 30858ms
+   ✓ User Library HTTP Route Integration Tests > 3. Eligibility & Error Handling > returns 400 RESOURCE_VERSION_NOT_ELIGIBLE when attempting to save a DRAFT version  2747ms
+   ✓ User Library HTTP Route Integration Tests > 3. Eligibility & Error Handling > returns 404 RESOURCE_VERSION_NOT_FOUND when version does not exist  553ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > saves a published version to User A library  3911ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > verifies that GET /library/resources/:id indicates isSaved = true for User A  584ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > enforces User Isolation: User B sees isSaved = false and empty list  1105ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > lists the saved resource for User A with public projection  1459ms
+   ✓ User Library HTTP Route Integration Tests > 4. Full Lifecycle & User Isolation > idempotently removes the saved version for User A  1702ms   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports saving via POST /api/v1/me/saved-resources/:id  1406ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports listing via GET /api/v1/me/saved-resources  1798ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports checking via GET /api/v1/me/saved-resources/:id  2435ms
+   ✓ User Library HTTP Route Integration Tests > 5. docs/API_SPEC.md Section 33 Aliases (/api/v1/me/saved-resources) > supports removing via DELETE /api/v1/me/saved-resources/:id  556ms
+ ✓ tests/services/calendar.service.test.ts (9 tests) 37968ms
+   ✓ Calendar Service Unit & Functional Tests > 1. Anonymous Session Lifecycle & Rolling Expiry > creates an anonymous calendar with 7-day rolling expiry  551ms
+   ✓ Calendar Service Unit & Functional Tests > 1. Anonymous Session Lifecycle & Rolling Expiry > extends rolling expiry on subsequent access  2626ms
+   ✓ Calendar Service Unit & Functional Tests > 2. Combined Calendar & Chronological Event Merging > merges official events with personal events and marks read-only properties  3101ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits creating an event on an OFFICIAL calendar through personal event API  545ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits updating or deleting official events  1653ms
+   ✓ Calendar Service Unit & Functional Tests > 3. Ownership Gating & Protection Invariants > prohibits cross-session event access (Session B cannot update or delete Session A event)  2191ms
+   ✓ Calendar Service Unit & Functional Tests > 4. Anonymous-to-Account Calendar Transfer > atomically transfers anonymous session events to authenticated user account  7486ms
+   ✓ Calendar Service Unit & Functional Tests > 5. PDF Calendar Export Flow > snapshots authorized calendar view and generates printable PDF export with signed URL  3456ms
+ ✓ tests/services/quality-governance.service.test.ts (6 tests) 40342ms
+   ✓ Quality Governance Service Integration Tests > 1. lists canonical check types and supports country-specific criteria override (Correction E)  1956ms
+   ✓ Quality Governance Service Integration Tests > 2. preserves evaluation history when recording multiple checks on same criterion (Correction B)  6132ms
+   ✓ Quality Governance Service Integration Tests > 3. blocks verification when mandatory criteria are missing or not passed (Approved Rubric)  3320ms
+   ✓ Quality Governance Service Integration Tests > 4. verifies version when all mandatory criteria pass, without mutating published version (Correction A, B, C)  12865ms
+   ✓ Quality Governance Service Integration Tests > 5. revokes verification with mandatory reason and accountable actor, then permits reverification (Correction D, C)  7383ms
+   ✓ Quality Governance Service Integration Tests > 6. rejects direct VERIFIED assignment in resource creation and update APIs (Correction F)  549ms
+ ✓ tests/services/file-storage.service.test.ts (9 tests) 17352ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > successfully uploads, verifies SHA-256 against storage metadata, and persists AVAILABLE record  826ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > rejects upload and performs compensating R2 cleanup when storage SHA-256 metadata mismatches  550ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 1. Synchronous Upload & Verification Flow > performs compensating R2 cleanup when database insert fails  3052ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 2. Querying and Deletion Lifecycle > retrieves files by id and lists files for a version ordered by sequence order  1344ms
+   ✓ Prompt 09: FileStorageService Synchronous Upload & Integrity Verification > 2. Querying and Deletion Lifecycle > deletes a file and its storage object when parent version is DRAFT  2781ms
+ ✓ tests/services/admin-dashboard.service.test.ts (12 tests) 20ms
+ ✓ tests/db/rbac.integration.test.ts (7 tests) 30746ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 1. Automatic standard_user Role Assignment (Prompt 14 Correction 3) > atomically assigns standard_user role during user registration  2571ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 2. Multiple Roles & Permission Accumulation (Locked Decision 32) > allows assigning multiple roles to a user and accumulates permissions  3705ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 3. GLOBAL vs Scoped Permissions Semantics (Prompt 14 Correction 1) > demonstrates scope isolation and hierarchical global satisfaction  3837ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 4. Role Revocation and Expiration > revokes a role and strips associated permissions immediately  2205ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 4. Role Revocation and Expiration > denies permissions when role assignment ends_at is in the past  1686ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 5. Database Integrity Constraints (Correction 5) > enforces chk_user_roles_scope_consistency in PostgreSQL  3266ms
+   ✓ RBAC Service Neon PostgreSQL Integration Tests > 5. Database Integrity Constraints (Correction 5) > enforces chk_user_roles_dates when ends_at <= starts_at  2954ms
+ ✓ tests/routes/updates.integration.test.ts (7 tests) 27940ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Public Endpoints (Anonymous Access) > GET /api/v1/updates/categories returns 200 OK without authentication  377ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Public Endpoints (Anonymous Access) > GET /api/v1/updates returns 200 OK and paginated structure  553ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > POST /api/v1/admin/updates returns 403 Forbidden for standard_user lacking update.create  2701ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > POST /api/v1/admin/updates creates draft update for system_admin (201 Created)  3023ms
+   ✓ Prompt 23: Education Updates Fastify API Integration > Administrative Endpoints & RBAC Protection > full publication workflow: create draft -> publish -> verify public -> archive -> verify hidden  9349ms
+ ✓ tests/db/auth.integration.test.ts (11 tests) 29399ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 1. Transactional Registration > atomically creates users, auth_identities, and user_sessions in a single transaction  6327ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 2. Race-Safe Duplicate Email Handling > rejects duplicate email with EmailAlreadyRegisteredError via DB uniqueness constraint  2964ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 2. Race-Safe Duplicate Email Handling > handles concurrent registration race condition safely  3189ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > authenticates valid credentials and returns a fresh session  936ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > authenticates case-insensitively for email  696ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > rejects incorrect password with generic InvalidCredentialsError  399ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 3. Login and Credential Verification > rejects non-existent email with generic InvalidCredentialsError  510ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 4. Logout and Session Revocation > revokes session on logout and rejects subsequent validation  2809ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > rejects login and invalidates active session when account is logically deleted (deleted_at != null)  3231ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > invalidates active session and rejects login when account becomes SUSPENDED  3010ms
+   ✓ Auth Service Neon PostgreSQL Integration Tests > 5. Account Deletion and Status Enforcement (Reviewer Mandatory Requirements) > invalidates active session and rejects login when account becomes DISABLED  3063ms
+ ✓ tests/routes/commerce-mpesa.integration.test.ts (5 tests) 26159ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 1. POST /api/v1/payments (M-Pesa STK Push Initiation) > initiates M-Pesa STK push for valid order and normalized phone number  5609ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 1. POST /api/v1/payments (M-Pesa STK Push Initiation) > rejects invalid Kenyan phone number with 400 MPESA_PHONE_INVALID  1936ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 2. POST /api/v1/payments/mpesa/callback (Daraja Callback Endpoint) > processes successful callback without session cookie and provisions user entitlement  6416ms
+   ✓ Commerce HTTP Route M-Pesa Integration Tests > 2. POST /api/v1/payments/mpesa/callback (Daraja Callback Endpoint) > supports alternative endpoint alias POST /api/v1/mpesa/callback  879ms
+ ✓ tests/db/quality-governance.integration.test.ts (6 tests) 20396ms
+   ✓ Quality Governance Database Integration Tests > rejects resource verification with mismatched resource and version via trigger defense (Correction D)  2452ms
+   ✓ Quality Governance Database Integration Tests > enforces immutable evaluation history: blocks UPDATE and DELETE on quality checks (Correction B)  5233ms
+   ✓ Quality Governance Database Integration Tests > enforces partial unique index: prevents duplicate active verifications for same resource version (Correction C)  2745ms
+   ✓ Quality Governance Database Integration Tests > enforces revocation check constraint: mandates reason, actor, and timestamp when REVOKED  2482ms
+   ✓ Quality Governance Database Integration Tests > enforces ON DELETE RESTRICT preventing cascading deletion of quality history (Correction D)  2464ms
+ ✓ tests/db/feedback.integration.test.ts (7 tests) 24737ms
+   ✓ Resource Feedback Database Layer Integration Tests > rejects feedback where version does not belong to resource via trigger  2525ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_status on invalid status insertion  2489ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_type on invalid feedback_type insertion  2481ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_reviewed constraint: PENDING cannot have reviewed_at or reviewed_by  7568ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces chk_feedback_details_len constraint on details exceeding 1000 characters  2478ms
+   ✓ Resource Feedback Database Layer Integration Tests > enforces ON DELETE RESTRICT on user_id preventing accidental user hard-deletion  2759ms
+ ✓ tests/db/schools.integration.test.ts (10 tests) 28314ms
+   ✓ Schools Database Integration Tests > Valid School Creation and Retrieval > creates a valid school with county association and retrieves it  561ms
+   ✓ Schools Database Integration Tests > Valid School Creation and Retrieval > creates a valid school without administrative area (optional area relationship)  564ms
+   ✓ Schools Database Integration Tests > School Geography Integrity & Constraints > rejects an invalid administrative area reference (non-existent UUID)  2468ms
+   ✓ Schools Database Integration Tests > School Code Uniqueness Constraints > enforces uniqueness of school code within the same country  2825ms
+   ✓ Schools Database Integration Tests > School Code Uniqueness Constraints > permits multiple schools with NULL code  6426ms
+   ✓ Schools Database Integration Tests > Controlled School Type & Status Constraints > rejects invalid school status values via database check constraint  2503ms
+   ✓ Schools Database Integration Tests > Controlled School Type & Status Constraints > rejects empty or whitespace-only school name via check constraint  2513ms
+   ✓ Schools Database Integration Tests > Inactive Schools Behaviour > does not expose inactive schools through public service queries  3359ms
+ ✓ tests/db/downloads.integration.test.ts (14 tests) 21718ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > successfully generates signed download URL for primary file when fileId is omitted  837ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > successfully generates signed download URL for explicit available fileId  833ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > rejects download when file status is QUARANTINED with FileNotAvailableError  836ms
+   ✓ Free Downloads Database Integration Tests > Free Download Flow & Invariants > blocks cross-version access: rejects requesting a file belonging to another resource  847ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks authenticated user with NO entitlement with PremiumResourceLockedError (403)  554ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks user with EXPIRED entitlement with PremiumResourceLockedError (403)  560ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks user when entitlement is for a different resource with PremiumResourceLockedError (403)  558ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > allows download when user has valid active entitlement for published PREMIUM resource  1127ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > allows download of specific file when user has valid active entitlement  1114ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks download of QUARANTINED file of PREMIUM resource even when user is entitled (400)  1115ms
+   ✓ Free Downloads Database Integration Tests > Prompt 20: Premium Downloads & Authoritative Entitlement Verification > blocks download of DRAFT resource even when user has active entitlement record (404)  631ms
+ ✓ tests/db/analytics.integration.test.ts (6 tests) 15773ms
+   ✓ Analytics Database Integration Tests > User Deletion and Actor Constraints > preserves analytics events with ON DELETE SET NULL when a user is deleted  1109ms
+   ✓ Analytics Database Integration Tests > Idempotency and Concurrency Deduplication > safely deduplicates identical idempotency keys  3193ms
+   ✓ Analytics Database Integration Tests > Idempotency and Concurrency Deduplication > handles simultaneous concurrent duplicate requests against the exact database conflict target (Promise.all)  2887ms
+   ✓ Analytics Database Integration Tests > Acceptance Test Fixture: Exact Mathematical Metric Set (3 + 2 = 5) > correctly calculates authenticatedUsers, pureAnonymousSessions, and estimatedActorCount without double counting converted sessions  5550ms
+ ✓ tests/routes/analytics.integration.test.ts (13 tests) 21926ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > successfully records a valid anonymous view event  641ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > successfully records a valid authenticated view event  2986ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > deduplicates events with identical idempotencyKey  605ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > isolates rate limits by trusted-proxy client IP (X-Forwarded-For)  667ms
+   ✓ Analytics Route Integration Tests > POST /api/v1/analytics/events (Public Ingestion) > persists Unicode and multilingual context properly  355ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 403 for standard user without analytics.read permission  612ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 200 for content_manager with analytics.read permission  2597ms
+   ✓ Analytics Route Integration Tests > GET /api/v1/admin/analytics/overview (RBAC & Reporting) > returns 200 for system_admin with analytics.read permission  2314ms
+   ✓ Analytics Route Integration Tests > Event Type Management (RBAC & Invalidation) > allows system_admin to list and update event types  2246ms
+   ✓ Analytics Route Integration Tests > Event Type Management (RBAC & Invalidation) > returns 403 when content_manager tries to manage event types  599ms
+ ✓ tests/db/library.integration.test.ts (9 tests) 33276ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > successfully saves a published resource version into user array  2179ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > prevents duplicates: saving the same version repeatedly maintains a single array element  1670ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving a DRAFT version with ResourceVersionNotEligibleError  724ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving an ARCHIVED resource with ResourceVersionNotEligibleError  411ms
+   ✓ User Library Neon Database Integration Tests > 1. Save Eligibility & Persistence > rejects saving a non-existent version with ResourceVersionNotFoundError  464ms
+   ✓ User Library Neon Database Integration Tests > 2. User Isolation > isolates user libraries: User A saving a version does not affect User B  660ms
+   ✓ User Library Neon Database Integration Tests > 3. Check Status and Idempotent Removal > accurately verifies isResourceVersionSaved  1146ms   ✓ User Library Neon Database Integration Tests > 3. Check Status and Idempotent Removal > idempotently removes a saved resource version  2132ms
+   ✓ User Library Neon Database Integration Tests > 4. Listing & Sanitized Storage Projection > projects saved resource items with public catalogue metadata and no R2 leakage  1888ms
+ ✓ tests/routes/rbac.integration.test.ts (5 tests) 30726ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Forbidden Access (403 FORBIDDEN with Generic Message - Prompt 14 Correction 2) > returns 403 FORBIDDEN with non-leaking generic message when authenticated user lacks permission  9839ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Forbidden Access (403 FORBIDDEN with Generic Message - Prompt 14 Correction 2) > returns 403 FORBIDDEN when standard_user attempts to submit for review  1682ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Authorized Access (User Possesses Required Permission) > passes authorization gate when user possesses required permission  2254ms
+   ✓ RBAC HTTP Route Authorization Integration Tests > Authorized Access (User Possesses Required Permission) > allows GET publication history when user has resource.read permission  2007ms
+ ✓ tests/db/search-intelligence.integration.test.ts (5 tests) 37501ms
+   ✓ Search Intelligence Neon Database Integration Tests > Contextual Autocomplete & Published Invariants > isolates published resources and ranks contextual Grade+Subject matches  5642ms
+   ✓ Search Intelligence Neon Database Integration Tests > Contextual Autocomplete & Published Invariants > uses country-bound fallback when context yields no matches  5925ms
+   ✓ Search Intelligence Neon Database Integration Tests > Search Demand Telemetry Aggregation & Privacy Rules > suppresses queries with fewer than 3 distinct search identities  6626ms
+   ✓ Search Intelligence Neon Database Integration Tests > Search Demand Telemetry Aggregation & Privacy Rules > aggregates and surfaces queries with >= 3 qualifying search identities  6087ms
+   ✓ Search Intelligence Neon Database Integration Tests > Search Demand Telemetry Aggregation & Privacy Rules > collects diagnostic EXPLAIN query plan metrics  1943ms
+ ✓ tests/db/education-updates.integration.test.ts (4 tests) 35281ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > enforces chk_education_updates_title: empty or whitespace title fails  960ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > enforces chk_education_updates_status: invalid publication status fails  3714ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > enforces uq_education_updates_slug: duplicate slug fails  3805ms
+   ✓ Prompt 23: Database Schema & Constraints Integration > cascades deletion of education_updates to curricula and resources junction tables  7172ms
+ ✓ tests/db/audit-retention.integration.test.ts (9 tests) 48165ms
+   ✓ Audit & Retention Database Integration Tests > Append-Only Immutability Triggers > prevents UPDATE operations on governance.audit_logs  1736ms
+   ✓ Audit & Retention Database Integration Tests > Append-Only Immutability Triggers > prevents DELETE operations on governance.audit_logs  1881ms
+   ✓ Audit & Retention Database Integration Tests > Append-Only Immutability Triggers > prevents UPDATE and DELETE operations on governance.retention_policy_versions  4464ms
+   ✓ Audit & Retention Database Integration Tests > Database Check Constraints > enforces 4,096-byte octet_length constraint on audit context  928ms
+   ✓ Audit & Retention Database Integration Tests > Database Check Constraints > enforces 2,048-byte octet_length constraint on actor snapshot  913ms
+   ✓ Audit & Retention Database Integration Tests > Actor Identity Retention on User Account Deletion > preserves immutable actor_snapshot when referenced user row is deleted  3980ms
+   ✓ Audit & Retention Database Integration Tests > Atomic Business Mutation & Audit Rollback > rolls back business state mutation if audit insert fails  7389ms
+   ✓ Audit & Retention Database Integration Tests > Canonical Seed Integrity & Execution Lineage > verifies all 5 canonical retention policies are present in database  2221ms
+   ✓ Audit & Retention Database Integration Tests > Canonical Seed Integrity & Execution Lineage > enforces execution lineage with resumed_from_execution_id RESTRICT constraint  13351ms
+ ✓ tests/db/seo.integration.test.ts (4 tests) 49580ms
+   ✓ Resource SEO Service Neon Database Integration Tests > returns valid SEO metadata for a PUBLISHED resource with a PUBLISHED version  3072ms
+   ✓ Resource SEO Service Neon Database Integration Tests > strictly hides SEO metadata for unpublished resource lifecycle statuses  15051ms
+   ✓ Resource SEO Service Neon Database Integration Tests > hides SEO metadata if resource is PUBLISHED but its version is DRAFT  3080ms
+   ✓ Resource SEO Service Neon Database Integration Tests > generates a deterministic fallback description when resource and version have null description  3296ms
+ ✓ tests/db/integration.test.ts (4 tests) 7728ms
+   ✓ PostgreSQL Database Integration Tests > verifies that the pgcrypto extension is installed  354ms
+   ✓ PostgreSQL Database Integration Tests > verifies that gen_random_uuid() generates valid UUIDs  346ms
+   ✓ PostgreSQL Database Integration Tests > verifies that all 11 logical PostgreSQL schemas exist  301ms
+ ✓ tests/db/config.test.ts (11 tests) 3501ms
+   ✓ PostgreSQL Foundation Configuration & Schemas > Database Health Check (checkDatabaseHealth) > returns an unhealthy status without throwing if DATABASE_URL is not configured  3494ms
+ ✓ tests/routes/auth.test.ts (12 tests) 513ms
+ ✓ tests/routes/curriculum.test.ts (12 tests) 409ms
+ ✓ tests/routes/resources.test.ts (12 tests) 339ms
+ ✓ tests/routes/schools.test.ts (10 tests) 274ms
+ ✓ tests/routes/search.test.ts (9 tests) 267ms
+ ✓ tests/routes/search-autocomplete.test.ts (9 tests) 287ms
+ ✓ tests/routes/catalogue.test.ts (8 tests) 237ms
+ ✓ tests/routes/geography.test.ts (7 tests) 205ms
+ ✓ tests/routes/countries.test.ts (6 tests) 163ms
+ ✓ tests/routes/seo.test.ts (4 tests) 117ms
+ ✓ tests/routes/health.test.ts (7 tests) 43ms
+stderr | tests/services/analytics.service.test.ts > AnalyticsService Unit Tests > captureSafe Non-Disruptive Execution > does not throw or disrupt caller when underlying recordEvent fails
+[AnalyticsService:captureSafe] Non-fatal background event recording failed: Simulated DB network partition
+
+ ✓ tests/services/analytics.service.test.ts (27 tests) 21ms
+ ✓ tests/services/download.service.test.ts (18 tests) 25ms
+ ✓ tests/services/contributor.service.test.ts (16 tests) 17ms
+ ✓ tests/services/library.service.test.ts (13 tests) 7ms
+ ✓ tests/services/storage-provider.test.ts (12 tests) 5ms
+ ✓ tests/services/contributor-finance.service.test.ts (9 tests) 6ms
+ ✓ tests/services/rbac.service.test.ts (16 tests) 9ms
+ ✓ tests/services/mpesa-phone.test.ts (13 tests) 3ms
+ ✓ tests/services/daraja-client.test.ts (6 tests) 4ms
+ ✓ tests/services/mpesa-payment-provider.test.ts (7 tests) 3ms
+ ✓ tests/services/retention.service.test.ts (8 tests) 3ms
+ ✓ tests/services/audit.service.test.ts (7 tests) 3ms
+ ✓ tests/services/search-sanitizer.test.ts (9 tests) 2ms
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 22 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/db/recommendations.integration.test.ts > Prompt 30: Recommendations PostgreSQL Constraints, Triggers & Cache Listener Integration Tests > Suite 8 & 9 (DB): Multi-Table pg_notify Triggers, Rollback Silence & Listener Recovery > emits rec_invalid notifications on committed mutations, emits zero on rollback, and recovers on listener disconnect
+AssertionError: expected 'DISCONNECTED' to be 'CONNECTED' // Object.is equality
+
+Expected: "CONNECTED"
+Received: "DISCONNECTED"
+
+ ❯ tests/db/recommendations.integration.test.ts:818:48
+    816|             await new Promise((r) => setTimeout(r, 50));
+    817|           }
+    818|           expect(liveCache.getListenerState()).toBe('CONNECTED');
+       |                                                ^
+    819|         } finally {
+    820|           await liveCache.stopListener();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 1. Contributor Application Workflow > allows authenticated standard user to submit an application
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/routes/contributors.integration.test.ts:229:30
+    227|       });
+    228| 
+    229|       expect(res.statusCode).toBe(201);
+       |                              ^
+    230|       const json = res.json();
+    231|       expect(json.data).toBeDefined();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 1. Contributor Application Workflow > rejects duplicate pending application with 409 DUPLICATE_APPLICATION
+AssertionError: expected 201 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 201
+
+ ❯ tests/routes/contributors.integration.test.ts:247:30
+    245|       });
+    246| 
+    247|       expect(res.statusCode).toBe(409);
+       |                              ^
+    248|       const json = res.json();
+    249|       expect(json.error.code).toBe('DUPLICATE_APPLICATION');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > allows system admin to list pending contributor applications
+AssertionError: expected undefined to be defined
+ ❯ tests/routes/contributors.integration.test.ts:275:21
+    273|       expect(Array.isArray(json.data)).toBe(true);
+    274|       const found = json.data.find((a: any) => a.id === createdAppId);
+    275|       expect(found).toBeDefined();
+       |                     ^
+    276|     });
+    277| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > approves application, atomically creates profile and assigns contributor role
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ tests/routes/contributors.integration.test.ts:303:30
+    301|       });
+    302| 
+    303|       expect(res.statusCode).toBe(200);
+       |                              ^
+    304|       const json = res.json();
+    305|       expect(json.data.application.status).toBe('APPROVED');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 2. Administrative Application Review > rejects reviewing an already reviewed application with 400
+AssertionError: expected 'VALIDATION_ERROR' to be 'APPLICATION_ALREADY_REVIEWED' // Object.is equality
+
+Expected: "APPLICATION_ALREADY_REVIEWED"
+Received: "VALIDATION_ERROR"
+
+ ❯ tests/routes/contributors.integration.test.ts:331:31
+    329|       expect(res.statusCode).toBe(400);
+    330|       const json = res.json();
+    331|       expect(json.error.code).toBe('APPLICATION_ALREADY_REVIEWED');
+       |                               ^
+    332|     });
+    333|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 3. Contributor Workspace & Profile Management > returns contributor private profile for approved contributor
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/routes/contributors.integration.test.ts:354:30
+    352|       });
+    353| 
+    354|       expect(res.statusCode).toBe(200);
+       |                              ^
+    355|       const json = res.json();
+    356|       expect(json.data.userId).toBe(userAId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 3. Contributor Workspace & Profile Management > updates own contributor profile display name and bio
+AssertionError: expected 403 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:372:30
+    370|       });
+    371| 
+    372|       expect(res.statusCode).toBe(200);
+       |                              ^
+    373|       const json = res.json();
+    374|       expect(json.data.displayName).toBe('Prof Alice Ochieng PhD');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > creates draft candidate submission in KES currency
+AssertionError: expected 403 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:393:30
+    391|       });
+    392| 
+    393|       expect(res.statusCode).toBe(201);
+       |                              ^
+    394|       const json = res.json();
+    395|       expect(json.data.status).toBe('DRAFT');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > lists submissions for current contributor
+AssertionError: expected 403 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:409:30
+    407|       });
+    408| 
+    409|       expect(res.statusCode).toBe(200);
+       |                              ^
+    410|       const json = res.json();
+    411|       expect(json.data.length).toBeGreaterThanOrEqual(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > retrieves submission details by id for owner
+AssertionError: expected 403 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:422:30
+    420|       });
+    421| 
+    422|       expect(res.statusCode).toBe(200);
+       |                              ^
+    423|       expect(res.json().data.id).toBe(createdSubmissionId);
+    424|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > updates draft candidate submission
+AssertionError: expected 403 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:448:30
+    446|       });
+    447| 
+    448|       expect(res.statusCode).toBe(200);
+       |                              ^
+    449|       const json = res.json();
+    450|       expect(json.data.title).toBe('CBC Grade 7 Integrated Science Complete Revision Pack - Final Edition');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > submits candidate submission transitioning from DRAFT to SUBMITTED
+AssertionError: expected 403 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:461:30
+    459|       });
+    460| 
+    461|       expect(res.statusCode).toBe(200);
+       |                              ^
+    462|       const json = res.json();
+    463|       expect(json.data.status).toBe('SUBMITTED');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > locks submitted submission against further edits returning 400
+AssertionError: expected 403 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 403
+
+ ❯ tests/routes/contributors.integration.test.ts:476:30
+    474|       });
+    475| 
+    476|       expect(res.statusCode).toBe(400);
+       |                              ^
+    477|       expect(res.json().error.code).toBe('SUBMISSION_LOCKED');
+    478|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 4. Contributor Submission Ingestion Pathway > allows admin/editorial reviewer to review and approve submission
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ tests/routes/contributors.integration.test.ts:491:30
+    489|       });
+    490| 
+    491|       expect(res.statusCode).toBe(200);
+       |                              ^
+    492|       const json = res.json();
+    493|       expect(json.data.status).toBe('APPROVED');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public contributors with published resource count
+AssertionError: expected undefined to be defined
+ ❯ tests/routes/contributors.integration.test.ts:537:21
+    535|       }
+    536| 
+    537|       expect(found).toBeDefined();
+       |                     ^
+    538|       expect(found.publishedResourcesCount).toBeGreaterThanOrEqual(1);
+    539| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > retrieves public contributor profile by slug
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/routes/contributors.integration.test.ts:551:30
+    549|       });
+    550| 
+    551|       expect(res.statusCode).toBe(200);
+       |                              ^
+    552|       const json = res.json();
+    553|       expect(json.data.profileSlug).toBe(createdContributorSlug);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 5. Public Contributor Discovery & Resource Attribution > lists public published resources attributed to contributor
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/routes/contributors.integration.test.ts:564:30
+    562|       });
+    563| 
+    564|       expect(res.statusCode).toBe(200);
+       |                              ^
+    565|       const json = res.json();
+    566|       expect(Array.isArray(json.data)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > allows admin to suspend a contributor
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ tests/routes/contributors.integration.test.ts:594:30
+    592|       });
+    593| 
+    594|       expect(res.statusCode).toBe(200);
+       |                              ^
+    595|       const json = res.json();
+    596|       expect(json.data.status).toBe('SUSPENDED');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from updating profile with 403
+AssertionError: expected 'FORBIDDEN' to be 'CONTRIBUTOR_SUSPENDED' // Object.is equality
+
+Expected: "CONTRIBUTOR_SUSPENDED"
+Received: "FORBIDDEN"
+
+ ❯ tests/routes/contributors.integration.test.ts:619:37
+    617| 
+    618|       expect(res.statusCode).toBe(403);
+    619|       expect(res.json().error.code).toBe('CONTRIBUTOR_SUSPENDED');
+       |                                     ^
+    620|     });
+    621| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > forbids suspended contributor from creating submissions with 403
+AssertionError: expected 'FORBIDDEN' to be 'CONTRIBUTOR_SUSPENDED' // Object.is equality
+
+Expected: "CONTRIBUTOR_SUSPENDED"
+Received: "FORBIDDEN"
+
+ ❯ tests/routes/contributors.integration.test.ts:633:37
+    631| 
+    632|       expect(res.statusCode).toBe(403);
+    633|       expect(res.json().error.code).toBe('CONTRIBUTOR_SUSPENDED');
+       |                                     ^
+    634|     });
+    635| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/22]⎯
+ FAIL  tests/routes/contributors.integration.test.ts > Contributor System HTTP Route Integration Tests > 6. Contributor Lifecycle & Suspension Rules > re-activates contributor when admin sets status to ACTIVE
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ tests/routes/contributors.integration.test.ts:646:30
+    644|       });
+    645| 
+    646|       expect(res.statusCode).toBe(200);
+       |                              ^
+    647|       expect(res.json().data.status).toBe('ACTIVE');
+    648|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/22]⎯
+
+ Test Files  2 failed | 74 passed (76)
+      Tests  22 failed | 806 passed (828)
+   Start at  07:23:54
+   Duration  2390.37s (transform 4.03s, setup 0ms, collect 20.04s, tests 2368.63s, environment 0ms, prepare 254ms)
+
+PS C:\Users\USER\Documents\Education-platform> 

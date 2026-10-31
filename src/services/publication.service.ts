@@ -5,6 +5,7 @@ import * as schemas from '../db/schemas.js';
 import {
   resources,
   resourceVersions,
+  resourceFiles,
   publicationEvents,
   countries,
   resourceTypes,
@@ -769,6 +770,33 @@ export class DbPublicationService implements PublicationService {
             422,
           );
         }
+      }
+
+      // 7b. Precondition (W1-AC-09): Every attached file on target version MUST be promoted & AVAILABLE
+      const attachedFiles = await tx
+        .select({
+          id: resourceFiles.id,
+          status: resourceFiles.status,
+          malwareScanStatus: resourceFiles.malwareScanStatus,
+          objectKey: resourceFiles.objectKey,
+        })
+        .from(resourceFiles)
+        .where(eq(resourceFiles.resourceVersionId, versionId));
+
+      const nonReadyFile = attachedFiles.find(
+        (f) =>
+          f.status !== 'AVAILABLE' ||
+          f.malwareScanStatus === 'INFECTED' ||
+          f.malwareScanStatus === 'SCAN_ERROR' ||
+          f.objectKey.startsWith('quarantine/'),
+      );
+
+      if (nonReadyFile) {
+        throw new PublicationError(
+          'RESOURCE_FILES_NOT_READY',
+          `Cannot publish resource version ${versionId}: attached file ${nonReadyFile.id} is not ready for publication (status=${nonReadyFile.status}, scanStatus=${nonReadyFile.malwareScanStatus}).`,
+          409,
+        );
       }
 
       // 8. Execute Atomic Publication
