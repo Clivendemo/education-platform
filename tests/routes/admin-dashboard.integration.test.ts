@@ -17,6 +17,8 @@ import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { DbPublicationService } from '../../src/services/publication.service.js';
 import { DefaultAuditService } from '../../src/services/audit.service.js';
 import { FileStorageService } from '../../src/services/file-storage.service.js';
+import { FileProcessingWorker } from '../../src/services/file-processing.worker.js';
+import { StubCleanMalwareScanner } from '../../src/services/storage/malware-scanner.js';
 import { DefaultAdminDashboardService } from '../../src/services/admin-dashboard.service.js';
 import { MemoryStorageProvider } from '../../src/services/storage/memory-storage-provider.js';
 import { buildApp } from '../../src/app.js';
@@ -34,6 +36,11 @@ describe.skipIf(!isDbAvailable)(
     const rbacService = new DefaultRbacService(db);
     const auditService = new DefaultAuditService(db);
     const fileStorageService = new FileStorageService(db, memoryStorage);
+    const fileProcessingWorker = new FileProcessingWorker({
+      db,
+      storageProvider: memoryStorage,
+      malwareScanner: new StubCleanMalwareScanner(),
+    });
     const publicationService = new DbPublicationService(db, auditService);
     const adminDashboardService = new DefaultAdminDashboardService(
       db,
@@ -303,6 +310,7 @@ describe.skipIf(!isDbAvailable)(
         buffer: Buffer.from('%PDF-1.4 Country B exam binary content'),
       });
       countryBFileId = fileB.id;
+      await fileProcessingWorker.runOnce();
     }, 180_000);
 
     afterAll(async () => {
@@ -748,17 +756,23 @@ describe.skipIf(!isDbAvailable)(
         expect(approvedAuditsAfter).toHaveLength(1);
       });
 
-      it('explicitly preserves GET /api/v1/resources/:id/events (resource.read) while enforcing resource.admin.read + COUNTRY scope on GET /api/v1/admin/resources/:id/events', async () => {
-        // 1) Existing Prompt 14 route GET /api/v1/resources/:id/events remains accessible to standard_user (resource.read)
+      it('enforces resource.admin.read | resource.review + COUNTRY scope + private no-store on both GET /api/v1/resources/:id/events and GET /api/v1/admin/resources/:id/events (Wave 2 WP2)', async () => {
+        // 1) Unauthenticated and standard_user are rejected on GET /api/v1/resources/:id/events
+        const publicRouteAnon = await injectWithRetry({
+          method: 'GET',
+          url: `/api/v1/resources/${countryAResourceId}/events`,
+        });
+        expect(publicRouteAnon.statusCode).toBe(401);
+
         const publicRouteStd = await injectWithRetry({
           method: 'GET',
           url: `/api/v1/resources/${countryAResourceId}/events`,
           headers: { cookie: standardUserCookie },
         });
-        expect(publicRouteStd.statusCode).toBe(200);
-        expect(publicRouteStd.json().data).toHaveLength(3);
+        expect(publicRouteStd.statusCode).toBe(403);
+        expect(publicRouteStd.json().error.code).toBe('FORBIDDEN');
 
-        // 2) Administrative route GET /api/v1/admin/resources/:id/events denies standard_user with 403 FORBIDDEN
+        // 2) Administrative route GET /api/v1/admin/resources/:id/events also denies standard_user with 403 FORBIDDEN
         const adminRouteStd = await injectWithRetry({
           method: 'GET',
           url: `/api/v1/admin/resources/${countryAResourceId}/events`,
@@ -767,23 +781,33 @@ describe.skipIf(!isDbAvailable)(
         expect(adminRouteStd.statusCode).toBe(403);
         expect(adminRouteStd.json().error.code).toBe('FORBIDDEN');
 
-        // 3) Administrative route allows Country A manager on Country A resource with Cache-Control: private, no-store
-        const adminRouteMgrA = await injectWithRetry({
-          method: 'GET',
-          url: `/api/v1/admin/resources/${countryAResourceId}/events`,
-          headers: { cookie: countryAManagerCookie },
-        });
-        expect(adminRouteMgrA.statusCode).toBe(200);
-        expect(adminRouteMgrA.headers['cache-control']).toBe('private, no-store');
-        expect(adminRouteMgrA.json().data).toHaveLength(3);
+        // 3) Both routes allow Country A manager on Country A resource with Cache-Control: private, no-store
+        for (const url of [
+          `/api/v1/resources/${countryAResourceId}/events`,
+          `/api/v1/admin/resources/${countryAResourceId}/events`,
+        ]) {
+          const mgrResA = await injectWithRetry({
+            method: 'GET',
+            url,
+            headers: { cookie: countryAManagerCookie },
+          });
+          expect(mgrResA.statusCode).toBe(200);
+          expect(mgrResA.headers['cache-control']).toBe('private, no-store');
+          expect(mgrResA.json().data).toHaveLength(3);
+        }
 
-        // 4) Administrative route denies Country A manager on Country B resource with 403 FORBIDDEN
-        const adminRouteMgrB = await injectWithRetry({
-          method: 'GET',
-          url: `/api/v1/admin/resources/${countryBResourceId}/events`,
-          headers: { cookie: countryAManagerCookie },
-        });
-        expect(adminRouteMgrB.statusCode).toBe(403);
+        // 4) Both routes deny Country A manager on Country B resource with 403 FORBIDDEN
+        for (const url of [
+          `/api/v1/resources/${countryBResourceId}/events`,
+          `/api/v1/admin/resources/${countryBResourceId}/events`,
+        ]) {
+          const mgrResB = await injectWithRetry({
+            method: 'GET',
+            url,
+            headers: { cookie: countryAManagerCookie },
+          });
+          expect(mgrResB.statusCode).toBe(403);
+        }
 
         // 5) Global admin publication event ledger endpoint GET /api/v1/admin/publications/events returns Country A events
         const ledgerRes = await injectWithRetry({

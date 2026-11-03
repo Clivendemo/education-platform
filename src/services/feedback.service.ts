@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
-import { sql, eq, and, ne, desc, count } from 'drizzle-orm';
+import { sql, eq, and, ne, desc, count, inArray } from 'drizzle-orm';
 import { db as defaultDb, type AppDatabase } from '../db/index.js';
 import {
   resourceFeedback,
   resourceFeedbackEvents,
   resources,
   resourceVersions,
+  countries,
+  resourceTypes,
   users,
   type ResourceFeedback,
   type ResourceFeedbackEvent,
@@ -103,6 +105,8 @@ export interface ListFeedbackQuery {
   resourceId?: string;
   resourceVersionId?: string;
   feedbackType?: FeedbackType;
+  countryId?: string;
+  allowedCountryIds?: string[];
   page?: number;
   limit?: number;
 }
@@ -248,14 +252,23 @@ export class FeedbackService {
    * Defensively never exposes raw feedback rows, triage status, notes, or category breakdowns.
    */
   async getPublicSummary(resourceId: string): Promise<PublicFeedbackSummary> {
-    // Verify resource is PUBLISHED
+    // Verify resource is PUBLISHED and parent country & resourceType are ACTIVE
     const [res] = await this.db
-      .select({ id: resources.id, status: resources.status })
+      .select({ id: resources.id })
       .from(resources)
-      .where(eq(resources.id, resourceId))
+      .innerJoin(countries, eq(resources.countryId, countries.id))
+      .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
+      .where(
+        and(
+          eq(resources.id, resourceId),
+          eq(resources.status, 'PUBLISHED'),
+          eq(countries.status, 'ACTIVE'),
+          eq(resourceTypes.status, 'ACTIVE'),
+        ),
+      )
       .limit(1);
 
-    if (!res || res.status !== 'PUBLISHED') {
+    if (!res) {
       throw new ResourceNotFoundError(resourceId);
     }
 
@@ -303,6 +316,18 @@ export class FeedbackService {
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
     const offset = (page - 1) * limit;
 
+    if (query.allowedCountryIds !== undefined && query.allowedCountryIds.length === 0) {
+      return {
+        items: [],
+        pagination: {
+          total: 0,
+          page,
+          limit,
+          totalPages: 1,
+        },
+      };
+    }
+
     const conditions = [];
 
     if (query.status) {
@@ -317,8 +342,45 @@ export class FeedbackService {
     if (query.feedbackType) {
       conditions.push(eq(resourceFeedback.feedbackType, query.feedbackType));
     }
+    if (query.countryId) {
+      conditions.push(eq(resources.countryId, query.countryId));
+    }
+    if (query.allowedCountryIds !== undefined) {
+      conditions.push(inArray(resources.countryId, query.allowedCountryIds));
+    }
 
+    const needsResourceJoin =
+      Boolean(query.countryId) || query.allowedCountryIds !== undefined;
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    if (needsResourceJoin) {
+      const [countRow] = await this.db
+        .select({ count: count() })
+        .from(resourceFeedback)
+        .innerJoin(resources, eq(resourceFeedback.resourceId, resources.id))
+        .where(whereClause);
+
+      const total = Number(countRow?.count ?? 0);
+
+      const rows = await this.db
+        .select({ feedback: resourceFeedback })
+        .from(resourceFeedback)
+        .innerJoin(resources, eq(resourceFeedback.resourceId, resources.id))
+        .where(whereClause)
+        .orderBy(desc(resourceFeedback.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      return {
+        items: rows.map((r) => r.feedback),
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1,
+        },
+      };
+    }
 
     const [countRow] = await this.db
       .select({ count: count() })
@@ -344,6 +406,20 @@ export class FeedbackService {
         totalPages: Math.ceil(total / limit) || 1,
       },
     };
+  }
+
+  /**
+   * Look up the owning countryId of the parent resource for a feedback item.
+   */
+  async getFeedbackResourceCountryId(feedbackId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ countryId: resources.countryId })
+      .from(resourceFeedback)
+      .innerJoin(resources, eq(resourceFeedback.resourceId, resources.id))
+      .where(eq(resourceFeedback.id, feedbackId))
+      .limit(1);
+
+    return row?.countryId ?? null;
   }
 
   /**

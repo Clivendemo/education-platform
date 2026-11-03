@@ -282,14 +282,19 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(curriculumRoutes, {
     prefix: '/api/v1',
     curriculumService: services?.curriculumService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
   app.register(resourceRoutes, {
     prefix: '/api/v1',
     resourceService: services?.resourceService,
+    authService: services?.authService,
+    rbacService: services?.rbacService,
   });
   app.register(publicationRoutes, {
     prefix: '/api/v1',
     publicationService: services?.publicationService,
+    resourceService: services?.resourceService,
     authService: services?.authService,
     rbacService: services?.rbacService,
     auditService: services?.auditService,

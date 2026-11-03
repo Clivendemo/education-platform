@@ -1,4 +1,4 @@
-import { eq, and, gte, lte, asc } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, asc } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { db as defaultDb } from '../../db/index.js';
 import * as schemas from '../../db/schemas.js';
@@ -164,45 +164,53 @@ export class CalendarService {
     countryId?: string,
     academicYear?: string,
   ): Promise<{ calendar: CalendarContainer | null; events: CalendarEventItem[] }> {
-    // 1. Fetch official calendar
+    // 1. Fetch official calendar belonging to an ACTIVE country (or global null countryId)
     const conditions = [
       eq(calendars.calendarScope, 'OFFICIAL'),
       eq(calendars.status, 'ACTIVE'),
+      or(isNull(calendars.countryId), eq(countries.status, 'ACTIVE'))!,
     ];
     if (countryId) conditions.push(eq(calendars.countryId, countryId));
     if (academicYear) conditions.push(eq(calendars.academicYear, academicYear));
 
-    const [officialCal] = await this.db
-      .select()
+    const [officialRow] = await this.db
+      .select({ calendar: calendars })
       .from(calendars)
+      .leftJoin(countries, eq(calendars.countryId, countries.id))
       .where(and(...conditions))
       .limit(1);
 
+    const officialCal = officialRow?.calendar;
+
     if (!officialCal) {
-      // Check for global official calendar if country-specific wasn't found
+      // Only fall back to a global (country_id IS NULL) official calendar when country-specific lookup misses
+      const fallbackConditions = [
+        eq(calendars.calendarScope, 'OFFICIAL'),
+        eq(calendars.status, 'ACTIVE'),
+        isNull(calendars.countryId),
+      ];
+      if (academicYear) {
+        fallbackConditions.push(eq(calendars.academicYear, academicYear));
+      }
+
       const [globalCal] = await this.db
         .select()
         .from(calendars)
-        .where(
-          and(
-            eq(calendars.calendarScope, 'OFFICIAL'),
-            eq(calendars.status, 'ACTIVE'),
-          ),
-        )
+        .where(and(...fallbackConditions))
         .limit(1);
 
       if (!globalCal) {
         return { calendar: null, events: [] };
       }
 
-      const events = await this.getEventsForCalendar(globalCal.id);
+      const events = await this.getEventsForCalendar(globalCal.id, {}, { publicOnly: true });
       return {
         calendar: this.mapCalendarContainer(globalCal),
         events,
       };
     }
 
-    const events = await this.getEventsForCalendar(officialCal.id);
+    const events = await this.getEventsForCalendar(officialCal.id, {}, { publicOnly: true });
     return {
       calendar: this.mapCalendarContainer(officialCal),
       events,
@@ -688,11 +696,15 @@ export class CalendarService {
   private async getEventsForCalendar(
     calendarId: string,
     filters: CalendarFilterOptions = {},
+    options: { publicOnly?: boolean } = {},
   ): Promise<CalendarEventItem[]> {
     const conditions = [
       eq(calendarEvents.calendarId, calendarId),
       eq(calendarEvents.status, 'ACTIVE'),
     ];
+    if (options.publicOnly) {
+      conditions.push(eq(calendarEvents.visibility, 'PUBLIC'));
+    }
 
     if (filters.startDate) {
       conditions.push(gte(calendarEvents.startDate, filters.startDate));

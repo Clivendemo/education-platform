@@ -1,4 +1,4 @@
-import { eq, and, ne, sql, desc, asc, inArray, or } from 'drizzle-orm';
+import { eq, and, ne, sql, desc, asc, inArray, or, isNotNull } from 'drizzle-orm';
 import { db as defaultDb, type AppDatabase } from '../db/index.js';
 import {
   educationUpdates,
@@ -8,6 +8,7 @@ import {
   countries,
   curricula,
   resources,
+  resourceTypes,
   type UpdatePublicationStatus,
 } from '../db/schemas.js';
 import { env } from '../config/env.js';
@@ -64,6 +65,7 @@ export interface ListUpdatesParams {
   category?: string;
   search?: string;
   status?: UpdatePublicationStatus;
+  allowedCountryIds?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -752,6 +754,10 @@ export class EducationUpdateService {
         and(
           eq(educationUpdates.slug, cleanSlug),
           eq(educationUpdates.publicationStatus, 'PUBLISHED'),
+          isNotNull(educationUpdates.publishedAt),
+          sql`${educationUpdates.publishedAt} <= now()`,
+          sql`(${educationUpdates.countryId} IS NULL OR ${countries.status} = 'ACTIVE')`,
+          sql`(${educationUpdates.categoryId} IS NULL OR ${educationUpdateCategories.status} = 'ACTIVE')`,
         ),
       )
       .limit(1);
@@ -760,8 +766,8 @@ export class EducationUpdateService {
       return null;
     }
 
-    // Fetch attached curricula
-    const curriculaList = await this.getCurriculaDetailsForUpdate(row.id);
+    // Fetch attached active curricula
+    const curriculaList = await this.getCurriculaDetailsForUpdate(row.id, true);
 
     // Fetch attached resources: ONLY PUBLISHED resources
     const resourcesList = await this.getPublishedResourcesForUpdate(row.id);
@@ -839,7 +845,13 @@ export class EducationUpdateService {
     const pageSize = Math.min(100, Math.max(1, params.pageSize || 20));
     const offset = (page - 1) * pageSize;
 
-    const conditions = [eq(educationUpdates.publicationStatus, 'PUBLISHED')];
+    const conditions = [
+      eq(educationUpdates.publicationStatus, 'PUBLISHED'),
+      isNotNull(educationUpdates.publishedAt),
+      sql`${educationUpdates.publishedAt} <= now()`,
+      sql`(${educationUpdates.countryId} IS NULL OR ${countries.status} = 'ACTIVE')`,
+      sql`(${educationUpdates.categoryId} IS NULL OR ${educationUpdateCategories.status} = 'ACTIVE')`,
+    ];
 
     // Filter by Country (isoCode, urlPrefix, or UUID)
     if (params.country) {
@@ -976,6 +988,10 @@ export class EducationUpdateService {
 
     const relatedConditions = [
       eq(educationUpdates.publicationStatus, 'PUBLISHED'),
+      isNotNull(educationUpdates.publishedAt),
+      sql`${educationUpdates.publishedAt} <= now()`,
+      sql`(${educationUpdates.countryId} IS NULL OR ${countries.status} = 'ACTIVE')`,
+      sql`(${educationUpdates.categoryId} IS NULL OR ${educationUpdateCategories.status} = 'ACTIVE')`,
       ne(educationUpdates.id, current.id),
     ];
 
@@ -1069,6 +1085,21 @@ export class EducationUpdateService {
     const offset = (page - 1) * pageSize;
 
     const conditions: any[] = [];
+
+    if (params.allowedCountryIds !== undefined) {
+      if (params.allowedCountryIds.length === 0) {
+        return {
+          data: [],
+          meta: {
+            page,
+            pageSize,
+            total: 0,
+            hasMore: false,
+          },
+        };
+      }
+      conditions.push(inArray(educationUpdates.countryId, params.allowedCountryIds));
+    }
 
     if (params.status) {
       conditions.push(eq(educationUpdates.publicationStatus, params.status));
@@ -1334,7 +1365,40 @@ export class EducationUpdateService {
     return rows;
   }
 
-  private async getCurriculaDetailsForUpdate(updateId: string): Promise<AttachedCurriculumSummary[]> {
+  async resolveCountryIdByIdentifier(identifier: string): Promise<string | null> {
+    const clean = identifier.trim();
+    if (!clean) return null;
+
+    if (UUID_REGEX.test(clean)) {
+      const [row] = await this.db
+        .select({ id: countries.id })
+        .from(countries)
+        .where(eq(countries.id, clean))
+        .limit(1);
+      return row?.id ?? null;
+    }
+
+    const [row] = await this.db
+      .select({ id: countries.id })
+      .from(countries)
+      .where(
+        or(
+          eq(sql`LOWER(${countries.urlPrefix})`, clean.toLowerCase()),
+          eq(sql`UPPER(${countries.isoCode})`, clean.toUpperCase()),
+        ),
+      )
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  private async getCurriculaDetailsForUpdate(
+    updateId: string,
+    activeOnly = false,
+  ): Promise<AttachedCurriculumSummary[]> {
+    const conditions = [eq(educationUpdateCurricula.updateId, updateId)];
+    if (activeOnly) {
+      conditions.push(eq(curricula.status, 'ACTIVE'));
+    }
     const rows = await this.db
       .select({
         id: curricula.id,
@@ -1345,7 +1409,7 @@ export class EducationUpdateService {
       })
       .from(educationUpdateCurricula)
       .innerJoin(curricula, eq(curricula.id, educationUpdateCurricula.curriculumId))
-      .where(eq(educationUpdateCurricula.updateId, updateId))
+      .where(and(...conditions))
       .orderBy(asc(curricula.name));
     return rows;
   }
@@ -1361,10 +1425,14 @@ export class EducationUpdateService {
       })
       .from(educationUpdateResources)
       .innerJoin(resources, eq(resources.id, educationUpdateResources.resourceId))
+      .innerJoin(countries, eq(countries.id, resources.countryId))
+      .innerJoin(resourceTypes, eq(resourceTypes.id, resources.resourceTypeId))
       .where(
         and(
           eq(educationUpdateResources.updateId, updateId),
           eq(resources.status, 'PUBLISHED'),
+          eq(countries.status, 'ACTIVE'),
+          eq(resourceTypes.status, 'ACTIVE'),
         ),
       )
       .orderBy(asc(educationUpdateResources.displayOrder), asc(resources.title));

@@ -39,7 +39,7 @@ describe('CommerceService M-Pesa Integration Tests', () => {
 
     mockDarajaClient = {
       initiateStkPush: vi.fn().mockImplementation(async (_params: any) => ({
-        MerchantRequestID: `MERCHANT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        MerchantRequestID: '29115-34620561-1',
         CheckoutRequestID: `ws_CO_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         ResponseCode: '0',
         ResponseDescription: 'Success. Request accepted for processing',
@@ -387,49 +387,108 @@ describe('CommerceService M-Pesa Integration Tests', () => {
       expect(dbOrder.status).toBe('CANCELLED');
     });
 
-    it('flags callback amount mismatch into RECONCILIATION_REQUIRED instead of blindly auto-settling (W1-AC-05 / W1-AC-07)', async () => {
-      const order = await commerceService.createOrder(userAId, {
+    it('prevents untrusted callback Amount tampering from DoS-blocking Daraja-verified settlement while parking authoritative DB amount mismatches in RECONCILIATION_REQUIRED (W1-AC-05 / W1-AC-07)', async () => {
+      // Case A: Untrusted callback claims 150.0 on a 200.00 KES order, but Daraja confirms COMPLETED and DB amounts match
+      const [freshBuyer] = await db
+        .insert(users)
+        .values({
+          email: `mpesa-nondos-${Date.now()}@example.com`,
+          displayName: 'Mpesa Non-DoS Buyer',
+        })
+        .returning();
+
+      try {
+        const orderOk = await commerceService.createOrder(freshBuyer.id, {
+          items: [{ offerId: testOfferId, quantity: 1 }],
+        });
+        createdOrderIds.push(orderOk.id);
+
+        const initOk = await commerceService.initiatePayment(
+          freshBuyer.id,
+          orderOk.id,
+          'MPESA',
+          { phoneNumber: '0712345678' },
+        );
+        const checkoutOk = await getInternalCheckoutId(initOk.payment.id);
+
+        const spoofedUnderpayCallback = {
+          Body: {
+            stkCallback: {
+              MerchantRequestID: '29115-34620561-1',
+              CheckoutRequestID: checkoutOk,
+              ResultCode: 0,
+              ResultDesc: 'The service request is processed successfully.',
+              CallbackMetadata: {
+                Item: [
+                  { Name: 'Amount', Value: 150.0 },
+                  { Name: 'MpesaReceiptNumber', Value: 'NLJNON_DOS1' },
+                ],
+              },
+            },
+          },
+        };
+
+        const resOk = await commerceService.handleMpesaCallback(spoofedUnderpayCallback);
+        expect(resOk.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
+        expect(resOk.result?.status).toBe('COMPLETED');
+        expect(resOk.result?.entitlementsGranted).toBe(1);
+
+        const [settledRow] = await db
+          .select()
+          .from(payments)
+          .where(eq(payments.id, initOk.payment.id));
+        expect(settledRow.status).toBe('COMPLETED');
+        expect((settledRow.providerPayload as any)?.callbackAmountAnomaly).toMatchObject({
+          claimedMinor: '15000',
+          expectedMinor: '20000',
+        });
+
+        await db.delete(entitlements).where(eq(entitlements.userId, freshBuyer.id));
+        await db.delete(payments).where(eq(payments.orderId, orderOk.id));
+        await db.delete(orders).where(eq(orders.id, orderOk.id));
+      } finally {
+        await db.delete(users).where(eq(users.id, freshBuyer.id)).catch(() => {});
+      }
+
+      // Case B: Authoritative DB order/payment amount mismatch parks in RECONCILIATION_REQUIRED with 0 entitlements
+      const orderMismatch = await commerceService.createOrder(userAId, {
         items: [{ offerId: testOfferId, quantity: 1 }],
       });
-      createdOrderIds.push(order.id);
+      createdOrderIds.push(orderMismatch.id);
 
-      const initResult = await commerceService.initiatePayment(
+      const initMismatch = await commerceService.initiatePayment(
         userAId,
-        order.id,
+        orderMismatch.id,
         'MPESA',
         { phoneNumber: '0712345678' },
       );
+      const checkoutMismatch = await getInternalCheckoutId(initMismatch.payment.id);
 
-      const checkoutRequestId = await getInternalCheckoutId(initResult.payment.id);
+      await db
+        .update(orders)
+        .set({ totalMinor: 15000n })
+        .where(eq(orders.id, orderMismatch.id));
 
-      const underpayPayload = {
+      const resMismatch = await commerceService.handleMpesaCallback({
         Body: {
           stkCallback: {
             MerchantRequestID: '29115-34620561-1',
-            CheckoutRequestID: checkoutRequestId,
+            CheckoutRequestID: checkoutMismatch,
             ResultCode: 0,
             ResultDesc: 'The service request is processed successfully.',
-            CallbackMetadata: {
-              Item: [
-                { Name: 'Amount', Value: 150.0 },
-                { Name: 'MpesaReceiptNumber', Value: 'NLJMISMATCH1' },
-              ],
-            },
           },
         },
-      };
-
-      const res = await commerceService.handleMpesaCallback(underpayPayload);
-      expect(res.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
-      expect(res.result?.status).toBe('RECONCILIATION_REQUIRED');
-      expect(res.result?.entitlementsGranted).toBe(0);
+      });
+      expect(resMismatch.ack).toEqual({ ResultCode: 0, ResultDesc: 'Accepted' });
+      expect(resMismatch.result?.status).toBe('RECONCILIATION_REQUIRED');
+      expect(resMismatch.result?.entitlementsGranted).toBe(0);
 
       const [dbPayment] = await db
         .select()
         .from(payments)
-        .where(eq(payments.id, initResult.payment.id));
+        .where(eq(payments.id, initMismatch.payment.id));
       expect(dbPayment.status).toBe('RECONCILIATION_REQUIRED');
-      expect(dbPayment.failureReason).toContain('CALLBACK_AMOUNT_ANOMALY');
+      expect(dbPayment.failureReason).toContain('Order/payment amount mismatch');
     });
 
     it('safely handles unknown checkoutRequestId without leaking record presence or querying Daraja', async () => {

@@ -15,6 +15,10 @@ import {
   defaultRbacService,
   type RbacService,
 } from '../../../services/rbac.service.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 
 export interface AnalyticsRouteOptions {
   analyticsService?: AnalyticsService;
@@ -187,6 +191,8 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
    * Protected administrative metrics overview report. Requires 'analytics.read'.
    */
   fastify.get('/admin/analytics/overview', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await getAuthenticatedUser(request);
     if (!user) {
       return reply.status(401).send({
@@ -198,12 +204,16 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
       });
     }
 
-    const hasPerm = await rbacService.hasPermission(user.id, 'analytics.read');
-    if (!hasPerm) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'analytics.read',
+    );
+    if (!access.hasGlobalGrant) {
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to view analytics',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });
@@ -230,6 +240,8 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
    * Lists configurable event types. Requires 'analytics.manage'.
    */
   fastify.get('/admin/analytics/event-types', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await getAuthenticatedUser(request);
     if (!user) {
       return reply.status(401).send({
@@ -241,12 +253,16 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
       });
     }
 
-    const hasPerm = await rbacService.hasPermission(user.id, 'analytics.manage');
-    if (!hasPerm) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'analytics.manage',
+    );
+    if (!access.hasGlobalGrant) {
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to manage analytics event types',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });
@@ -263,6 +279,8 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
    * Updates event type status. Requires 'analytics.manage'.
    */
   fastify.patch('/admin/analytics/event-types/:id', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await getAuthenticatedUser(request);
     if (!user) {
       return reply.status(401).send({
@@ -274,12 +292,16 @@ export const analyticsRoutes: FastifyPluginAsync<AnalyticsRouteOptions> = async 
       });
     }
 
-    const hasPerm = await rbacService.hasPermission(user.id, 'analytics.manage');
-    if (!hasPerm) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'analytics.manage',
+    );
+    if (!access.hasGlobalGrant) {
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to manage analytics event types',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });

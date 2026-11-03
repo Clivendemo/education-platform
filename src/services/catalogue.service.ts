@@ -170,10 +170,13 @@ export class DbCatalogueService implements CatalogueService {
     const pageSize = Math.min(100, Math.max(1, params.pageSize || 20));
     const offset = (page - 1) * pageSize;
 
-    // Base conditions: Resource MUST be PUBLISHED, Version MUST be PUBLISHED
+    // Base conditions: Resource MUST be PUBLISHED, Version MUST be PUBLISHED <= now(), Country & Type ACTIVE
     const conditions = [
       eq(resources.status, 'PUBLISHED'),
       eq(resourceVersions.status, 'PUBLISHED'),
+      eq(countries.status, 'ACTIVE'),
+      eq(resourceTypes.status, 'ACTIVE'),
+      sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
     ];
 
     // Filter by Country (supports urlPrefix, isoCode, or UUID)
@@ -498,6 +501,8 @@ export class DbCatalogueService implements CatalogueService {
             sql`, `,
           )})`,
           eq(resourceFiles.status, 'AVAILABLE'),
+          sql`${resourceFiles.malwareScanStatus} NOT IN ('INFECTED', 'SCAN_ERROR')`,
+          sql`${resourceFiles.objectKey} NOT LIKE 'quarantine/%'`,
         ),
       )
       .orderBy(desc(resourceFiles.isPrimary), asc(resourceFiles.sequenceOrder));
@@ -751,6 +756,9 @@ export class DbCatalogueService implements CatalogueService {
           eq(resources.id, id),
           eq(resources.status, 'PUBLISHED'),
           eq(resourceVersions.status, 'PUBLISHED'),
+          eq(countries.status, 'ACTIVE'),
+          eq(resourceTypes.status, 'ACTIVE'),
+          sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
         ),
       )
       .limit(1);
@@ -759,7 +767,7 @@ export class DbCatalogueService implements CatalogueService {
       return null;
     }
 
-    // Fetch AVAILABLE files attached to the published version
+    // Fetch AVAILABLE, clean, non-quarantined files attached to the published version
     const files = await this.db
       .select({
         id: resourceFiles.id,
@@ -776,6 +784,8 @@ export class DbCatalogueService implements CatalogueService {
         and(
           eq(resourceFiles.resourceVersionId, row.versionId),
           eq(resourceFiles.status, 'AVAILABLE'),
+          sql`${resourceFiles.malwareScanStatus} NOT IN ('INFECTED', 'SCAN_ERROR')`,
+          sql`${resourceFiles.objectKey} NOT LIKE 'quarantine/%'`,
         ),
       )
       .orderBy(desc(resourceFiles.isPrimary), asc(resourceFiles.sequenceOrder));

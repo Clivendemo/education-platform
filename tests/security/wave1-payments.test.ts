@@ -26,12 +26,18 @@ import { parseExactKesToMinor } from '../../src/services/commerce/money.util.js'
 import {
   DarajaClient,
   DARAJA_CONFIRMED_FAILURE_CODES,
+  DARAJA_EXCLUDED_UNVERIFIED_FAILURE_CANDIDATES,
   DARAJA_RESULT_CODE_EVIDENCE,
+  validateDarajaEvidenceEntry,
+  assertValidDarajaEvidenceRegistry,
 } from '../../src/services/commerce/mpesa/daraja-client.js';
 import { MpesaPaymentProvider } from '../../src/services/commerce/mpesa/mpesa-payment-provider.js';
 import { MpesaReconciliationWorker } from '../../src/services/commerce/mpesa/mpesa-reconciliation.worker.js';
 import { MpesaWebhookRateLimiter } from '../../src/routes/middleware/mpesa-webhook-guard.js';
-import type { DarajaStkQueryResult } from '../../src/services/commerce/mpesa/mpesa.types.js';
+import type {
+  DarajaStkQueryResult,
+  DarajaResultCodeEvidenceEntry,
+} from '../../src/services/commerce/mpesa/mpesa.types.js';
 import { runPlatformMigrations } from '../../src/db/migrate.js';
 import { setupCommerceSchema } from '../../src/db/seeds/commerce-setup.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
@@ -220,82 +226,315 @@ describe('Wave 1 WP1: Payment Integrity, Daraja Allowlist, Reconciliation & Webh
       callbackUrl: 'https://example.com/api/v1/commerce/webhooks/mpesa',
     };
 
-    it('T-W1-MPESA-CODE-01 & T-W1-MPESA-ALLOWLIST-01: classifies only documented terminal codes and treats 1001, 1025, 4999, missing, malformed, and non-zero ResponseCode as QUERY_INCONCLUSIVE_RETRYABLE', async () => {
-      // Evidence registry must cover every code in DARAJA_CONFIRMED_FAILURE_CODES plus 0 and 1032
-      const evidencedCodes: Array<keyof typeof DARAJA_RESULT_CODE_EVIDENCE> = [
-        '0',
-        '1032',
-        '1',
-        '1019',
-        '1037',
-        '2001',
-      ];
-      for (const code of evidencedCodes) {
-        expect(DARAJA_RESULT_CODE_EVIDENCE[code]).toBeDefined();
-        expect(DARAJA_RESULT_CODE_EVIDENCE[code].darajaSpecMeaning.length).toBeGreaterThan(10);
-      }
-      for (const failCode of DARAJA_CONFIRMED_FAILURE_CODES) {
-        expect(failCode in DARAJA_RESULT_CODE_EVIDENCE).toBe(true);
-      }
-
-      const runQueryWithBody = async (httpStatus: number, responseBody: Record<string, unknown>) => {
-        const mockFetch = vi
-          .fn()
-          .mockResolvedValueOnce({
-            ok: true,
-            status: 200,
-            json: async () => ({ access_token: 'tok', expires_in: '3599' }),
-          })
-          .mockResolvedValueOnce({
-            ok: httpStatus >= 200 && httpStatus < 300,
-            status: httpStatus,
-            json: async () => responseBody,
-          });
-        const client = new DarajaClient({ config: dummyDarajaCfg, fetchFn: mockFetch as any });
-        return client.queryStkPushStatus('ws_CO_TEST_CODE');
-      };
-
-      // 1. Confirmed terminal failures: 1, 1019, 1037, 2001 -> TRANSACTION_CONFIRMED_FAILED
-      for (const failCode of ['1', '1019', '1037', '2001']) {
-        const res = await runQueryWithBody(200, {
-          ResponseCode: '0',
-          CheckoutRequestID: 'ws_CO_TEST_CODE',
-          ResultCode: failCode,
-          ResultDesc: 'Confirmed terminal failure',
+    const runQueryWithBody = async (httpStatus: number, responseBody: unknown) => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'tok', expires_in: '3599' }),
+        })
+        .mockResolvedValueOnce({
+          ok: httpStatus >= 200 && httpStatus < 300,
+          status: httpStatus,
+          json: async () => responseBody,
         });
-        expect(res.classification).toBe('TRANSACTION_CONFIRMED_FAILED');
+      const client = new DarajaClient({ config: dummyDarajaCfg, fetchFn: mockFetch as any });
+      return client.queryStkPushStatus('ws_CO_TEST_CODE');
+    };
+
+    it('T-W1-MPESA-CODE-01: rejects numeric 0, " 0 ", missing, null, false, "", {}/[], and non-zero ResponseCode across ResultCode "0", "1032", and "1", and never settles, cancels, or fails an active payment', async () => {
+      const invalidResponseCodeVariants: ReadonlyArray<{
+        label: string;
+        hasKey: boolean;
+        value: unknown;
+      }> = [
+        { label: 'numeric 0', hasKey: true, value: 0 },
+        { label: 'whitespace-padded " 0 "', hasKey: true, value: ' 0 ' },
+        { label: 'missing ResponseCode', hasKey: false, value: undefined },
+        { label: 'null', hasKey: true, value: null },
+        { label: 'boolean false', hasKey: true, value: false },
+        { label: 'empty string ""', hasKey: true, value: '' },
+        { label: 'object {}', hasKey: true, value: {} },
+        { label: 'array []', hasKey: true, value: [] },
+        { label: 'non-zero string "1"', hasKey: true, value: '1' },
+        { label: 'double-zero string "00"', hasKey: true, value: '00' },
+      ];
+
+      // 1. Exhaustive invalid ResponseCode x plausible ResultCode ("0", "1032", "1") matrix
+      for (const resultCodeCandidate of ['0', '1032', '1']) {
+        for (const variant of invalidResponseCodeVariants) {
+          const payload: Record<string, unknown> = {
+            CheckoutRequestID: 'ws_CO_TEST_CODE',
+            MerchantRequestID: '29115-34620561-1',
+            ResultCode: resultCodeCandidate,
+            ResultDesc:
+              resultCodeCandidate === '0'
+                ? 'The service request is processed successfully.'
+                : resultCodeCandidate === '1032'
+                  ? 'Request cancelled by user'
+                  : 'Upstream candidate failure',
+          };
+          if (variant.hasKey) {
+            payload.ResponseCode = variant.value;
+          }
+
+          const res = await runQueryWithBody(200, payload);
+          expect(
+            res.classification,
+            `Variant ${variant.label} with ResultCode=${resultCodeCandidate} must be QUERY_INCONCLUSIVE_RETRYABLE`,
+          ).toBe('QUERY_INCONCLUSIVE_RETRYABLE');
+          expect(res.resultCode).toBeNull();
+          expect(res.responseCode).not.toBe('0');
+        }
       }
 
-      // 2. User cancellation: 1032 -> TRANSACTION_CONFIRMED_CANCELLED
-      const cancelRes = await runQueryWithBody(200, {
-        ResponseCode: '0',
-        CheckoutRequestID: 'ws_CO_TEST_CODE',
-        ResultCode: 1032,
-        ResultDesc: 'Request cancelled by user',
-      });
-      expect(cancelRes.classification).toBe('TRANSACTION_CONFIRMED_CANCELLED');
-
-      // 3. Excluded / in-flight / undocumented / malformed codes MUST map to QUERY_INCONCLUSIVE_RETRYABLE
-      for (const retryablePayload of [
-        { ResponseCode: '0', ResultCode: '1001', ResultDesc: 'Unable to lock subscriber, a transaction is already in process' },
-        { ResponseCode: '0', ResultCode: '1025', ResultDesc: 'An error occurred while sending a push request' },
-        { ResponseCode: '0', ResultCode: '4999', ResultDesc: 'The transaction is still under processing' },
-        { ResponseCode: '0', ResultCode: '999999', ResultDesc: 'Undocumented vendor code' },
+      // 2. Top-level array, malformed ResultCode, and HTTP 500 errorCode payloads
+      for (const malformedBody of [
+        [],
         { ResponseCode: '0', ResultDesc: 'Missing ResultCode field entirely' },
+        { ResponseCode: '0', ResultCode: null, ResultDesc: 'Null ResultCode' },
+        { ResponseCode: '0', ResultCode: '', ResultDesc: 'Empty ResultCode' },
+        { ResponseCode: '0', ResultCode: ' 0 ', ResultDesc: 'Whitespace ResultCode' },
         { ResponseCode: '0', ResultCode: { nested: true }, ResultDesc: 'Malformed ResultCode object' },
-        { ResponseCode: '1', ResultCode: '0', ResultDesc: 'Top-level query rejected despite ResultCode 0' },
       ]) {
-        const res = await runQueryWithBody(200, retryablePayload);
+        const res = await runQueryWithBody(200, malformedBody);
         expect(res.classification).toBe('QUERY_INCONCLUSIVE_RETRYABLE');
+        expect(res.resultCode).toBeNull();
       }
 
-      // 4. HTTP 500 error body with errorCode -> QUERY_INCONCLUSIVE_RETRYABLE
       const err500 = await runQueryWithBody(500, {
         requestId: 'req-1',
         errorCode: '500.001.1001',
         errorMessage: 'The transaction is being processed',
       });
       expect(err500.classification).toBe('QUERY_INCONCLUSIVE_RETRYABLE');
+
+      // 3. End-to-end proof: invalid ResponseCode paired with ResultCode "0", "1032", and "1"
+      // NEVER settles (COMPLETED), cancels (CANCELLED), or fails (FAILED) a payment in CommerceService.
+      let upstreamQueryBody: Record<string, unknown> = {
+        ResponseCode: 0, // Invalid numeric 0 despite ResultCode '0'!
+        CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+        MerchantRequestID: 'M-STRICT-E2E-1',
+        ResultCode: '0',
+        ResultDesc: 'The service request is processed successfully.',
+      };
+
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('/oauth/v1/generate')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'e2e_tok', expires_in: '3599' }),
+          };
+        }
+        if (url.includes('/mpesa/stkpush/v1/processrequest')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              MerchantRequestID: 'M-STRICT-E2E-1',
+              CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+              ResponseCode: '0',
+              ResponseDescription: 'The service request has been accepted successfully',
+              CustomerMessage: 'Success',
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => upstreamQueryBody,
+        };
+      });
+
+      const realDaraja = new DarajaClient({
+        config: dummyDarajaCfg,
+        fetchFn: fetchMock as any,
+      });
+      const svc = new CommerceService({
+        db,
+        paymentProviders: {
+          MPESA: new MpesaPaymentProvider({ darajaClient: realDaraja }),
+        },
+      });
+
+      const order = await svc.createOrder(learnerId, {
+        items: [{ offerId, quantity: 1 }],
+      });
+      createdOrderIds.push(order.id);
+
+      const { payment } = await svc.initiatePayment(learnerId, order.id, 'MPESA', {
+        phoneNumber: '0712345678',
+      });
+
+      // Attempt A: Callback claims success (ResultCode 0), upstream query returns numeric ResponseCode: 0 + ResultCode: "0"
+      await svc.handleMpesaCallback({
+        Body: {
+          stkCallback: {
+            MerchantRequestID: 'M-STRICT-E2E-1',
+            CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+            ResultCode: 0,
+            ResultDesc: 'The service request is processed successfully.',
+            CallbackMetadata: {
+              Item: [
+                { Name: 'Amount', Value: 300 },
+                { Name: 'MpesaReceiptNumber', Value: 'Q Strict01' },
+              ],
+            },
+          },
+        },
+      });
+
+      // Attempt B: Callback claims cancel (ResultCode 1032), upstream query returns " 0 " + ResultCode: "1032"
+      upstreamQueryBody = {
+        ResponseCode: ' 0 ',
+        CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+        MerchantRequestID: 'M-STRICT-E2E-1',
+        ResultCode: '1032',
+        ResultDesc: 'Request cancelled by user',
+      };
+      await svc.handleMpesaCallback({
+        Body: {
+          stkCallback: {
+            MerchantRequestID: 'M-STRICT-E2E-1',
+            CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+            ResultCode: 1032,
+            ResultDesc: 'Request cancelled by user',
+          },
+        },
+      });
+
+      // Attempt C: Reconciliation worker runs when upstream query returns null ResponseCode + ResultCode: "1"
+      upstreamQueryBody = {
+        ResponseCode: null,
+        CheckoutRequestID: 'ws_CO_STRICT_E2E_001',
+        MerchantRequestID: 'M-STRICT-E2E-1',
+        ResultCode: '1',
+        ResultDesc: 'Candidate failure code',
+      };
+      await db
+        .update(payments)
+        .set({ nextVerificationAt: new Date(Date.now() - 1000) })
+        .where(eq(payments.id, payment.id));
+      await svc.reconcileMpesaPaymentById(payment.id, 'strict-resp-worker');
+
+      const [persistedPayment] = await db
+        .select()
+        .from(payments)
+        .where(eq(payments.id, payment.id));
+      const [persistedOrder] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.id, order.id));
+
+      expect(persistedPayment.status).toBe('PROCESSING');
+      expect(['COMPLETED', 'CANCELLED', 'FAILED']).not.toContain(persistedPayment.status);
+      expect(persistedPayment.verifiedReceiptNumber).toBeNull();
+      expect(persistedOrder.status).toBe('PROCESSING');
+      expect(['COMPLETED', 'CANCELLED', 'FAILED']).not.toContain(persistedOrder.status);
+      expect(await svc.hasEntitlement(learnerId, resourceId)).toBe(false);
+    });
+
+    it('T-W1-MPESA-ALLOWLIST-01: validates primary Safaricom evidence for every included outcome, individually tests each included code, excludes unverified failure codes as QUERY_INCONCLUSIVE_RETRYABLE, and rejects synthetic placeholders', async () => {
+      // 1. Registry-wide structural & primary-source validation
+      assertValidDarajaEvidenceRegistry(
+        DARAJA_RESULT_CODE_EVIDENCE,
+        DARAJA_CONFIRMED_FAILURE_CODES,
+      );
+
+      for (const [code, entry] of Object.entries(DARAJA_RESULT_CODE_EVIDENCE)) {
+        expect(() => validateDarajaEvidenceEntry(code, entry)).not.toThrow();
+        expect(entry.verbatimResultDesc).toBe(entry.sanitizedQueryFixture.ResultDesc);
+        expect(entry.sanitizedQueryFixture.ResponseCode).toBe('0');
+        expect(entry.sanitizedQueryFixture.ResultCode).toBe(code);
+      }
+
+      // 2. Individual outcome test coverage for every included evidence entry ('0', '1032', and any DARAJA_CONFIRMED_FAILURE_CODES)
+      const completedRes = await runQueryWithBody(
+        200,
+        DARAJA_RESULT_CODE_EVIDENCE['0'].sanitizedQueryFixture,
+      );
+      expect(completedRes.classification).toBe('TRANSACTION_CONFIRMED_COMPLETED');
+      expect(completedRes.responseCode).toBe('0');
+      expect(completedRes.resultCode).toBe('0');
+      expect(completedRes.resultDesc).toBe('The service request is processed successfully.');
+
+      const cancelledRes = await runQueryWithBody(
+        200,
+        DARAJA_RESULT_CODE_EVIDENCE['1032'].sanitizedQueryFixture,
+      );
+      expect(cancelledRes.classification).toBe('TRANSACTION_CONFIRMED_CANCELLED');
+      expect(cancelledRes.responseCode).toBe('0');
+      expect(cancelledRes.resultCode).toBe('1032');
+      expect(cancelledRes.resultDesc).toBe('Request cancelled by user');
+
+      for (const failCode of DARAJA_CONFIRMED_FAILURE_CODES) {
+        const entry = (
+          DARAJA_RESULT_CODE_EVIDENCE as Readonly<
+            Record<string, DarajaResultCodeEvidenceEntry>
+          >
+        )[failCode];
+        expect(entry).toBeDefined();
+        validateDarajaEvidenceEntry(failCode, entry);
+        expect(entry.nonDebitFinality).toBe(true);
+
+        const failRes = await runQueryWithBody(200, entry.sanitizedQueryFixture);
+        expect(failRes.classification).toBe('TRANSACTION_CONFIRMED_FAILED');
+        expect(failRes.resultCode).toBe(failCode);
+      }
+
+      // 3. Every excluded unverified failure candidate ('1', '1019', '1037', '2001') plus '1001', '1025', '4999', '999999'
+      // MUST NOT be in DARAJA_CONFIRMED_FAILURE_CODES and MUST classify as QUERY_INCONCLUSIVE_RETRYABLE
+      expect([...DARAJA_EXCLUDED_UNVERIFIED_FAILURE_CANDIDATES]).toEqual([
+        '1',
+        '1019',
+        '1037',
+        '2001',
+      ]);
+      for (const excludedCode of [
+        ...DARAJA_EXCLUDED_UNVERIFIED_FAILURE_CANDIDATES,
+        '1001',
+        '1025',
+        '4999',
+        '999999',
+      ]) {
+        expect(DARAJA_CONFIRMED_FAILURE_CODES.has(excludedCode)).toBe(false);
+        expect(excludedCode in DARAJA_RESULT_CODE_EVIDENCE).toBe(false);
+
+        const res = await runQueryWithBody(200, {
+          ResponseCode: '0',
+          CheckoutRequestID: 'ws_CO_TEST_CODE',
+          MerchantRequestID: '29115-34620561-1',
+          ResultCode: excludedCode,
+          ResultDesc: `Upstream Daraja code ${excludedCode}`,
+        });
+        expect(res.classification).toBe('QUERY_INCONCLUSIVE_RETRYABLE');
+        expect(res.responseCode).toBe('0');
+        expect(res.resultCode).toBe(excludedCode);
+      }
+
+      // 4. Synthetic placeholder descriptions, developer notes, or non-Safaricom URLs are rejected
+      for (const syntheticDesc of [
+        'Confirmed terminal failure',
+        'Placeholder ResultDesc for failure',
+        'TODO: capture from sandbox',
+        'Developer note: insufficient balance',
+        'Short',
+      ]) {
+        const syntheticEntry: DarajaResultCodeEvidenceEntry = {
+          ...DARAJA_RESULT_CODE_EVIDENCE['1032'],
+          code: '1',
+          classification: 'TRANSACTION_CONFIRMED_FAILED',
+          verbatimResultDesc: syntheticDesc,
+          sanitizedQueryFixture: {
+            ...DARAJA_RESULT_CODE_EVIDENCE['1032'].sanitizedQueryFixture,
+            ResultCode: '1',
+            ResultDesc: syntheticDesc,
+          },
+        };
+        expect(() => validateDarajaEvidenceEntry('1', syntheticEntry)).toThrow();
+      }
     });
 
     it('T-W1-DEC-01: parses exact string decimals into minor units without IEEE-754 float drift and rejects >2 decimal places or scientific notation', () => {

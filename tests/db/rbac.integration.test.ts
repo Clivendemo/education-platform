@@ -330,4 +330,82 @@ describe.skipIf(!isDbAvailable)('RBAC Service Neon PostgreSQL Integration Tests'
       ).rejects.toThrow();
     });
   });
+
+  describe('6. Wave 2 Canonical Scope Counts & Permission Scope Enforcement', () => {
+    it('maintains 48 active canonical permissions (29 ANY + 19 GLOBAL) and rejects COUNTRY grants on GLOBAL permissions', async () => {
+      const allPerms = await withDbRetry(() => rbacService.listPermissions());
+      const activePerms = allPerms.filter((p) => p.status === 'ACTIVE');
+      expect(activePerms).toHaveLength(48);
+      expect(activePerms.filter((p) => p.scopeType === 'ANY')).toHaveLength(29);
+      expect(activePerms.filter((p) => p.scopeType === 'GLOBAL')).toHaveLength(19);
+
+      const email = `test-wave2-scope-${Date.now()}@example.com`;
+      const [u] = await withDbRetry(() =>
+        db
+          .insert(users)
+          .values({
+            email,
+            displayName: 'Country Scoped Manager',
+            status: 'ACTIVE',
+          })
+          .returning(),
+      );
+      createdUserIds.push(u.id);
+
+      const countryId = '00000000-0000-0000-0000-000000000099';
+      await withDbRetry(() =>
+        rbacService.assignRole({
+          userId: u.id,
+          roleSlug: 'content_manager',
+          scopeType: 'COUNTRY',
+          scopeId: countryId,
+        }),
+      );
+
+      // Reclassified ANY permissions succeed for matching COUNTRY scope
+      expect(
+        await withDbRetry(() =>
+          rbacService.hasPermission(u.id, 'update.publish', {
+            scopeType: 'COUNTRY',
+            scopeId: countryId,
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        await withDbRetry(() =>
+          rbacService.hasPermission(u.id, 'quality.verify', {
+            scopeType: 'COUNTRY',
+            scopeId: countryId,
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        await withDbRetry(() =>
+          rbacService.hasPermission(u.id, 'feedback.manage', {
+            scopeType: 'COUNTRY',
+            scopeId: countryId,
+          }),
+        ),
+      ).toBe(true);
+
+      // GLOBAL permissions fail closed for COUNTRY-scoped grants even when scope is passed
+      expect(
+        await withDbRetry(() =>
+          rbacService.hasPermission(u.id, 'taxonomy.manage', {
+            scopeType: 'COUNTRY',
+            scopeId: countryId,
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        await withDbRetry(() =>
+          rbacService.hasPermission(u.id, 'retention.read', {
+            scopeType: 'COUNTRY',
+            scopeId: countryId,
+          }),
+        ),
+      ).toBe(false);
+    });
+  });
 });
+

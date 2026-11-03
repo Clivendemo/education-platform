@@ -480,11 +480,11 @@ Maximum suggestions: 5
 | Role permissions          | VERIFIED    | Prompt 14 implemented & verified; cascade join mappings |
 | User roles                | VERIFIED    | Prompt 14 implemented & verified; global and scoped assignments |
 | Multiple roles            | VERIFIED    | Prompt 14 implemented & verified; union permission accumulation |
-| Permission scopes         | VERIFIED    | Prompt 14 implemented & verified; hierarchical global satisfaction and strict scope boundaries |
+| Permission scopes         | TESTING     | Prompt 14 + Prompt 33 Wave 2 (WP5): `29 ANY` + `19 GLOBAL` = `48` canonical permissions (`106` mappings), `scopeType` enforced in `hasPermission` & `resolveStaffPermissionAccess`, advisory-locked zero-waiver seed gate; offline suites pass, live PostgreSQL seed/integration execution pending `DATABASE_URL` |
 | Role expiry               | VERIFIED    | Prompt 14 implemented & verified; temporal boundaries with starts_at and ends_at |
 | Role auditing             | VERIFIED    | Prompt 14 implemented & verified; soft revocation status and created_by tracking |
-| Server-side authorization | VERIFIED    | Prompt 14 implemented & verified; createRequirePermission hook with generic 403 FORBIDDEN |
-| RBAC tests                | VERIFIED    | Prompt 14 implemented & verified; unit, DB integration, and route authorization test suites |
+| Server-side authorization | TESTING     | Prompt 14 + Prompt 33 Wave 2 (WP5): country-scoped vs global admin enforcement, non-leaking `GENERIC_FORBIDDEN_MESSAGE`, and `Cache-Control: private, no-store`; offline route suites pass, live DB integration pending `DATABASE_URL` |
+| RBAC tests                | TESTING     | Prompt 33 Wave 2 offline unit/security/route suites passing (`wave2-rbac-and-seed.test.ts` 12/12, `rbac.service.test.ts` 16/16); PostgreSQL integration suites skipped pending live `DATABASE_URL` |
 
 ---
 
@@ -844,23 +844,23 @@ Exactly six major dynamic homepage content cards/sections must be active at any 
 | Password security          | NOT_STARTED |       |
 | Secure sessions            | NOT_STARTED |       |
 | Session revocation         | NOT_STARTED |       |
-| RBAC                       | NOT_STARTED |       |
-| IDOR protection            | NOT_STARTED |       |
-| CSRF protection            | NOT_STARTED |       |
-| CORS                       | NOT_STARTED |       |
-| Security headers           | NOT_STARTED |       |
+| RBAC                       | TESTING     | Prompt 33 Wave 2 (WP5): `29 ANY` + `19 GLOBAL` = `48` permissions, zero-waiver `Query A` + NULL-safe `Query B` seed gate, country-scoped vs global enforcement; pending live PostgreSQL verification |
+| IDOR protection            | TESTING     | Prompt 33 Wave 2 (WP5 + WP2): cross-country admin isolation (`403` / hidden `404`) and public visibility lockdown across resources, versions, publication events, curriculum, search, catalogue, library, SEO, contributors, updates, calendar, and recommendations |
+| CSRF protection            | NOT_STARTED | Reserved for Wave 3 |
+| CORS                       | NOT_STARTED | Reserved for Wave 3 |
+| Security headers           | NOT_STARTED | Reserved for Wave 3 |
 | Input validation           | NOT_STARTED |       |
 | Mass-assignment protection | NOT_STARTED |       |
 | Rate limiting              | NOT_STARTED |       |
-| File security              | NOT_STARTED |       |
+| File security              | TESTING     | Prompt 33 Wave 1 (WP6) + Wave 2 (WP2): quarantine/malware-scan eligibility predicates across public discovery, `files.resource_files` cache invalidation trigger (`0023`); pending live DB execution |
 | Download protection        | NOT_STARTED |       |
 | Premium protection         | NOT_STARTED |       |
-| Payment security           | NOT_STARTED |       |
-| Webhook security           | NOT_STARTED |       |
-| Admin security             | NOT_STARTED |       |
+| Payment security           | TESTING     | Prompt 33 Wave 1 (WP1/WP4) implemented; pending live DB & Daraja staging verification |
+| Webhook security           | TESTING     | Prompt 33 Wave 1 (WP1) implemented; pending live DB & Daraja staging verification |
+| Admin security             | TESTING     | Prompt 33 Wave 2 (WP5): `resolveStaffPermissionAccess`, `GENERIC_FORBIDDEN_MESSAGE`, `Cache-Control: private, no-store` across all admin endpoints |
 | Secret management          | NOT_STARTED |       |
 | Audit logging              | NOT_STARTED |       |
-| Security tests             | NOT_STARTED |       |
+| Security tests             | TESTING     | Wave 1 & Wave 2 offline security suites passing (`wave2-rbac-and-seed.test.ts` 12/12, `wave2-public-visibility.test.ts` 9/9); live PostgreSQL suites skipped when `DATABASE_URL` is unconfigured |
 
 ---
 
@@ -1047,7 +1047,7 @@ Every major implementation stage should have a Git checkpoint.
 | Recommendations          | VERIFIED    | Prompt 30 implemented & verified |
 | Admin dashboard          | VERIFIED    | Prompt 31 implemented & verified |
 | Homepage intelligence    | VERIFIED    | Prompt 32 implemented & verified |
-| Security audit           | NOT_STARTED |        |
+| Security audit           | IN_PROGRESS | Prompt 33 Wave 1 & Wave 2 implemented (`TESTING` pending live PostgreSQL verification); Wave 3 not started |
 | Performance audit        | NOT_STARTED |        |
 | Final launch audit       | NOT_STARTED |        |
 
@@ -1056,6 +1056,69 @@ Every major implementation stage should have a Git checkpoint.
 # 46. Current Implementation Log
 
 The coding agent must add entries here after each bounded implementation task.
+
+## 2026-11-03 — Prompt 33 Security Hardening Wave 2 (Revision 3.0): WP5 RBAC Enforcement & WP2 Public Visibility Lockdown
+
+Status:
+TESTING (Code, migration `0023`, operator runbook, typecheck, build, and 33 offline test files / 351 tests passing; PostgreSQL-backed migration/seed/integration execution skipped locally because `DATABASE_URL` is not configured in this sandbox container)
+
+Implemented:
+- WP5 Canonical RBAC Inventory, Zero-Waiver Seed Gate & Operator Runbook (`src/db/seeds/roles-permissions.ts`, `docs/security/wave2-rbac-predeployment-audit.md`):
+  * Reclassified the exact 11 approved permissions (`update.create`, `update.edit`, `update.publish`, `update.archive`, `update.read`, `quality.check.create`, `quality.verify`, `quality.revoke`, `quality.read`, `feedback.read`, `feedback.manage`) from `'GLOBAL'` to `'ANY'`, establishing the canonical `6` roles, `48` permissions (`29 ANY` + `19 GLOBAL` + `0 SCOPED`), and `106` `role_permissions` mappings.
+  * Implemented transactionally wrapped (`dbInstance.transaction`) seed execution with `pg_advisory_xact_lock(20263302, 1)` running `assertWave2RbacPreconditions(tx)` (`Query A` + Revision 3.0 NULL-safe `Query B`) strictly BEFORE `isCanonicalTargetStateReached(tx)` and before any `INSERT`/`UPDATE`.
+  * Enforced byte-for-byte SQL parity between `WAVE2_RBAC_QUERY_A_SQL` / `WAVE2_RBAC_QUERY_B_SQL` and `docs/security/wave2-rbac-predeployment-audit.md` (`<!-- WAVE2_QUERY_A_START -->`..`<!-- WAVE2_QUERY_B_END -->`), including PostgreSQL three-valued-logic NULL safety (`(...) IS NOT TRUE` and `IS DISTINCT FROM`) and `PB-1`..`PB-4` partial-bootstrap handling.
+- WP5 Runtime Scope Enforcement & Administrative Endpoint Hardening (`src/services/rbac.service.ts`, `src/routes/hooks/authorize.ts`, `src/routes/api/v1/{updates,quality-governance,feedback,recommendations,audit,retention,analytics,notifications}.ts`):
+  * Enforced `permissions.scopeType` (`GLOBAL` satisfied only by unscoped grants; `SCOPED` by exact scope match; `ANY` by unscoped or exact scope match) in `DefaultRbacService.hasPermission`.
+  * Exported `resolveStaffPermissionAccess` failing closed on `SCHOOL`/`RESOURCE`-only grants and enforcing country-scope isolation on country-capable editorial endpoints (`updates`, `quality-governance`, `feedback`, `recommendations`) while requiring `access.hasGlobalGrant` on global-only governance endpoints (`audit`, `retention`, `analytics`, `notifications`).
+  * Replaced permission-slug-leaking `403` error messages with `GENERIC_FORBIDDEN_MESSAGE` and enforced `Cache-Control: private, no-store` across all hardened admin endpoints.
+- WP2 Public Visibility Lockdown & Synchronous Recommendation Cache Recomputation (`src/app.ts`, `src/routes/api/v1/{publications,resources,curriculum}.ts`, `src/services/{resource,curriculum,catalogue,library,contributor,seo,education-update,feedback}.service.ts`, `src/services/search/postgresql-search.provider.ts`, `src/services/calendar/calendar.service.ts`, `src/services/recommendations/{recommendation,recommendation-cache}.service.ts`):
+  * Locked down `GET /api/v1/resources/:id/events` identically to `GET /api/v1/admin/resources/:id/events` (`requireAuth` + `['resource.admin.read', 'resource.review']` + `COUNTRY` scope + `Cache-Control: private, no-store`).
+  * Gated `includeInactive=true`, `includeUnpublished=true`, non-`PUBLISHED` status filters, unpublished/future-dated/inactive-country/inactive-type resources & versions, and inactive/draft curriculum entities behind authenticated staff RBAC + country scope + `Cache-Control: private, no-store`.
+  * Enforced active country (`countries.status = 'ACTIVE'`), active resource type (`resourceTypes.status = 'ACTIVE'`), active taxonomy, `resourceVersions.publishedAt <= now()`, clean file malware-scan/quarantine predicates, and `PUBLIC` official calendar event visibility across public discovery surfaces.
+  * Removed the `effectiveLimit + 4` pre-slice truncation defect in `DefaultRecommendationService.getResourceRecommendations`, added synchronous dataset recomputation + cache overwrite in `getResourceRecommendations` and `getContinueExploring` whenever live-gate evictions drop surviving cached candidates below `effectiveLimit`, and wired `scope === 'file'` targeted cache eviction in `RecommendationCacheService.handleInvalidationEvent`.
+
+Database:
+- Created forward-only migration `drizzle/0023_wave2_visibility_and_rbac_hardening.sql` and registered `idx: 23` in `drizzle/meta/_journal.json`:
+  * Hardened `content.fn_evaluate_homepage_entity_eligibility` to reject resources whose published version has quarantined, infected, or scan-errored `files.resource_files` rows (`RESOURCE_HAS_QUARANTINED_OR_INFECTED_FILE`).
+  * Hardened `content.fn_get_resource_scoring_dataset` to require `rv.published_at <= p_eval_now` and exclude resources with quarantined/infected/scan-errored files.
+  * Expanded `content.notify_recommendation_invalidation()` with Table 8 (`files.resource_files` -> `scope: 'file'`) and attached `trg_resource_files_invalidation`.
+
+API:
+- Hardened administrative and public visibility boundaries across `/api/v1/resources*`, `/api/v1/resource-types`, `/api/v1/resource-versions/:id`, `/api/v1/curricula*`, `/api/v1/curriculum-versions/:id`, `/api/v1/subjects*`, `/api/v1/admin/updates*`, `/api/v1/admin/quality/*`, `/api/v1/admin/feedback*`, `/api/v1/admin/recommendations/rules*`, `/api/v1/admin/audit-logs*`, `/api/v1/admin/retention/*`, `/api/v1/admin/analytics/*`, and `/api/v1/admin/notifications*`.
+
+Frontend:
+- None (backend security hardening milestone).
+
+Tests:
+- Added dedicated offline-executable Wave 2 security test suites (`21/21` passing):
+  * `tests/security/wave2-rbac-and-seed.test.ts` (`12/12` passed): byte-for-byte SQL parity between runbook and seed gate, NULL-safe `Query B` predicate checks, `6/48/106` canonical inventory (`29 ANY` + `19 GLOBAL`), advisory-locked seed precondition gate (empty bootstrap, legacy `GLOBAL` pass, non-zero `Query A` / `Query B` abort before `INSERT`), `DefaultRbacService.hasPermission` & `resolveStaffPermissionAccess`, and Fastify `inject()` country-scope vs global admin route isolation.
+  * `tests/security/wave2-public-visibility.test.ts` (`9/9` passed): public resource/version/event/curriculum lockdown, synchronous recommendation cache recomputation & cache overwrite, `scope = 'file'` cache eviction, and Migration `0023` + `_journal.json` verification.
+- Updated `tests/security/wave1-migrations.test.ts` (`24` expected migrations `0000..0023`), `tests/db/rbac.integration.test.ts`, `tests/routes/rbac.integration.test.ts`, `tests/routes/admin-dashboard.integration.test.ts`, `tests/routes/quality-governance.integration.test.ts`, `tests/routes/feedback.integration.test.ts`, and `tests/routes/audit-retention.integration.test.ts`.
+- Executed offline verification suite across `41` test files: `33` test files passed (`351` tests passed), `8` DB-backed suites skipped cleanly (`80` tests skipped) because `DATABASE_URL` is unset in this sandbox environment, `0` failed.
+
+Typecheck:
+PASS (`npm run lint` / `tsc --noEmit` — 0 errors)
+
+Build:
+PASS (`npm run build` / `tsc -p tsconfig.build.json` & applet compilation — 0 errors)
+
+Security:
+- Zero-waiver RBAC seed precondition gate aborts before any write if active unscoped editorial roles or RBAC metadata/mapping drift exist.
+- Non-leaking `GENERIC_FORBIDDEN_MESSAGE` and `Cache-Control: private, no-store` enforced on privileged/admin responses.
+- Future-dated versions, inactive countries/types/taxonomy, private calendar events, internal publication histories, and quarantined/infected files excluded from public discovery and recommendation caches.
+
+Documentation:
+- `docs/security/wave2-rbac-predeployment-audit.md` (created)
+- `docs/IMPLEMENTATION_STATUS.md` (updated honestly to `TESTING` pending live PostgreSQL verification)
+
+Git commit:
+- Workspace has no `.git` directory initialized in this environment; create Prompt 33 Wave 2 checkpoint commit when syncing to `Clivendemo/education-platform`.
+
+Issues:
+- Live PostgreSQL execution (`npm run db:migrate`, pre-deployment `Query A` / `Query B` audit, `npm run db:seed:rbac`, and `.integration.test.ts` DB suites) could not be executed in this container because `DATABASE_URL` is not configured. Must be executed against staging/CI PostgreSQL before marking Wave 2 `VERIFIED`.
+
+Next step:
+- Execute live PostgreSQL migration/seed/integration verification in a `DATABASE_URL`-configured CI/staging environment, then await explicit human review and authorization before starting Wave 3.
 
 ## 2026-10-29 — Prompt 32: Homepage Intelligence, Editorial Scheduling, Atomic Rollback & Live SQL Eligibility Gate
 

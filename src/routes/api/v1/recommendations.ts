@@ -22,7 +22,10 @@ import {
   defaultAuditService,
   type AuditService,
 } from '../../../services/audit.service.js';
-import { GENERIC_FORBIDDEN_MESSAGE } from '../../hooks/authorize.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 
 export interface RecommendationRouteOptions {
   recommendationService?: RecommendationService;
@@ -297,11 +300,17 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
    * GET /api/v1/admin/recommendations/rules
    */
   fastify.get('/admin/recommendations/rules', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) return;
 
-    const userPerms = await rbacService.getUserPermissions(user.id);
-    if (!userPerms.includes('recommendation.read')) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'recommendation.read',
+    );
+    if (!access.granted) {
       await logDeniedAttempt({
         user,
         action: 'recommendation.rule.read',
@@ -332,11 +341,8 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       }
       resolvedCountryId = foundId;
 
-      const authorizedForCountry = await rbacService.hasPermission(
-        user.id,
-        'recommendation.read',
-        { scopeType: 'COUNTRY', scopeId: resolvedCountryId },
-      );
+      const authorizedForCountry =
+        access.hasGlobalGrant || access.countryIds.includes(resolvedCountryId);
       if (!authorizedForCountry) {
         await logDeniedAttempt({
           user,
@@ -354,40 +360,7 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       }
     }
 
-    // Determine whether user has global read or country-scoped read
-    let allowedCountryIds: string[] | null = null;
-    const hasGlobalRead = await rbacService.hasPermission(user.id, 'recommendation.read');
-    if (!hasGlobalRead) {
-      const assignedRoles = await rbacService.getUserRoles(user.id);
-      const scopedCountryIds = Array.from(
-        new Set(
-          assignedRoles
-            .filter(
-              (r) =>
-                r.scopeType === 'COUNTRY' &&
-                Boolean(r.scopeId) &&
-                ['system_admin', 'content_manager', 'content_reviewer'].includes(r.roleSlug),
-            )
-            .map((r) => r.scopeId as string),
-        ),
-      );
-
-      if (scopedCountryIds.length === 0) {
-        await logDeniedAttempt({
-          user,
-          action: 'recommendation.rule.read',
-          requestId: request.id,
-        });
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: GENERIC_FORBIDDEN_MESSAGE,
-            requestId: request.id,
-          },
-        });
-      }
-      allowedCountryIds = scopedCountryIds;
-    }
+    const allowedCountryIds = access.hasGlobalGrant ? null : access.countryIds;
 
     const result = await recommendationService.listRules({
       countryId: resolvedCountryId,
@@ -409,6 +382,8 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
    * POST /api/v1/admin/recommendations/rules
    */
   fastify.post('/admin/recommendations/rules', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) return;
 
@@ -418,8 +393,12 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
         ? ((request.body as any).countryId as string)
         : undefined;
 
-    const userPerms = await rbacService.getUserPermissions(user.id);
-    if (!userPerms.includes('recommendation.manage')) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'recommendation.manage',
+    );
+    if (!access.granted) {
       await logDeniedAttempt({
         user,
         action: 'recommendation.rule.create',
@@ -437,11 +416,8 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
 
     const body = CreateRuleBodySchema.parse(request.body);
 
-    const authorizedForCountry = await rbacService.hasPermission(
-      user.id,
-      'recommendation.manage',
-      { scopeType: 'COUNTRY', scopeId: body.countryId },
-    );
+    const authorizedForCountry =
+      access.hasGlobalGrant || access.countryIds.includes(body.countryId);
     if (!authorizedForCountry) {
       await logDeniedAttempt({
         user,
@@ -458,7 +434,10 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       });
     }
 
-    const userRoles = await rbacService.getUserRoles(user.id);
+    const userRoles =
+      typeof rbacService.getUserRoles === 'function'
+        ? await rbacService.getUserRoles(user.id)
+        : [];
     const primaryRole = userRoles[0]?.roleSlug;
 
     const created = await recommendationService.createRule({
@@ -486,11 +465,17 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
    * POST /api/v1/admin/recommendations/rules/:id/deactivate
    */
   fastify.post('/admin/recommendations/rules/:id/deactivate', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) return;
 
-    const userPerms = await rbacService.getUserPermissions(user.id);
-    if (!userPerms.includes('recommendation.manage')) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'recommendation.manage',
+    );
+    if (!access.granted) {
       await logDeniedAttempt({
         user,
         action: 'recommendation.rule.deactivate',
@@ -519,11 +504,8 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       });
     }
 
-    const authorizedForCountry = await rbacService.hasPermission(
-      user.id,
-      'recommendation.manage',
-      { scopeType: 'COUNTRY', scopeId: existing.countryId },
-    );
+    const authorizedForCountry =
+      access.hasGlobalGrant || access.countryIds.includes(existing.countryId);
     if (!authorizedForCountry) {
       await logDeniedAttempt({
         user,
@@ -541,7 +523,10 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       });
     }
 
-    const userRoles = await rbacService.getUserRoles(user.id);
+    const userRoles =
+      typeof rbacService.getUserRoles === 'function'
+        ? await rbacService.getUserRoles(user.id)
+        : [];
     const updated = await recommendationService.deactivateRule({
       ruleId: id,
       reason: body.reason,
@@ -562,11 +547,17 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
    * POST /api/v1/admin/recommendations/rules/:id/reactivate
    */
   fastify.post('/admin/recommendations/rules/:id/reactivate', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) return;
 
-    const userPerms = await rbacService.getUserPermissions(user.id);
-    if (!userPerms.includes('recommendation.manage')) {
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
+      user.id,
+      'recommendation.manage',
+    );
+    if (!access.granted) {
       await logDeniedAttempt({
         user,
         action: 'recommendation.rule.reactivate',
@@ -595,11 +586,8 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       });
     }
 
-    const authorizedForCountry = await rbacService.hasPermission(
-      user.id,
-      'recommendation.manage',
-      { scopeType: 'COUNTRY', scopeId: existing.countryId },
-    );
+    const authorizedForCountry =
+      access.hasGlobalGrant || access.countryIds.includes(existing.countryId);
     if (!authorizedForCountry) {
       await logDeniedAttempt({
         user,
@@ -617,7 +605,10 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
       });
     }
 
-    const userRoles = await rbacService.getUserRoles(user.id);
+    const userRoles =
+      typeof rbacService.getUserRoles === 'function'
+        ? await rbacService.getUserRoles(user.id)
+        : [];
     const updated = await recommendationService.reactivateRule({
       ruleId: id,
       reason: body.reason,

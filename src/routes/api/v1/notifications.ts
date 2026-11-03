@@ -15,6 +15,10 @@ import {
   defaultRbacService,
 } from '../../../services/rbac.service.js';
 import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
+import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_STATUSES,
   DELIVERY_CHANNELS,
@@ -251,18 +255,21 @@ export const notificationRoutes: FastifyPluginAsync<NotificationRoutesOptions> =
 
   // 7. GET /admin/notifications (Staff Audit Queue)
   fastify.get('/admin/notifications', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuth(request, reply);
     if (!user) return;
 
-    const authorized = await rbacService.hasPermission(
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
       user.id,
       'notification.admin.read',
     );
-    if (!authorized) {
+    if (!access.hasGlobalGrant) {
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to view administrative notifications',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });
@@ -287,18 +294,21 @@ export const notificationRoutes: FastifyPluginAsync<NotificationRoutesOptions> =
 
   // 8. POST /admin/notifications/process-pending (Outbox Worker Sweep)
   fastify.post('/admin/notifications/process-pending', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await requireAuth(request, reply);
     if (!user) return;
 
-    const authorized = await rbacService.hasPermission(
+    const access = await resolveStaffPermissionAccess(
+      rbacService,
       user.id,
       'notification.admin.manage',
     );
-    if (!authorized) {
+    if (!access.hasGlobalGrant) {
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to trigger notification delivery sweeps',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });

@@ -139,10 +139,11 @@ export class DefaultRbacService implements RbacService {
   }
 
   /**
-   * Evaluates whether a user holds a permission, respecting GLOBAL vs Scoped semantics:
-   * 1. If user holds the permission globally (scopeType IS NULL), return true (global satisfies any scope).
-   * 2. If a specific scope is requested (scopeType + scopeId) and user has a matching scoped role, return true.
-   * 3. Otherwise, return false.
+   * Evaluates whether a user holds a permission, respecting canonical permission scopeType
+   * ('GLOBAL' | 'SCOPED' | 'ANY') and user_roles grant scope:
+   * - 'GLOBAL': ONLY an unscoped grant (userRoles.scopeType IS NULL) satisfies it, regardless of requested scope.
+   * - 'SCOPED': Requires an explicit requested scope and an exact matching scoped grant.
+   * - 'ANY': Satisfied by an unscoped grant everywhere, or by an exact matching scoped grant when scope is provided.
    */
   async hasPermission(
     userId: string,
@@ -156,6 +157,7 @@ export class DefaultRbacService implements RbacService {
       .select({
         scopeType: userRoles.scopeType,
         scopeId: userRoles.scopeId,
+        permissionScopeType: permissions.scopeType,
       })
       .from(userRoles)
       .innerJoin(users, eq(userRoles.userId, users.id))
@@ -180,20 +182,23 @@ export class DefaultRbacService implements RbacService {
       return false;
     }
 
-    // 1. Any GLOBAL grant (scopeType is null) satisfies the permission everywhere
-    const hasGlobalGrant = matchingGrants.some((g) => g.scopeType === null || g.scopeType === undefined);
-    if (hasGlobalGrant) {
+    const permScopeType = matchingGrants[0].permissionScopeType ?? 'ANY';
+    const hasGlobalGrant = matchingGrants.some(
+      (g) => g.scopeType === null || g.scopeType === undefined,
+    );
+
+    if (permScopeType === 'GLOBAL') {
+      return hasGlobalGrant;
+    }
+
+    if (permScopeType === 'ANY' && hasGlobalGrant) {
       return true;
     }
 
-    // 2. If scope is requested, check if a matching scoped grant exists
     if (scope?.scopeType && scope?.scopeId) {
-      const hasMatchingScope = matchingGrants.some(
+      return matchingGrants.some(
         (g) => g.scopeType === scope.scopeType && g.scopeId === scope.scopeId,
       );
-      if (hasMatchingScope) {
-        return true;
-      }
     }
 
     return false;

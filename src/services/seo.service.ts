@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { db as defaultDb } from '../db/index.js';
 import {
   countries,
@@ -192,6 +192,8 @@ export class DefaultSeoService implements SeoService {
           eq(resources.id, trimmedId),
           eq(resources.status, 'PUBLISHED'),
           eq(countries.status, 'ACTIVE'),
+          eq(resourceTypes.status, 'ACTIVE'),
+          sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
         ),
       )
       .limit(1);

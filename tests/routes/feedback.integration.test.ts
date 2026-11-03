@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
 import { db } from '../../src/db/index.js';
 import { withDbRetry } from '../helpers/db-retry.js';
@@ -12,6 +12,7 @@ import {
   resourceVersions,
   resourceFeedback,
   resourceFeedbackEvents,
+  users,
   FEEDBACK_TYPES,
 } from '../../src/db/schemas.js';
 import {
@@ -24,7 +25,10 @@ import {
   hashFeedbackSessionToken,
 } from '../../src/services/feedback.service.js';
 
-describe('Resource Feedback Route Integration Tests', () => {
+const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
+
+describe.skipIf(!isDbAvailable)('Resource Feedback Route Integration Tests', () => {
+  const createdUserIds: string[] = [];
   let app: FastifyInstance;
   let countryId: string;
   let resourceTypeId: string;
@@ -74,8 +78,9 @@ describe('Resource Feedback Route Integration Tests', () => {
     );
     standardUserToken = stdRes.sessionToken;
     standardUserId = stdRes.user.id;
+    createdUserIds.push(standardUserId);
 
-    // 3. Register content reviewer & assign content_reviewer role
+    // 3. Register content reviewer & assign COUNTRY-scoped content_reviewer role
     const revRes = await withDbRetry(async () =>
       defaultAuthService.register({
         email: `feedback_rev_${Date.now()}@example.com`,
@@ -85,14 +90,17 @@ describe('Resource Feedback Route Integration Tests', () => {
     );
     reviewerUserToken = revRes.sessionToken;
     reviewerUserId = revRes.user.id;
+    createdUserIds.push(reviewerUserId);
     await withDbRetry(async () =>
       defaultRbacService.assignRole({
         userId: reviewerUserId,
         roleSlug: 'content_reviewer',
+        scopeType: 'COUNTRY',
+        scopeId: countryId,
       }),
     );
 
-    // 4. Register content manager & assign content_manager role
+    // 4. Register content manager & assign COUNTRY-scoped content_manager role
     const mgrRes = await withDbRetry(async () =>
       defaultAuthService.register({
         email: `feedback_mgr_${Date.now()}@example.com`,
@@ -102,10 +110,13 @@ describe('Resource Feedback Route Integration Tests', () => {
     );
     managerUserToken = mgrRes.sessionToken;
     managerUserId = mgrRes.user.id;
+    createdUserIds.push(managerUserId);
     await withDbRetry(async () =>
       defaultRbacService.assignRole({
         userId: managerUserId,
         roleSlug: 'content_manager',
+        scopeType: 'COUNTRY',
+        scopeId: countryId,
       }),
     );
 
@@ -119,6 +130,7 @@ describe('Resource Feedback Route Integration Tests', () => {
     );
     adminUserToken = admRes.sessionToken;
     adminUserId = admRes.user.id;
+    createdUserIds.push(adminUserId);
     await withDbRetry(async () =>
       defaultRbacService.assignRole({
         userId: adminUserId,
@@ -219,6 +231,9 @@ describe('Resource Feedback Route Integration Tests', () => {
   }, 120000);
 
   afterAll(async () => {
+    if (createdUserIds.length > 0) {
+      await db.delete(users).where(inArray(users.id, createdUserIds)).catch(() => {});
+    }
     await app.close();
   });
 

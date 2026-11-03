@@ -1,4 +1,4 @@
-import { eq, and, or, count, desc, asc } from 'drizzle-orm';
+import { eq, and, or, count, desc, asc, inArray, sql } from 'drizzle-orm';
 import { db as defaultDb } from '../db/index.js';
 import {
   resourceTypes,
@@ -51,6 +51,7 @@ export interface ResourceDetailResult {
     id: string;
     name: string;
     isoCode: string;
+    status?: string;
   };
   resourceType: {
     id: string;
@@ -58,6 +59,7 @@ export interface ResourceDetailResult {
     name: string;
     slug: string;
     pillar: string;
+    status?: string;
   };
   school: {
     id: string;
@@ -99,6 +101,8 @@ export interface ListResourcesParams {
   term?: number;
   page?: number;
   pageSize?: number;
+  publicOnly?: boolean;
+  allowedCountryIds?: string[];
 }
 
 export interface PaginatedResult<T> {
@@ -135,7 +139,10 @@ export interface UpdateResourceVersionInput {
 export interface ResourceService {
   listResourceTypes(options?: { includeInactive?: boolean }): Promise<ResourceTypeResult[]>;
   listResources(params?: ListResourcesParams): Promise<PaginatedResult<ResourceDetailResult>>;
-  getResourceById(id: string): Promise<ResourceDetailResult | null>;
+  getResourceById(
+    id: string,
+    options?: { publicOnly?: boolean; includeUnpublished?: boolean },
+  ): Promise<ResourceDetailResult | null>;
   listResourceVersions(
     resourceId: string,
     options?: { includeUnpublished?: boolean },
@@ -184,6 +191,16 @@ export class DbResourceService implements ResourceService {
 
     const conditions = [];
 
+    if (params.allowedCountryIds !== undefined) {
+      if (params.allowedCountryIds.length === 0) {
+        return {
+          data: [],
+          meta: { page, pageSize, total: 0, hasMore: false },
+        };
+      }
+      conditions.push(inArray(resources.countryId, params.allowedCountryIds));
+    }
+
     // Filter by country (ISO code, url_prefix, or UUID)
     if (params.country) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.country);
@@ -214,8 +231,21 @@ export class DbResourceService implements ResourceService {
       }
     }
 
-    // Status filter - by default, only PUBLISHED resources are visible unless explicitly queried
-    if (params.status) {
+    if (params.publicOnly) {
+      conditions.push(eq(resources.status, 'PUBLISHED'));
+      conditions.push(eq(countries.status, 'ACTIVE'));
+      conditions.push(eq(resourceTypes.status, 'ACTIVE'));
+      conditions.push(
+        sql`EXISTS (
+          SELECT 1
+          FROM "content"."resource_versions" rv_pub
+          WHERE rv_pub."resource_id" = ${resources.id}
+            AND rv_pub."status" = 'PUBLISHED'
+            AND rv_pub."published_at" IS NOT NULL
+            AND rv_pub."published_at" <= now()
+        )`,
+      );
+    } else if (params.status) {
       conditions.push(eq(resources.status, params.status));
     } else {
       conditions.push(eq(resources.status, 'PUBLISHED'));
@@ -280,6 +310,7 @@ export class DbResourceService implements ResourceService {
         id: country.id,
         name: country.name,
         isoCode: country.isoCode,
+        status: country.status,
       },
       resourceType: {
         id: resourceType.id,
@@ -287,6 +318,7 @@ export class DbResourceService implements ResourceService {
         name: resourceType.name,
         slug: resourceType.slug,
         pillar: resourceType.pillar,
+        status: resourceType.status,
       },
       school: school
         ? {
@@ -328,7 +360,17 @@ export class DbResourceService implements ResourceService {
     };
   }
 
-  async getResourceById(id: string): Promise<ResourceDetailResult | null> {
+  async getResourceById(
+    id: string,
+    options: { publicOnly?: boolean; includeUnpublished?: boolean } = {},
+  ): Promise<ResourceDetailResult | null> {
+    const resourceConditions = [eq(resources.id, id)];
+    if (options.publicOnly) {
+      resourceConditions.push(eq(resources.status, 'PUBLISHED'));
+      resourceConditions.push(eq(countries.status, 'ACTIVE'));
+      resourceConditions.push(eq(resourceTypes.status, 'ACTIVE'));
+    }
+
     const rows = await this.dbInstance
       .select({
         resource: resources,
@@ -340,7 +382,7 @@ export class DbResourceService implements ResourceService {
       .innerJoin(countries, eq(resources.countryId, countries.id))
       .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
       .leftJoin(schools, eq(resources.schoolId, schools.id))
-      .where(eq(resources.id, id))
+      .where(and(...resourceConditions))
       .limit(1);
 
     if (rows.length === 0) {
@@ -349,11 +391,18 @@ export class DbResourceService implements ResourceService {
 
     const { resource, country, resourceType, school } = rows[0];
 
-    // Find latest published version (or latest version)
+    const versionConditions = [eq(resourceVersions.resourceId, id)];
+    if (!options.includeUnpublished) {
+      versionConditions.push(eq(resourceVersions.status, 'PUBLISHED'));
+      versionConditions.push(
+        sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
+      );
+    }
+
     const versions = await this.dbInstance
       .select()
       .from(resourceVersions)
-      .where(eq(resourceVersions.resourceId, id))
+      .where(and(...versionConditions))
       .orderBy(desc(resourceVersions.versionNumber))
       .limit(1);
 
@@ -376,12 +425,17 @@ export class DbResourceService implements ResourceService {
       };
     }
 
+    if (options.publicOnly && !latestVersion) {
+      return null;
+    }
+
     return {
       id: resource.id,
       country: {
         id: country.id,
         name: country.name,
         isoCode: country.isoCode,
+        status: country.status,
       },
       resourceType: {
         id: resourceType.id,
@@ -389,6 +443,7 @@ export class DbResourceService implements ResourceService {
         name: resourceType.name,
         slug: resourceType.slug,
         pillar: resourceType.pillar,
+        status: resourceType.status,
       },
       school: school
         ? {
@@ -428,6 +483,9 @@ export class DbResourceService implements ResourceService {
     const conditions = [eq(resourceVersions.resourceId, resourceId)];
     if (!options.includeUnpublished) {
       conditions.push(eq(resourceVersions.status, 'PUBLISHED'));
+      conditions.push(
+        sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
+      );
     }
 
     const rows = await this.dbInstance

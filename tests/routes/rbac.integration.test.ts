@@ -158,21 +158,34 @@ describe.skipIf(!isDbAvailable)('RBAC HTTP Route Authorization Integration Tests
       expect(response.statusCode).not.toBe(403);
     });
 
-    it('allows GET publication history when user has resource.read permission', async () => {
+    it('denies standard_user (403 FORBIDDEN) and allows staff (content_manager) on GET /api/v1/resources/:id/events (Wave 2 WP2 lockdown)', async () => {
       const dummyResourceId = '00000000-0000-0000-0000-000000000001';
 
-      // standard_user has resource.read
-      const response = await app.inject({
+      // standard_user has resource.read only -> must be denied on internal publication events
+      const stdResponse = await app.inject({
         method: 'GET',
         url: `/api/v1/resources/${dummyResourceId}/events`,
         headers: {
           cookie: standardUserCookie,
         },
       });
+      expect(stdResponse.statusCode).toBe(403);
+      const stdBody = JSON.parse(stdResponse.body);
+      expect(stdBody.error.code).toBe('FORBIDDEN');
+      expect(stdBody.error.message).toBe('You do not have permission to perform this action.');
 
-      // Authorization passed: standard_user is allowed to read events
-      expect(response.statusCode).not.toBe(401);
-      expect(response.statusCode).not.toBe(403);
+      // content_manager has resource.admin.read + resource.review -> passes RBAC gate
+      const mgrResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/resources/${dummyResourceId}/events`,
+        headers: {
+          cookie: contentManagerCookie,
+        },
+      });
+      expect(mgrResponse.statusCode).not.toBe(401);
+      expect(mgrResponse.statusCode).not.toBe(403);
+      expect(mgrResponse.headers['cache-control']).toBe('private, no-store');
     });
   });
 });
+

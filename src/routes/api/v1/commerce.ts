@@ -62,6 +62,10 @@ const ReconciliationQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
+const IdParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
 const PaymentIdParamSchema = z.object({
   paymentId: z.string().uuid(),
 });
@@ -178,7 +182,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
 
   // 2. GET /products/:id — Public Product Details
   fastify.get<{ Params: { id: string } }>('/products/:id', async (request, reply) => {
-    const { id } = request.params;
+    const { id } = IdParamSchema.parse(request.params);
     const product = await commerceService.getProductById(id);
     return reply.status(200).send({ data: product });
   });
@@ -201,7 +205,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
     { preHandler: [requireAuth] },
     async (request, reply) => {
       const user = request.user!;
-      const { id } = request.params;
+      const { id } = IdParamSchema.parse(request.params);
       const order = await commerceService.getOrderById(user.id, id);
       return reply.status(200).send({ data: order });
     },
@@ -252,7 +256,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
     { preHandler: [requireAuth] },
     async (request, reply) => {
       const user = request.user!;
-      const { id } = request.params;
+      const { id } = IdParamSchema.parse(request.params);
       const payment = await commerceService.getPaymentById(user.id, id);
       return reply.status(200).send({ data: payment });
     },
@@ -266,7 +270,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
       '/payments/:id/simulate-success',
       { preHandler: [requireAuth, requireSystemFinanceAdmin] },
       async (request, reply) => {
-        const { id } = request.params;
+        const { id } = IdParamSchema.parse(request.params);
         const result = await commerceService.processPaymentSuccess({
           paymentId: id,
           providerTransactionId: `SIM-TXN-${Date.now()}`,

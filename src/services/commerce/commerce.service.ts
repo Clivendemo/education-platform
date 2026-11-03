@@ -78,6 +78,7 @@ export class CommerceService {
   private readonly providers: Map<string, PaymentProvider> = new Map();
   private readonly simulationEnabled: boolean;
   private readonly effectiveNodeEnv: 'development' | 'test' | 'production';
+  private readonly defaultProviderCode: string;
 
   constructor(options: CommerceServiceOptions = {}) {
     this.db = options.db ?? defaultDb;
@@ -102,6 +103,10 @@ export class CommerceService {
       this.simulationEnabled =
         options.allowSimulation ?? (explicitSimProvider ? true : env.ALLOW_PAYMENT_SIMULATION);
     }
+
+    this.defaultProviderCode = options.paymentProvider
+      ? options.paymentProvider.providerCode.toUpperCase()
+      : 'MPESA';
 
     if (options.paymentProvider) {
       if (
@@ -551,10 +556,10 @@ export class CommerceService {
   async initiatePayment(
     userId: string,
     orderId: string,
-    providerCode = 'MPESA',
+    providerCode?: string,
     metadata?: Record<string, unknown>,
   ): Promise<{ payment: PaymentDto; order: OrderDto }> {
-    const normalizedProviderCode = providerCode.toUpperCase();
+    const normalizedProviderCode = (providerCode ?? this.defaultProviderCode).toUpperCase();
     const provider = this.getPaymentProvider(normalizedProviderCode);
 
     const [ord] = await this.db
@@ -1351,8 +1356,22 @@ export class CommerceService {
         ? (lockedPayment.providerPayload as Record<string, unknown>)
         : {};
 
+    const callbackAmountAnomaly =
+      context?.callbackHint?.amountMinor !== undefined &&
+      context.callbackHint.amountMinor !== null &&
+      context.callbackHint.amountMinor !== lockedPayment.amountMinor;
+
     const updatedPayload: Record<string, unknown> = {
       ...existingPayload,
+      ...(callbackAmountAnomaly
+        ? {
+            callbackAmountAnomaly: {
+              claimedMinor: context!.callbackHint!.amountMinor!.toString(),
+              expectedMinor: lockedPayment.amountMinor.toString(),
+              recordedAt: now.toISOString(),
+            },
+          }
+        : {}),
       lastDarajaQuery: {
         classification: queryResult.classification,
         responseCode: queryResult.responseCode,
@@ -1681,15 +1700,14 @@ export class CommerceService {
   }
 
   /**
-   * Redacts `CheckoutRequestID` (`providerReference`) for M-Pesa payments on learner DTOs (`W1-AC-03`).
+   * Redacts internal `providerReference` (e.g., `CheckoutRequestID`) on all learner DTOs (`W1-AC-03`).
    */
   private mapPayment(pm: typeof payments.$inferSelect): PaymentDto {
-    const isMpesa = pm.providerCode === 'MPESA';
     return {
       id: pm.id,
       orderId: pm.orderId,
       providerCode: pm.providerCode,
-      providerReference: isMpesa ? null : pm.providerReference,
+      providerReference: null,
       providerTransactionId: pm.providerTransactionId,
       verifiedReceiptNumber: pm.verifiedReceiptNumber ?? null,
       receiptVerificationSource:

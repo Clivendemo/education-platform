@@ -1,5 +1,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { RbacService, ScopeFilter } from '../../services/rbac.service.js';
+import type {
+  PermissionAccessResolution,
+  RbacService,
+  ScopeFilter,
+} from '../../services/rbac.service.js';
 
 export interface RequirePermissionOptions {
   scopeResolver?: (request: FastifyRequest) => ScopeFilter | Promise<ScopeFilter>;
@@ -11,6 +15,49 @@ export interface RequirePermissionOptions {
  */
 export const GENERIC_FORBIDDEN_MESSAGE =
   'You do not have permission to perform this action.';
+
+/**
+ * Resolves effective global vs country-scoped access across one or more candidate permissions.
+ * Fails closed for SCHOOL/RESOURCE-only grants and supports lightweight unit-test mocks
+ * that only stub `hasPermission`.
+ */
+export async function resolveStaffPermissionAccess(
+  rbacService: RbacService,
+  userId: string,
+  requiredPermissions: string | readonly string[],
+): Promise<PermissionAccessResolution> {
+  const permList =
+    typeof requiredPermissions === 'string'
+      ? [requiredPermissions]
+      : Array.from(requiredPermissions);
+
+  let hasGlobalGrant = false;
+  const countryIdSet = new Set<string>();
+
+  for (const perm of permList) {
+    if (typeof rbacService.resolvePermissionAccess === 'function') {
+      const res = await rbacService.resolvePermissionAccess(userId, perm);
+      if (res.hasGlobalGrant) {
+        hasGlobalGrant = true;
+      }
+      for (const cid of res.countryIds) {
+        countryIdSet.add(cid);
+      }
+    } else {
+      const granted = await rbacService.hasPermission(userId, perm);
+      if (granted) {
+        hasGlobalGrant = true;
+      }
+    }
+  }
+
+  const countryIds = Array.from(countryIdSet);
+  return {
+    granted: hasGlobalGrant || countryIds.length > 0,
+    hasGlobalGrant,
+    countryIds,
+  };
+}
 
 /**
  * Creates a reusable Fastify preHandler hook ensuring the authenticated user

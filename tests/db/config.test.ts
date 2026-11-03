@@ -4,6 +4,7 @@ import * as schemas from '../../src/db/schemas.js';
 import { checkDatabaseHealth, closeDatabase } from '../../src/db/index.js';
 
 const validProdSecurityBaseline = {
+  CANONICAL_DOMAIN: 'https://elimupin.co.ke',
   TRUST_PROXY_HOPS: 1,
   ALLOW_PAYMENT_SIMULATION: 'false',
   R2_ACCOUNT_ID: 'prod-r2-account',

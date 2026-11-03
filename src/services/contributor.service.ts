@@ -6,6 +6,8 @@ import {
   contributorSubmissions,
   users,
   resources,
+  countries,
+  resourceTypes,
   type Contributor,
   type ContributorApplication,
   type ContributorSubmission,
@@ -254,6 +256,29 @@ export class DefaultContributorService implements ContributorService {
   // Public Discovery
   // --------------------------------------------------------------------------
 
+  private buildPublicResourceEligibilityCondition() {
+    return and(
+      eq(resources.status, 'PUBLISHED'),
+      eq(countries.status, 'ACTIVE'),
+      eq(resourceTypes.status, 'ACTIVE'),
+      sql`(
+        NOT EXISTS (
+          SELECT 1
+          FROM "content"."resource_versions" rv_any
+          WHERE rv_any."resource_id" = ${resources.id}
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM "content"."resource_versions" rv_pub
+          WHERE rv_pub."resource_id" = ${resources.id}
+            AND rv_pub."status" = 'PUBLISHED'
+            AND rv_pub."published_at" IS NOT NULL
+            AND rv_pub."published_at" <= now()
+        )
+      )`,
+    );
+  }
+
   async getPublicProfileBySlug(slug: string): Promise<ContributorPublicDto | null> {
     const normalizedSlug = slug.toLowerCase().trim();
     const [c] = await this.db
@@ -266,11 +291,18 @@ export class DefaultContributorService implements ContributorService {
       return null;
     }
 
-    // Count published resources
+    // Count publicly eligible published resources
     const [resCount] = await this.db
       .select({ count: sql<string>`count(*)` })
       .from(resources)
-      .where(and(eq(resources.contributorId, c.id), eq(resources.status, 'PUBLISHED')));
+      .innerJoin(countries, eq(resources.countryId, countries.id))
+      .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
+      .where(
+        and(
+          eq(resources.contributorId, c.id),
+          this.buildPublicResourceEligibilityCondition(),
+        ),
+      );
 
     return {
       id: c.id,
@@ -303,7 +335,7 @@ export class DefaultContributorService implements ContributorService {
       .limit(limit)
       .offset(offset);
 
-    // Fetch published counts for these contributors in batch
+    // Fetch publicly eligible published counts for these contributors in batch
     const contributorIds = rows.map((r) => r.id);
     const countsMap = new Map<string, number>();
 
@@ -314,7 +346,14 @@ export class DefaultContributorService implements ContributorService {
           count: sql<string>`count(*)`,
         })
         .from(resources)
-        .where(and(inArray(resources.contributorId, contributorIds), eq(resources.status, 'PUBLISHED')))
+        .innerJoin(countries, eq(resources.countryId, countries.id))
+        .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
+        .where(
+          and(
+            inArray(resources.contributorId, contributorIds),
+            this.buildPublicResourceEligibilityCondition(),
+          ),
+        )
         .groupBy(resources.contributorId);
 
       for (const row of counts) {
@@ -361,10 +400,17 @@ export class DefaultContributorService implements ContributorService {
     const limit = Math.min(100, Math.max(1, params.limit || 20));
     const offset = (page - 1) * limit;
 
+    const eligibilityCondition = and(
+      eq(resources.contributorId, c.id),
+      this.buildPublicResourceEligibilityCondition(),
+    );
+
     const [totalRow] = await this.db
       .select({ count: sql<string>`count(*)` })
       .from(resources)
-      .where(and(eq(resources.contributorId, c.id), eq(resources.status, 'PUBLISHED')));
+      .innerJoin(countries, eq(resources.countryId, countries.id))
+      .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
+      .where(eligibilityCondition);
 
     const total = Number(totalRow?.count || 0);
 
@@ -380,7 +426,9 @@ export class DefaultContributorService implements ContributorService {
         updatedAt: resources.updatedAt,
       })
       .from(resources)
-      .where(and(eq(resources.contributorId, c.id), eq(resources.status, 'PUBLISHED')))
+      .innerJoin(countries, eq(resources.countryId, countries.id))
+      .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
+      .where(eligibilityCondition)
       .orderBy(desc(resources.createdAt))
       .limit(limit)
       .offset(offset);

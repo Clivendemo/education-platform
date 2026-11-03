@@ -120,16 +120,21 @@ export class DefaultLibraryService implements LibraryService {
       throw new ResourceVersionNotFoundError('Invalid resource version identifier.');
     }
 
-    // 1. Verify existence & eligibility
+    // 1. Verify existence & full public eligibility
     const [versionRecord] = await this.db
       .select({
         versionId: resourceVersions.id,
         versionStatus: resourceVersions.status,
+        versionPublishedAt: resourceVersions.publishedAt,
         resourceId: resources.id,
         resourceStatus: resources.status,
+        countryStatus: countries.status,
+        resourceTypeStatus: resourceTypes.status,
       })
       .from(resourceVersions)
       .innerJoin(resources, eq(resources.id, resourceVersions.resourceId))
+      .innerJoin(countries, eq(countries.id, resources.countryId))
+      .innerJoin(resourceTypes, eq(resourceTypes.id, resources.resourceTypeId))
       .where(eq(resourceVersions.id, resourceVersionId));
 
     if (!versionRecord) {
@@ -138,7 +143,11 @@ export class DefaultLibraryService implements LibraryService {
 
     if (
       versionRecord.versionStatus !== 'PUBLISHED' ||
-      versionRecord.resourceStatus !== 'PUBLISHED'
+      versionRecord.resourceStatus !== 'PUBLISHED' ||
+      versionRecord.countryStatus !== 'ACTIVE' ||
+      versionRecord.resourceTypeStatus !== 'ACTIVE' ||
+      !versionRecord.versionPublishedAt ||
+      versionRecord.versionPublishedAt.getTime() > Date.now()
     ) {
       throw new ResourceVersionNotEligibleError(
         'Only published resource versions can be saved to user library.',
@@ -262,6 +271,9 @@ export class DefaultLibraryService implements LibraryService {
       inArray(resourceVersions.id, savedIds),
       eq(resourceVersions.status, 'PUBLISHED'),
       eq(resources.status, 'PUBLISHED'),
+      eq(countries.status, 'ACTIVE'),
+      eq(resourceTypes.status, 'ACTIVE'),
+      sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
     );
 
     // Count total eligible saved items
@@ -269,6 +281,8 @@ export class DefaultLibraryService implements LibraryService {
       .select({ total: count() })
       .from(resources)
       .innerJoin(resourceVersions, eq(resourceVersions.resourceId, resources.id))
+      .innerJoin(countries, eq(countries.id, resources.countryId))
+      .innerJoin(resourceTypes, eq(resourceTypes.id, resources.resourceTypeId))
       .where(whereClause);
 
     const totalCount = Number(total);
@@ -399,6 +413,8 @@ export class DefaultLibraryService implements LibraryService {
         and(
           inArray(resourceFiles.resourceVersionId, versionIds),
           eq(resourceFiles.status, 'AVAILABLE'),
+          sql`${resourceFiles.malwareScanStatus} NOT IN ('INFECTED', 'SCAN_ERROR')`,
+          sql`${resourceFiles.objectKey} NOT LIKE 'quarantine/%'`,
         ),
       )
       .orderBy(desc(resourceFiles.isPrimary), asc(resourceFiles.sequenceOrder));
@@ -617,7 +633,16 @@ export class DefaultLibraryService implements LibraryService {
       .leftJoin(pathways, eq(pathways.id, resources.pathwayId))
       .leftJoin(subjects, eq(subjects.id, resources.subjectId))
       .leftJoin(topics, eq(topics.id, resources.topicId))
-      .where(eq(resourceVersions.id, resourceVersionId));
+      .where(
+        and(
+          eq(resourceVersions.id, resourceVersionId),
+          eq(resources.status, 'PUBLISHED'),
+          eq(resourceVersions.status, 'PUBLISHED'),
+          eq(countries.status, 'ACTIVE'),
+          eq(resourceTypes.status, 'ACTIVE'),
+          sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
+        ),
+      );
 
     if (!row) return null;
 
@@ -638,6 +663,8 @@ export class DefaultLibraryService implements LibraryService {
         and(
           eq(resourceFiles.resourceVersionId, resourceVersionId),
           eq(resourceFiles.status, 'AVAILABLE'),
+          sql`${resourceFiles.malwareScanStatus} NOT IN ('INFECTED', 'SCAN_ERROR')`,
+          sql`${resourceFiles.objectKey} NOT LIKE 'quarantine/%'`,
         ),
       )
       .orderBy(desc(resourceFiles.isPrimary), asc(resourceFiles.sequenceOrder));

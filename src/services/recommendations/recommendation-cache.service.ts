@@ -278,7 +278,8 @@ export class RecommendationCacheService {
       scope === 'topic' ||
       scope === 'resource' ||
       scope === 'version' ||
-      scope === 'verification'
+      scope === 'verification' ||
+      scope === 'file'
     ) {
       if (payload.source_resource_id) {
         this.evictSet(this.keysBySourceResource.get(payload.source_resource_id));

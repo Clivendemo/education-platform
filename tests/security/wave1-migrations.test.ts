@@ -6,7 +6,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { sql, eq } from 'drizzle-orm';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getDb, closeDatabase } from '../../src/db/index.js';
+import { db, closeDatabase } from '../../src/db/index.js';
 import * as schemas from '../../src/db/schemas.js';
 import { runPlatformMigrations } from '../../src/db/migrate.js';
 import {
@@ -51,9 +51,12 @@ function buildPartialMigrationsFolder(maxIdxInclusive: number): string {
   return tmpDir;
 }
 
-describe('Wave 1 WP8: Migration Compatibility, Order Idempotency & Receipt Provenance Constraints', () => {
-  const db = getDb();
-  let canCreateTempDatabase = false;
+const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
+
+describe.skipIf(!isDbAvailable)(
+  'Wave 1 WP8: Migration Compatibility, Order Idempotency & Receipt Provenance Constraints',
+  () => {
+    let canCreateTempDatabase = false;
 
   beforeAll(async () => {
     await withDbRetry(() => runPlatformMigrations(db));
@@ -126,7 +129,7 @@ describe('Wave 1 WP8: Migration Compatibility, Order Idempotency & Receipt Prove
         const appliedCount = await isolatedDb.execute(
           sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
         );
-        expect(Number((appliedCount.rows[0] as any).cnt)).toBe(23); // 0000..0022
+        expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24); // 0000..0023
 
         // Structural-only bootstrap invariant: calendar_event_types has 0 seeded rows during migration
         const calendarTypesCount = await isolatedDb.execute(
@@ -148,7 +151,7 @@ describe('Wave 1 WP8: Migration Compatibility, Order Idempotency & Receipt Prove
           const appliedCount = await isolatedDb.execute(
             sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
           );
-          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(23);
+          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24);
         });
       } finally {
         fs.rmSync(subset0008, { recursive: true, force: true });
@@ -167,7 +170,7 @@ describe('Wave 1 WP8: Migration Compatibility, Order Idempotency & Receipt Prove
           const appliedCount = await isolatedDb.execute(
             sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
           );
-          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(23);
+          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24);
         });
       } finally {
         fs.rmSync(subset0009, { recursive: true, force: true });

@@ -31,10 +31,17 @@ export interface DarajaStkPushPayload {
   TransactionDesc: string;
 }
 
+/**
+ * Parsed response from `POST /mpesa/stkpush/v1/processrequest`.
+ *
+ * Strict W1-AC-05 contract: `ResponseCode` MUST be the exact raw JSON string `'0'`.
+ * Numeric `0`, whitespace-padded `' 0 '`, missing/null values, booleans, objects, arrays,
+ * empty strings, and non-`'0'` strings are rejected without coercion or trimming.
+ */
 export interface DarajaStkPushResponse {
   MerchantRequestID: string;
   CheckoutRequestID: string;
-  ResponseCode: string;
+  ResponseCode: '0';
   ResponseDescription: string;
   CustomerMessage: string;
 }
@@ -46,15 +53,25 @@ export interface DarajaStkQueryPayload {
   CheckoutRequestID: string;
 }
 
+/**
+ * Raw upstream JSON payload returned by `POST /mpesa/stkpushquery/v1/query`.
+ *
+ * Strict W1-AC-05 contract:
+ * - `ResponseCode` is accepted ONLY when the raw JSON value is the exact string `'0'`
+ *   (`typeof ResponseCode === 'string' && ResponseCode === '0'`).
+ * - Numeric `0`, whitespace-padded `' 0 '`, `null`, `undefined`, booleans, objects,
+ *   arrays, empty strings, and non-`'0'` strings are rejected without coercion or trimming,
+ *   producing `QUERY_INCONCLUSIVE_RETRYABLE`.
+ */
 export interface DarajaStkQueryRawResponse {
-  ResponseCode?: string | number;
-  ResponseDescription?: string;
-  MerchantRequestID?: string;
-  CheckoutRequestID?: string;
-  ResultCode?: string | number;
-  ResultDesc?: string;
-  errorCode?: string;
-  errorMessage?: string;
+  ResponseCode?: unknown;
+  ResponseDescription?: unknown;
+  MerchantRequestID?: unknown;
+  CheckoutRequestID?: unknown;
+  ResultCode?: unknown;
+  ResultDesc?: unknown;
+  errorCode?: unknown;
+  errorMessage?: unknown;
 }
 
 export type DarajaQueryClassification =
@@ -63,6 +80,35 @@ export type DarajaQueryClassification =
   | 'TRANSACTION_CONFIRMED_FAILED'
   | 'QUERY_INCONCLUSIVE_RETRYABLE'
   | 'QUERY_TRANSPORT_ERROR';
+
+export type DarajaEvidenceSourceType =
+  | 'SAFARICOM_PORTAL_SPEC'
+  | 'VERIFIED_SANDBOX_FIXTURE';
+
+export interface DarajaSanitizedQueryFixture {
+  readonly ResponseCode: '0';
+  readonly ResponseDescription: string;
+  readonly MerchantRequestID: string;
+  readonly CheckoutRequestID: string;
+  readonly ResultCode: string;
+  readonly ResultDesc: string;
+}
+
+export interface DarajaResultCodeEvidenceEntry {
+  readonly code: string;
+  readonly classification:
+    | 'TRANSACTION_CONFIRMED_COMPLETED'
+    | 'TRANSACTION_CONFIRMED_CANCELLED'
+    | 'TRANSACTION_CONFIRMED_FAILED';
+  readonly verbatimResultDesc: string;
+  readonly evidenceType: DarajaEvidenceSourceType;
+  readonly sourceTitle: string;
+  readonly sourceUrl: string;
+  readonly endpointPath: '/mpesa/stkpushquery/v1/query';
+  readonly sanitizedQueryFixture: DarajaSanitizedQueryFixture;
+  readonly nonDebitFinality: boolean;
+  readonly justification: string;
+}
 
 export interface DarajaStkQueryResult {
   classification: DarajaQueryClassification;

@@ -45,7 +45,7 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
 
     mockDarajaClient = {
       initiateStkPush: vi.fn().mockImplementation(async (_params: any) => ({
-        MerchantRequestID: `MERCHANT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        MerchantRequestID: '29115-34620561-1',
         CheckoutRequestID: `ws_CO_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         ResponseCode: '0',
         ResponseDescription: 'Success. Request accepted for processing',
@@ -54,13 +54,13 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
       queryStkPushStatus: vi.fn().mockImplementation(async (checkoutRequestId: string) => {
         return (
           queryStatusByCheckoutId.get(checkoutRequestId) ?? {
-            classification: 'COMPLETED',
+            classification: 'TRANSACTION_CONFIRMED_COMPLETED' as const,
             checkoutRequestId,
             merchantRequestId: '29115-34620561-1',
             responseCode: '0',
             resultCode: '0',
             resultDesc: 'The service request is processed successfully.',
-            verifiedReceiptNumber: null,
+            httpStatus: 200,
           }
         );
       }),

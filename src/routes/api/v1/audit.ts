@@ -13,6 +13,10 @@ import {
   defaultRbacService,
   type RbacService,
 } from '../../../services/rbac.service.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 
 export interface AuditRouteOptions {
   auditService?: AuditService;
@@ -61,12 +65,14 @@ export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (fastify
 
   // GET /admin/audit-logs
   fastify.get('/admin/audit-logs', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'audit.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: audit.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'audit.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseResult = AuditLogsQuerySchema.safeParse(req.query);
@@ -88,12 +94,14 @@ export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (fastify
 
   // GET /admin/audit-logs/:id
   fastify.get('/admin/audit-logs/:id', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'audit.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: audit.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'audit.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseParams = AuditLogParamsSchema.safeParse(req.params);

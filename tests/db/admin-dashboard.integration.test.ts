@@ -18,6 +18,8 @@ import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import {
   FileStorageService,
 } from '../../src/services/file-storage.service.js';
+import { FileProcessingWorker } from '../../src/services/file-processing.worker.js';
+import { StubCleanMalwareScanner } from '../../src/services/storage/malware-scanner.js';
 import { MemoryStorageProvider } from '../../src/services/storage/memory-storage-provider.js';
 import { DefaultAuditService } from '../../src/services/audit.service.js';
 import {
@@ -100,6 +102,11 @@ describe.skipIf(!isDbAvailable)(
     const memoryStorage = new MemoryStorageProvider('test-admin-memory-bucket');
     const rbacService = new DefaultRbacService(db);
     const fileStorageService = new FileStorageService(db, memoryStorage);
+    const fileProcessingWorker = new FileProcessingWorker({
+      db,
+      storageProvider: memoryStorage,
+      malwareScanner: new StubCleanMalwareScanner(),
+    });
     const auditService = new DefaultAuditService(db);
     const adminService = new DefaultAdminDashboardService(
       db,
@@ -257,6 +264,7 @@ describe.skipIf(!isDbAvailable)(
         buffer: pdfBytes,
       });
       r1PublishedFileId = uploadedFile.id;
+      await fileProcessingWorker.runOnce();
 
       await withDbRetry(() =>
         db

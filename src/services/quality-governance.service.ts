@@ -143,6 +143,8 @@ export interface QualityGovernanceService {
   getActiveVerificationForVersion(
     versionId: string,
   ): Promise<ResourceVerificationDto | null>;
+
+  getResourceCountryId(resourceId: string): Promise<string | null>;
 }
 
 // ============================================================================
@@ -756,6 +758,16 @@ export class DefaultQualityGovernanceService implements QualityGovernanceService
       .limit(1);
 
     return row ? this.mapVerification(row) : null;
+  }
+
+  async getResourceCountryId(resourceId: string): Promise<string | null> {
+    const [row] = await this.dbInstance
+      .select({ countryId: resources.countryId })
+      .from(resources)
+      .where(eq(resources.id, resourceId))
+      .limit(1);
+
+    return row?.countryId ?? null;
   }
 
   private mapCheckType(t: typeof qualityCheckTypes.$inferSelect): QualityCheckTypeDto {

@@ -14,7 +14,13 @@ import {
   type RbacService,
 } from '../../../services/rbac.service.js';
 import { createRequireAuth } from './auth.js';
-import { createRequirePermission } from '../../hooks/authorize.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface EducationUpdatesRoutesOptions {
   educationUpdateService?: EducationUpdateService;
@@ -75,8 +81,15 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   const rbacService = opts.rbacService || defaultRbacService;
 
   const requireAuth = createRequireAuth(authService);
-  const requirePermission = (permission: string) =>
-    createRequirePermission(rbacService, permission);
+
+  const sendForbidden = (request: { id: string }, reply: any) =>
+    reply.status(403).send({
+      error: {
+        code: 'FORBIDDEN',
+        message: GENERIC_FORBIDDEN_MESSAGE,
+        requestId: request.id,
+      },
+    });
 
   // Custom error handler for updates routes
   fastify.setErrorHandler((error: any, request, reply) => {
@@ -184,20 +197,35 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * POST /admin/updates
    * Creates a new education update in DRAFT status.
-   * Requires permission: update.create
+   * Requires permission: update.create (COUNTRY-scoped or GLOBAL)
    */
   fastify.post<{ Body: z.infer<typeof CreateUpdateBodySchema> }>(
     '/admin/updates',
     {
-      preHandler: [requireAuth, requirePermission('update.create')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.create',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
+
       const body = CreateUpdateBodySchema.parse(request.body);
-      const user = (request as any).user;
+      if (!access.hasGlobalGrant) {
+        if (!body.countryId || !access.countryIds.includes(body.countryId)) {
+          return sendForbidden(request, reply);
+        }
+      }
 
       const created = await updateService.createUpdate({
         ...body,
-        userId: user?.id,
+        userId: user.id,
       });
 
       return reply.status(201).send({
@@ -209,7 +237,7 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * PATCH /admin/updates/:id
    * Updates an existing update. Cannot edit archived updates.
-   * Requires permission: update.edit
+   * Requires permission: update.edit (COUNTRY-scoped or GLOBAL)
    */
   fastify.patch<{
     Params: { id: string };
@@ -217,16 +245,61 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   }>(
     '/admin/updates/:id',
     {
-      preHandler: [requireAuth, requirePermission('update.edit')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.edit',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
+
       const { id } = request.params;
+      if (!UUID_REGEX.test(id)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Update ID must be a valid UUID.',
+            requestId: request.id,
+          },
+        });
+      }
+
       const body = UpdateUpdateBodySchema.parse(request.body);
-      const user = (request as any).user;
+
+      if (!access.hasGlobalGrant) {
+        const existing = await updateService.getAdminUpdateById(id);
+        if (!existing) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Education update with ID '${id}' was not found.`,
+              requestId: request.id,
+            },
+          });
+        }
+        if (
+          !existing.country?.id ||
+          !access.countryIds.includes(existing.country.id)
+        ) {
+          return sendForbidden(request, reply);
+        }
+        if (
+          body.countryId !== undefined &&
+          (body.countryId === null || !access.countryIds.includes(body.countryId))
+        ) {
+          return sendForbidden(request, reply);
+        }
+      }
 
       const updated = await updateService.updateUpdate(id, {
         ...body,
-        userId: user?.id,
+        userId: user.id,
       });
 
       return reply.status(200).send({
@@ -238,18 +311,56 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * POST /admin/updates/:id/publish
    * Transitions an update from DRAFT to PUBLISHED.
-   * Requires permission: update.publish
+   * Requires permission: update.publish (COUNTRY-scoped or GLOBAL)
    */
   fastify.post<{ Params: { id: string } }>(
     '/admin/updates/:id/publish',
     {
-      preHandler: [requireAuth, requirePermission('update.publish')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
-      const { id } = request.params;
-      const user = (request as any).user;
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.publish',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
 
-      const published = await updateService.publishUpdate(id, user?.id);
+      const { id } = request.params;
+      if (!UUID_REGEX.test(id)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Update ID must be a valid UUID.',
+            requestId: request.id,
+          },
+        });
+      }
+
+      if (!access.hasGlobalGrant) {
+        const existing = await updateService.getAdminUpdateById(id);
+        if (!existing) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Education update with ID '${id}' was not found.`,
+              requestId: request.id,
+            },
+          });
+        }
+        if (
+          !existing.country?.id ||
+          !access.countryIds.includes(existing.country.id)
+        ) {
+          return sendForbidden(request, reply);
+        }
+      }
+
+      const published = await updateService.publishUpdate(id, user.id);
 
       return reply.status(200).send({
         data: published,
@@ -260,18 +371,56 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * POST /admin/updates/:id/archive
    * Transitions an update from DRAFT or PUBLISHED to ARCHIVED.
-   * Requires permission: update.archive
+   * Requires permission: update.archive (COUNTRY-scoped or GLOBAL)
    */
   fastify.post<{ Params: { id: string } }>(
     '/admin/updates/:id/archive',
     {
-      preHandler: [requireAuth, requirePermission('update.archive')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
-      const { id } = request.params;
-      const user = (request as any).user;
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.archive',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
 
-      const archived = await updateService.archiveUpdate(id, user?.id);
+      const { id } = request.params;
+      if (!UUID_REGEX.test(id)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Update ID must be a valid UUID.',
+            requestId: request.id,
+          },
+        });
+      }
+
+      if (!access.hasGlobalGrant) {
+        const existing = await updateService.getAdminUpdateById(id);
+        if (!existing) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Education update with ID '${id}' was not found.`,
+              requestId: request.id,
+            },
+          });
+        }
+        if (
+          !existing.country?.id ||
+          !access.countryIds.includes(existing.country.id)
+        ) {
+          return sendForbidden(request, reply);
+        }
+      }
+
+      const archived = await updateService.archiveUpdate(id, user.id);
 
       return reply.status(200).send({
         data: archived,
@@ -282,17 +431,49 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * GET /admin/updates
    * Lists updates across all publication statuses for administrative review.
-   * Requires permission: update.read
+   * Requires permission: update.read (COUNTRY-scoped or GLOBAL)
    */
   fastify.get<{ Querystring: z.infer<typeof ListUpdatesQuerySchema> }>(
     '/admin/updates',
     {
-      preHandler: [requireAuth, requirePermission('update.read')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
-      const query = ListUpdatesQuerySchema.parse(request.query || {});
-      const result = await updateService.listAdminUpdates(query);
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.read',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
 
+      const query = ListUpdatesQuerySchema.parse(request.query || {});
+      if (!access.hasGlobalGrant) {
+        if (query.country) {
+          let targetCountryId: string | null = null;
+          if (UUID_REGEX.test(query.country.trim())) {
+            targetCountryId = query.country.trim();
+          } else if (typeof updateService.resolveCountryIdByIdentifier === 'function') {
+            targetCountryId = await updateService.resolveCountryIdByIdentifier(
+              query.country,
+            );
+          }
+          if (!targetCountryId || !access.countryIds.includes(targetCountryId)) {
+            return sendForbidden(request, reply);
+          }
+        }
+
+        const result = await updateService.listAdminUpdates({
+          ...query,
+          allowedCountryIds: access.countryIds,
+        });
+        return reply.status(200).send(result);
+      }
+
+      const result = await updateService.listAdminUpdates(query);
       return reply.status(200).send(result);
     },
   );
@@ -300,17 +481,37 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
   /**
    * GET /admin/updates/:id
    * Retrieves single update details for administrative review.
-   * Requires permission: update.read
+   * Requires permission: update.read (COUNTRY-scoped or GLOBAL)
    */
   fastify.get<{ Params: { id: string } }>(
     '/admin/updates/:id',
     {
-      preHandler: [requireAuth, requirePermission('update.read')],
+      preHandler: [requireAuth],
     },
     async (request, reply) => {
-      const { id } = request.params;
-      const update = await updateService.getAdminUpdateById(id);
+      reply.header('Cache-Control', 'private, no-store');
+      const user = request.user!;
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        user.id,
+        'update.read',
+      );
+      if (!access.granted) {
+        return sendForbidden(request, reply);
+      }
 
+      const { id } = request.params;
+      if (!UUID_REGEX.test(id)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Update ID must be a valid UUID.',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const update = await updateService.getAdminUpdateById(id);
       if (!update) {
         return reply.status(404).send({
           error: {
@@ -319,6 +520,13 @@ export const updatesRoutes: FastifyPluginAsync<EducationUpdatesRoutesOptions> = 
             requestId: request.id,
           },
         });
+      }
+
+      if (
+        !access.hasGlobalGrant &&
+        (!update.country?.id || !access.countryIds.includes(update.country.id))
+      ) {
+        return sendForbidden(request, reply);
       }
 
       return reply.status(200).send({

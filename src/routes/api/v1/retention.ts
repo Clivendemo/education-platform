@@ -14,6 +14,10 @@ import {
   defaultRbacService,
   type RbacService,
 } from '../../../services/rbac.service.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 
 export interface RetentionRouteOptions {
   retentionService?: RetentionService;
@@ -96,12 +100,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // GET /admin/retention/policies
   fastify.get('/admin/retention/policies', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseQuery = PoliciesQuerySchema.safeParse(req.query);
@@ -115,12 +121,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // POST /admin/retention/policies
   fastify.post('/admin/retention/policies', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.manage');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.manage required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.manage');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseBody = CreatePolicyBodySchema.safeParse(req.body);
@@ -139,12 +147,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // GET /admin/retention/policies/:id
   fastify.get('/admin/retention/policies/:id', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseParams = IdParamSchema.safeParse(req.params);
@@ -162,12 +172,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // PATCH /admin/retention/policies/:id
   fastify.patch('/admin/retention/policies/:id', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.manage');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.manage required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.manage');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseParams = IdParamSchema.safeParse(req.params);
@@ -195,12 +207,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // POST /admin/retention/dry-run
   fastify.post('/admin/retention/dry-run', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseBody = DryRunBodySchema.safeParse(req.body);
@@ -219,12 +233,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // POST /admin/retention/execute
   fastify.post('/admin/retention/execute', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.execute');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.execute required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.execute');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseBody = ExecuteBodySchema.safeParse(req.body);
@@ -243,12 +259,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // GET /admin/retention/executions
   fastify.get('/admin/retention/executions', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseQuery = ExecutionsQuerySchema.safeParse(req.query);
@@ -262,12 +280,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // GET /admin/retention/executions/:id
   fastify.get('/admin/retention/executions/:id', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.read');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.read required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.read');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseParams = IdParamSchema.safeParse(req.params);
@@ -285,12 +305,14 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRouteOptions> = async 
 
   // POST /admin/retention/executions/:id/recover
   fastify.post('/admin/retention/executions/:id/recover', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+
     const user = await authenticateUser(req, reply);
     if (!user) return;
 
-    const hasPermission = await rbacService.hasPermission(user.id, 'retention.execute');
-    if (!hasPermission) {
-      return reply.status(403).send({ success: false, error: 'Insufficient permissions: retention.execute required' });
+    const access = await resolveStaffPermissionAccess(rbacService, user.id, 'retention.execute');
+    if (!access.hasGlobalGrant) {
+      return reply.status(403).send({ success: false, error: GENERIC_FORBIDDEN_MESSAGE });
     }
 
     const parseParams = IdParamSchema.safeParse(req.params);

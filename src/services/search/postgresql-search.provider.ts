@@ -58,10 +58,13 @@ export class PostgreSQLSearchProvider implements SearchProvider {
       setweight(to_tsvector('english', coalesce(${resourceTypes.name}, '')), 'C')
     )`;
 
-    // Public visibility invariants: Resource PUBLISHED, Version PUBLISHED, FTS match
+    // Public visibility invariants: Resource PUBLISHED, Version PUBLISHED <= now(), Country & Type ACTIVE, FTS match
     const conditions = [
       eq(resources.status, 'PUBLISHED'),
       eq(resourceVersions.status, 'PUBLISHED'),
+      eq(countries.status, 'ACTIVE'),
+      eq(resourceTypes.status, 'ACTIVE'),
+      sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
       sql`${documentTsvector} @@ ${searchTsQuery}`,
     ];
 
@@ -372,6 +375,8 @@ export class PostgreSQLSearchProvider implements SearchProvider {
           and(
             inArray(resourceFiles.resourceVersionId, versionIds),
             eq(resourceFiles.status, 'AVAILABLE'),
+            sql`${resourceFiles.malwareScanStatus} NOT IN ('INFECTED', 'SCAN_ERROR')`,
+            sql`${resourceFiles.objectKey} NOT LIKE 'quarantine/%'`,
           ),
         )
         .orderBy(asc(resourceFiles.sequenceOrder));
@@ -554,14 +559,19 @@ export class PostgreSQLSearchProvider implements SearchProvider {
           .select({ id: countries.id })
           .from(countries)
           .where(
-            or(
-              eq(sql`LOWER(${countries.urlPrefix})`, countryInput.toLowerCase()),
-              eq(sql`UPPER(${countries.isoCode})`, countryInput.toUpperCase()),
+            and(
+              eq(countries.status, 'ACTIVE'),
+              or(
+                eq(sql`LOWER(${countries.urlPrefix})`, countryInput.toLowerCase()),
+                eq(sql`UPPER(${countries.isoCode})`, countryInput.toUpperCase()),
+              ),
             ),
           )
           .limit(1);
         if (countryRow.length > 0) {
           countryId = countryRow[0].id;
+        } else {
+          return { suggestions: [], fallbackUsed: false };
         }
       }
     }
@@ -582,6 +592,9 @@ export class PostgreSQLSearchProvider implements SearchProvider {
       const conditions = [
         eq(resources.status, 'PUBLISHED'),
         eq(resourceVersions.status, 'PUBLISHED'),
+        eq(countries.status, 'ACTIVE'),
+        eq(resourceTypes.status, 'ACTIVE'),
+        sql`${resourceVersions.publishedAt} IS NOT NULL AND ${resourceVersions.publishedAt} <= now()`,
         or(
           sql`lower(${resources.title}) LIKE ${lowerPrefix}`,
           sql`${resources.title} ~* ${'\\y' + escapedQ}`,
@@ -640,6 +653,7 @@ export class PostgreSQLSearchProvider implements SearchProvider {
         .from(resources)
         .innerJoin(resourceVersions, eq(resources.id, resourceVersions.resourceId))
         .innerJoin(countries, eq(resources.countryId, countries.id))
+        .innerJoin(resourceTypes, eq(resources.resourceTypeId, resourceTypes.id))
         .leftJoin(curricula, eq(resources.curriculumId, curricula.id))
         .leftJoin(grades, eq(resources.gradeId, grades.id))
         .leftJoin(subjects, eq(resources.subjectId, subjects.id))
@@ -684,11 +698,18 @@ export class PostgreSQLSearchProvider implements SearchProvider {
     // Also look for matching curriculum topics if slots remain and subject context is present
     if (suggestions.length < limit && hasContextFilters && (query.subject || query.grade)) {
       const topicConditions = [
+        eq(topics.status, 'ACTIVE'),
+        eq(subjects.status, 'ACTIVE'),
+        eq(countries.status, 'ACTIVE'),
+        sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED')`,
         or(
           sql`lower(${topics.name}) LIKE ${lowerPrefix}`,
           sql`${topics.name} ~* ${'\\y' + escapedQ}`,
         )!,
       ];
+      if (countryId) {
+        topicConditions.push(eq(curriculumVersions.countryId, countryId));
+      }
       if (query.subject) {
         if (UUID_REGEX.test(query.subject.trim())) {
           topicConditions.push(eq(topics.subjectId, query.subject.trim()));
@@ -704,6 +725,8 @@ export class PostgreSQLSearchProvider implements SearchProvider {
         })
         .from(topics)
         .innerJoin(subjects, eq(topics.subjectId, subjects.id))
+        .innerJoin(curriculumVersions, eq(topics.curriculumVersionId, curriculumVersions.id))
+        .innerJoin(countries, eq(curriculumVersions.countryId, countries.id))
         .where(and(...topicConditions))
         .limit(limit - suggestions.length);
 
@@ -765,7 +788,7 @@ export class PostgreSQLSearchProvider implements SearchProvider {
     const rawQ = (query.q || '').trim();
     const escapedQ = escapeRegexMetacharacters(rawQ);
 
-    // 1. Related subjects
+    // 1. Related active subjects in active countries/versions
     const relatedSubjects = await this.db
       .select({
         id: subjects.id,
@@ -773,10 +796,19 @@ export class PostgreSQLSearchProvider implements SearchProvider {
         code: subjects.code,
       })
       .from(subjects)
-      .where(sql`${subjects.name} ~* ${'\\y' + escapedQ}`)
+      .innerJoin(curriculumVersions, eq(subjects.curriculumVersionId, curriculumVersions.id))
+      .innerJoin(countries, eq(curriculumVersions.countryId, countries.id))
+      .where(
+        and(
+          eq(subjects.status, 'ACTIVE'),
+          eq(countries.status, 'ACTIVE'),
+          sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED')`,
+          sql`${subjects.name} ~* ${'\\y' + escapedQ}`,
+        ),
+      )
       .limit(5);
 
-    // 2. Related topics
+    // 2. Related active topics in active countries/versions
     const relatedTopics = await this.db
       .select({
         id: topics.id,
@@ -784,7 +816,18 @@ export class PostgreSQLSearchProvider implements SearchProvider {
         code: topics.code,
       })
       .from(topics)
-      .where(sql`${topics.name} ~* ${'\\y' + escapedQ}`)
+      .innerJoin(subjects, eq(topics.subjectId, subjects.id))
+      .innerJoin(curriculumVersions, eq(topics.curriculumVersionId, curriculumVersions.id))
+      .innerJoin(countries, eq(curriculumVersions.countryId, countries.id))
+      .where(
+        and(
+          eq(topics.status, 'ACTIVE'),
+          eq(subjects.status, 'ACTIVE'),
+          eq(countries.status, 'ACTIVE'),
+          sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED')`,
+          sql`${topics.name} ~* ${'\\y' + escapedQ}`,
+        ),
+      )
       .limit(5);
 
     // 3. Suggested resources in country

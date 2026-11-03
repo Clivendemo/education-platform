@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
 import { db } from '../../src/db/index.js';
 import {
@@ -15,7 +15,10 @@ import {
 import { SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
 import { defaultRetentionService } from '../../src/services/retention.service.js';
 
-describe('Audit & Retention Route Integration Tests', () => {
+const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
+
+describe.skipIf(!isDbAvailable)('Audit & Retention Route Integration Tests', () => {
+  const createdUserIds: string[] = [];
   let app: FastifyInstance;
   let adminToken: string;
   let managerToken: string;
@@ -23,8 +26,12 @@ describe('Audit & Retention Route Integration Tests', () => {
   let activePolicyId: string;
   let inactivePolicyId: string;
 
-  async function createTestUserWithRole(roleSlug: string): Promise<{ id: string; token: string }> {
+  async function createTestUserWithRole(
+    roleSlug: string,
+    scope?: { scopeType: string; scopeId: string },
+  ): Promise<{ id: string; token: string }> {
     const id = crypto.randomUUID();
+    createdUserIds.push(id);
     const email = `audit-test-${roleSlug}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
     const token = `token-${crypto.randomUUID()}`;
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -48,6 +55,8 @@ describe('Audit & Retention Route Integration Tests', () => {
       await db.insert(userRoles).values({
         userId: id,
         roleId: role.id,
+        scopeType: scope?.scopeType ?? null,
+        scopeId: scope?.scopeId ?? null,
         status: 'ACTIVE',
       });
     }
@@ -68,7 +77,11 @@ describe('Audit & Retention Route Integration Tests', () => {
     const admin = await createTestUserWithRole('system_admin');
     adminToken = admin.token;
 
-    const manager = await createTestUserWithRole('content_manager');
+    // Under Wave 2 zero-waiver RBAC, content_manager editorial assignments are COUNTRY-scoped
+    const manager = await createTestUserWithRole('content_manager', {
+      scopeType: 'COUNTRY',
+      scopeId: '00000000-0000-0000-0000-000000000001',
+    });
     managerToken = manager.token;
 
     const standard = await createTestUserWithRole('standard_user');
@@ -90,6 +103,9 @@ describe('Audit & Retention Route Integration Tests', () => {
   });
 
   afterAll(async () => {
+    if (createdUserIds.length > 0) {
+      await db.delete(users).where(inArray(users.id, createdUserIds)).catch(() => {});
+    }
     await app.close();
   });
 
@@ -149,16 +165,14 @@ describe('Audit & Retention Route Integration Tests', () => {
   });
 
   describe('Retention Policy Endpoints & RBAC (retention.read & retention.manage)', () => {
-    it('allows content_manager and system_admin to read retention policies', async () => {
+    it('allows system_admin (global) and denies COUNTRY-scoped content_manager on GLOBAL retention.read', async () => {
       const managerRes = await app.inject({
         method: 'GET',
         url: '/api/v1/admin/retention/policies',
         headers: { cookie: getAuthCookie(managerToken) },
       });
-      expect(managerRes.statusCode).toBe(200);
-      const managerBody = managerRes.json();
-      expect(managerBody.success).toBe(true);
-      expect(managerBody.data.length).toBeGreaterThanOrEqual(5);
+      expect(managerRes.statusCode).toBe(403);
+      expect(JSON.stringify(managerRes.json())).not.toContain('retention.read');
 
       const adminRes = await app.inject({
         method: 'GET',
@@ -166,6 +180,8 @@ describe('Audit & Retention Route Integration Tests', () => {
         headers: { cookie: getAuthCookie(adminToken) },
       });
       expect(adminRes.statusCode).toBe(200);
+      expect(adminRes.headers['cache-control']).toBe('private, no-store');
+      expect(adminRes.json().data.length).toBeGreaterThanOrEqual(5);
     });
 
     it('denies standard_user from reading retention policies (403)', async () => {
@@ -241,15 +257,24 @@ describe('Audit & Retention Route Integration Tests', () => {
   });
 
   describe('Dry-Run & Live Execution Endpoints (retention.execute)', () => {
-    it('executes point-in-time dry run successfully for content_manager and system_admin', async () => {
-      const res = await app.inject({
+    it('executes point-in-time dry run for system_admin and denies COUNTRY-scoped content_manager on GLOBAL retention.read', async () => {
+      const deniedMgr = await app.inject({
         method: 'POST',
         url: '/api/v1/admin/retention/dry-run',
         headers: { cookie: getAuthCookie(managerToken) },
         payload: { policyId: activePolicyId },
       });
+      expect(deniedMgr.statusCode).toBe(403);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/retention/dry-run',
+        headers: { cookie: getAuthCookie(adminToken) },
+        payload: { policyId: activePolicyId },
+      });
 
       expect(res.statusCode).toBe(200);
+      expect(res.headers['cache-control']).toBe('private, no-store');
       const body = res.json();
       expect(body.success).toBe(true);
       expect(body.data.isDryRun).toBe(true);

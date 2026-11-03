@@ -19,7 +19,10 @@ import {
   type RbacService,
 } from '../../../services/rbac.service.js';
 import { createRequireAuth } from './auth.js';
-import { createRequirePermission } from '../../hooks/authorize.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 import { FEEDBACK_TYPES, FEEDBACK_STATUSES } from '../../../db/schemas.js';
 
 export interface FeedbackRoutesOptions {
@@ -52,6 +55,7 @@ const ListFeedbackQuerySchema = z.object({
   resourceId: z.string().uuid('resourceId must be a valid UUID').optional(),
   resourceVersionId: z.string().uuid('resourceVersionId must be a valid UUID').optional(),
   feedbackType: z.enum(FEEDBACK_TYPES).optional(),
+  countryId: z.string().uuid('countryId must be a valid UUID').optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -79,8 +83,27 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
   const rbacService = options.rbacService || defaultRbacService;
 
   const requireAuth = createRequireAuth(authService);
-  const requireFeedbackRead = createRequirePermission(rbacService, 'feedback.read');
-  const requireFeedbackManage = createRequirePermission(rbacService, 'feedback.manage');
+
+  async function verifyFeedbackCountryScope(
+    feedbackId: string,
+    hasGlobalGrant: boolean,
+    allowedCountryIds: string[],
+  ): Promise<'OK' | 'NOT_FOUND' | 'FORBIDDEN'> {
+    if (hasGlobalGrant) {
+      return 'OK';
+    }
+    if (typeof feedbackService.getFeedbackResourceCountryId !== 'function') {
+      return 'FORBIDDEN';
+    }
+    const resourceCountryId = await feedbackService.getFeedbackResourceCountryId(feedbackId);
+    if (!resourceCountryId) {
+      return 'NOT_FOUND';
+    }
+    if (!allowedCountryIds.includes(resourceCountryId)) {
+      return 'FORBIDDEN';
+    }
+    return 'OK';
+  }
 
   /**
    * POST /resources/:id/feedback
@@ -208,12 +231,29 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
   /**
    * GET /admin/feedback
    * Staff queue: List and filter feedback entries.
-   * Access: content_reviewer (read-only), content_manager, system_admin.
+   * Access: content_reviewer (read-only), content_manager, system_admin (global or COUNTRY-scoped).
    */
   fastify.get(
     '/admin/feedback',
-    { preHandler: [requireAuth, requireFeedbackRead] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'feedback.read',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const queryResult = ListFeedbackQuerySchema.safeParse(request.query);
       if (!queryResult.success) {
         return reply.status(400).send({
@@ -225,7 +265,24 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
         });
       }
 
-      const result = await feedbackService.listFeedbackQueue(queryResult.data);
+      if (
+        !access.hasGlobalGrant &&
+        queryResult.data.countryId &&
+        !access.countryIds.includes(queryResult.data.countryId)
+      ) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
+      const result = await feedbackService.listFeedbackQueue({
+        ...queryResult.data,
+        ...(access.hasGlobalGrant ? {} : { allowedCountryIds: access.countryIds }),
+      });
       return reply.status(200).send(result);
     },
   );
@@ -233,18 +290,59 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
   /**
    * GET /admin/feedback/:id
    * Staff detail: View feedback entry with complete audit event history.
-   * Access: content_reviewer (read-only), content_manager, system_admin.
+   * Access: content_reviewer (read-only), content_manager, system_admin (global or COUNTRY-scoped).
    */
   fastify.get(
     '/admin/feedback/:id',
-    { preHandler: [requireAuth, requireFeedbackRead] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'feedback.read',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
           error: {
             code: 'INVALID_ID_FORMAT',
             message: 'Feedback id must be a valid UUID',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyFeedbackCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'FEEDBACK_NOT_FOUND',
+            message: `Resource feedback entry '${paramResult.data.id}' was not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });
@@ -277,8 +375,25 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
    */
   fastify.patch(
     '/admin/feedback/:id/triage',
-    { preHandler: [requireAuth, requireFeedbackManage] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'feedback.manage',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
@@ -296,6 +411,30 @@ export const feedbackRoutes: FastifyPluginAsync<FeedbackRoutesOptions> = async (
           error: {
             code: 'VALIDATION_ERROR',
             message: bodyResult.error.issues[0]?.message || 'Invalid triage payload',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyFeedbackCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'FEEDBACK_NOT_FOUND',
+            message: `Resource feedback entry '${paramResult.data.id}' was not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });

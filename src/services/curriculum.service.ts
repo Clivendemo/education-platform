@@ -1,4 +1,4 @@
-import { eq, and, or, sql, count, asc, isNull } from 'drizzle-orm';
+import { eq, and, or, sql, count, asc, isNull, inArray } from 'drizzle-orm';
 import { db as defaultDb } from '../db/index.js';
 import {
   curricula,
@@ -15,6 +15,7 @@ export interface CurriculumCountryReference {
   id: string;
   name: string;
   isoCode: string;
+  status?: string;
 }
 
 export interface CurriculumResult {
@@ -123,6 +124,8 @@ export interface ListCurriculaParams {
   status?: string;
   page?: number;
   pageSize?: number;
+  allowedCountryIds?: string[];
+  includeInactiveCountries?: boolean;
 }
 
 export interface ListCurriculaResult {
@@ -137,12 +140,18 @@ export interface ListCurriculaResult {
 
 export interface CurriculumService {
   listCurricula(params: ListCurriculaParams): Promise<ListCurriculaResult>;
-  getCurriculumById(id: string): Promise<CurriculumResult | null>;
+  getCurriculumById(
+    id: string,
+    options?: { includeInactive?: boolean },
+  ): Promise<CurriculumResult | null>;
   listCurriculumVersions(
     curriculumId: string,
     options?: { includeInactive?: boolean },
   ): Promise<CurriculumVersionResult[]>;
-  getCurriculumVersionById(id: string): Promise<CurriculumVersionResult | null>;
+  getCurriculumVersionById(
+    id: string,
+    options?: { includeInactive?: boolean },
+  ): Promise<CurriculumVersionResult | null>;
   listEducationLevels(
     curriculumVersionId: string,
     options?: { includeInactive?: boolean },
@@ -164,6 +173,7 @@ export interface CurriculumService {
     subjectId: string,
     options?: { parentId?: string | null; includeInactive?: boolean },
   ): Promise<TopicResult[]>;
+  getSubjectCountryId?(subjectId: string): Promise<string | null>;
 }
 
 export class DbCurriculumService implements CurriculumService {
@@ -177,6 +187,20 @@ export class DbCurriculumService implements CurriculumService {
     // Filter by status (default ACTIVE for public discovery)
     const targetStatus = params.status ?? 'ACTIVE';
     const conditions = [eq(curricula.status, targetStatus)];
+
+    if (!params.includeInactiveCountries && targetStatus === 'ACTIVE') {
+      conditions.push(eq(countries.status, 'ACTIVE'));
+    }
+
+    if (params.allowedCountryIds !== undefined) {
+      if (params.allowedCountryIds.length === 0) {
+        return {
+          data: [],
+          meta: { page, pageSize, total: 0, hasMore: false },
+        };
+      }
+      conditions.push(inArray(countries.id, params.allowedCountryIds));
+    }
 
     if (params.country) {
       const trimmed = params.country.trim();
@@ -220,6 +244,7 @@ export class DbCurriculumService implements CurriculumService {
         countryId: countries.id,
         countryName: countries.name,
         countryIsoCode: countries.isoCode,
+        countryStatus: countries.status,
       })
       .from(curricula)
       .innerJoin(countries, eq(curricula.countryId, countries.id))
@@ -239,6 +264,7 @@ export class DbCurriculumService implements CurriculumService {
         id: r.countryId,
         name: r.countryName,
         isoCode: r.countryIsoCode,
+        status: r.countryStatus,
       },
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -255,12 +281,21 @@ export class DbCurriculumService implements CurriculumService {
     };
   }
 
-  async getCurriculumById(id: string): Promise<CurriculumResult | null> {
+  async getCurriculumById(
+    id: string,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<CurriculumResult | null> {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         id.trim(),
       );
     if (!isUuid) return null;
+
+    const conditions = [eq(curricula.id, id)];
+    if (!options.includeInactive) {
+      conditions.push(eq(curricula.status, 'ACTIVE'));
+      conditions.push(eq(countries.status, 'ACTIVE'));
+    }
 
     const records = await this.dbInstance
       .select({
@@ -275,10 +310,11 @@ export class DbCurriculumService implements CurriculumService {
         countryId: countries.id,
         countryName: countries.name,
         countryIsoCode: countries.isoCode,
+        countryStatus: countries.status,
       })
       .from(curricula)
       .innerJoin(countries, eq(curricula.countryId, countries.id))
-      .where(eq(curricula.id, id))
+      .where(and(...conditions))
       .limit(1);
 
     if (records.length === 0) return null;
@@ -295,6 +331,7 @@ export class DbCurriculumService implements CurriculumService {
         id: r.countryId,
         name: r.countryName,
         isoCode: r.countryIsoCode,
+        status: r.countryStatus,
       },
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -314,7 +351,7 @@ export class DbCurriculumService implements CurriculumService {
     const conditions = [eq(curriculumVersions.curriculumId, curriculumId)];
     if (!options.includeInactive) {
       conditions.push(
-        sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED', 'DRAFT')`,
+        sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED')`,
       );
     }
 
@@ -342,6 +379,7 @@ export class DbCurriculumService implements CurriculumService {
 
   async getCurriculumVersionById(
     id: string,
+    options: { includeInactive?: boolean } = {},
   ): Promise<CurriculumVersionResult | null> {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -349,10 +387,17 @@ export class DbCurriculumService implements CurriculumService {
       );
     if (!isUuid) return null;
 
+    const conditions = [eq(curriculumVersions.id, id)];
+    if (!options.includeInactive) {
+      conditions.push(
+        sql`${curriculumVersions.status} IN ('CURRENT', 'PLANNED')`,
+      );
+    }
+
     const records = await this.dbInstance
       .select()
       .from(curriculumVersions)
-      .where(eq(curriculumVersions.id, id))
+      .where(and(...conditions))
       .limit(1);
 
     if (records.length === 0) return null;
@@ -580,6 +625,26 @@ export class DbCurriculumService implements CurriculumService {
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     }));
+  }
+
+  async getSubjectCountryId(subjectId: string): Promise<string | null> {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        subjectId.trim(),
+      );
+    if (!isUuid) return null;
+
+    const rows = await this.dbInstance
+      .select({ countryId: curriculumVersions.countryId })
+      .from(subjects)
+      .innerJoin(
+        curriculumVersions,
+        eq(subjects.curriculumVersionId, curriculumVersions.id),
+      )
+      .where(eq(subjects.id, subjectId))
+      .limit(1);
+
+    return rows[0]?.countryId ?? null;
   }
 }
 

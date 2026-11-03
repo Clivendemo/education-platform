@@ -14,7 +14,10 @@ import {
   type RbacService,
 } from '../../../services/rbac.service.js';
 import { createRequireAuth } from './auth.js';
-import { createRequirePermission } from '../../hooks/authorize.js';
+import {
+  GENERIC_FORBIDDEN_MESSAGE,
+  resolveStaffPermissionAccess,
+} from '../../hooks/authorize.js';
 
 export interface QualityGovernanceRoutesOptions {
   qualityService?: QualityGovernanceService;
@@ -63,25 +66,70 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
   const rbacService = options.rbacService || defaultRbacService;
 
   const requireAuth = createRequireAuth(authService);
-  const requireCheckCreate = createRequirePermission(
-    rbacService,
-    'quality.check.create',
-  );
-  const requireVerify = createRequirePermission(rbacService, 'quality.verify');
-  const requireRevoke = createRequirePermission(rbacService, 'quality.revoke');
-  const requireQualityRead = createRequirePermission(rbacService, 'quality.read');
+
+  async function verifyResourceCountryScope(
+    resourceId: string,
+    hasGlobalGrant: boolean,
+    allowedCountryIds: string[],
+  ): Promise<'OK' | 'NOT_FOUND' | 'FORBIDDEN'> {
+    if (hasGlobalGrant) {
+      return 'OK';
+    }
+    if (typeof qualityService.getResourceCountryId !== 'function') {
+      return 'FORBIDDEN';
+    }
+    const resourceCountryId = await qualityService.getResourceCountryId(resourceId);
+    if (!resourceCountryId) {
+      return 'NOT_FOUND';
+    }
+    if (!allowedCountryIds.includes(resourceCountryId)) {
+      return 'FORBIDDEN';
+    }
+    return 'OK';
+  }
 
   // 1. GET /admin/quality/check-types
   fastify.get(
     '/admin/quality/check-types',
-    { preHandler: [requireAuth, requireQualityRead] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'quality.read',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const queryResult = CheckTypesQuerySchema.safeParse(request.query);
       if (!queryResult.success) {
         return reply.status(400).send({
           error: {
             code: 'VALIDATION_ERROR',
             message: queryResult.error.errors[0]?.message || 'Invalid query parameters',
+            requestId: request.id,
+          },
+        });
+      }
+
+      if (
+        !access.hasGlobalGrant &&
+        queryResult.data.countryId &&
+        !access.countryIds.includes(queryResult.data.countryId)
+      ) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });
@@ -99,14 +147,55 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
   // 2. GET /admin/resources/:id/quality
   fastify.get(
     '/admin/resources/:id/quality',
-    { preHandler: [requireAuth, requireQualityRead] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'quality.read',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
           error: {
             code: 'VALIDATION_ERROR',
             message: paramResult.error.errors[0]?.message || 'Invalid resource id',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyResourceCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'RESOURCE_NOT_FOUND',
+            message: `Resource '${paramResult.data.id}' not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });
@@ -137,8 +226,25 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
   // 3. POST /admin/resources/:id/quality-checks
   fastify.post(
     '/admin/resources/:id/quality-checks',
-    { preHandler: [requireAuth, requireCheckCreate] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'quality.check.create',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
@@ -156,6 +262,30 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
           error: {
             code: 'VALIDATION_ERROR',
             message: bodyResult.error.errors[0]?.message || 'Invalid request body',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyResourceCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'RESOURCE_NOT_FOUND',
+            message: `Resource '${paramResult.data.id}' not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });
@@ -190,8 +320,25 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
   // 4. POST /admin/resources/:id/verify
   fastify.post(
     '/admin/resources/:id/verify',
-    { preHandler: [requireAuth, requireVerify] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'quality.verify',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
@@ -209,6 +356,30 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
           error: {
             code: 'VALIDATION_ERROR',
             message: bodyResult.error.errors[0]?.message || 'Invalid request body',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyResourceCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'RESOURCE_NOT_FOUND',
+            message: `Resource '${paramResult.data.id}' not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });
@@ -242,8 +413,25 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
   // 5. POST /admin/resources/:id/revoke-verification
   fastify.post(
     '/admin/resources/:id/revoke-verification',
-    { preHandler: [requireAuth, requireRevoke] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+
+      const access = await resolveStaffPermissionAccess(
+        rbacService,
+        request.user!.id,
+        'quality.revoke',
+      );
+      if (!access.granted) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
+            requestId: request.id,
+          },
+        });
+      }
+
       const paramResult = IdParamSchema.safeParse(request.params);
       if (!paramResult.success) {
         return reply.status(400).send({
@@ -261,6 +449,30 @@ export const qualityGovernanceRoutes: FastifyPluginAsync<
           error: {
             code: 'VALIDATION_ERROR',
             message: bodyResult.error.errors[0]?.message || 'Invalid request body',
+            requestId: request.id,
+          },
+        });
+      }
+
+      const scopeCheck = await verifyResourceCountryScope(
+        paramResult.data.id,
+        access.hasGlobalGrant,
+        access.countryIds,
+      );
+      if (scopeCheck === 'NOT_FOUND') {
+        return reply.status(404).send({
+          error: {
+            code: 'RESOURCE_NOT_FOUND',
+            message: `Resource '${paramResult.data.id}' not found.`,
+            requestId: request.id,
+          },
+        });
+      }
+      if (scopeCheck === 'FORBIDDEN') {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: GENERIC_FORBIDDEN_MESSAGE,
             requestId: request.id,
           },
         });

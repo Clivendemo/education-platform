@@ -368,72 +368,81 @@ export class DefaultRecommendationService implements RecommendationService {
         const sqlStart = performance.now();
 
         if (hasAllCards) {
-          const checkSlice = cachedTuples.slice(0, Math.min(cachedTuples.length, effectiveLimit + 4));
           const activeVersionByResId = await this.verifyLivePublicationGate(
             params.sourceResourceId,
-            checkSlice.map((t) => t.resourceId),
+            cachedTuples.map((t) => t.resourceId),
             params.country,
+            evalNow,
           );
           const sqlDurationMs = performance.now() - sqlStart;
 
-          const orderedCards: RecommendationCardDto[] = [];
-          for (const tuple of checkSlice) {
+          const survivingCards: RecommendationCardDto[] = [];
+          for (const tuple of cachedTuples) {
             const liveVersionId = activeVersionByResId.get(tuple.resourceId);
             if (liveVersionId && tuple.card && tuple.card.publishedVersion.id === liveVersionId) {
-              orderedCards.push(tuple.card);
-              if (orderedCards.length >= effectiveLimit) {
-                break;
-              }
+              survivingCards.push(tuple.card);
             }
           }
 
-          return {
-            data: orderedCards,
-            meta: {
-              surface,
-              sourceResourceId: params.sourceResourceId,
-              limit: effectiveLimit,
-              count: orderedCards.length,
-            },
-            _diagnostics: {
-              cacheHit: true,
-              sqlDurationMs,
-            },
-          };
-        }
+          if (
+            survivingCards.length === cachedTuples.length ||
+            survivingCards.length >= effectiveLimit
+          ) {
+            const orderedCards = survivingCards.slice(0, effectiveLimit);
+            return {
+              data: orderedCards,
+              meta: {
+                surface,
+                sourceResourceId: params.sourceResourceId,
+                limit: effectiveLimit,
+                count: orderedCards.length,
+              },
+              _diagnostics: {
+                cacheHit: true,
+                sqlDurationMs,
+              },
+            };
+          }
+          // Fall through synchronously to uncached scoring dataset to backfill ineligible cached entries
+        } else {
+          const gated = await this.verifySourceAndHydrateCardsSingleQuery(
+            params.sourceResourceId,
+            cachedTuples.map((t) => t.resourceId),
+            params.country,
+            evalNow,
+          );
+          const sqlDurationMs = performance.now() - sqlStart;
 
-        const gated = await this.verifySourceAndHydrateCardsSingleQuery(
-          params.sourceResourceId,
-          cachedTuples.map((t) => t.resourceId),
-          params.country,
-        );
-        const sqlDurationMs = performance.now() - sqlStart;
-
-        const cardById = new Map(gated.cards.map((c) => [c.id, c]));
-        const orderedCards: RecommendationCardDto[] = [];
-        for (const tuple of cachedTuples) {
-          const card = cardById.get(tuple.resourceId);
-          if (card) {
-            orderedCards.push(card);
-            if (orderedCards.length >= effectiveLimit) {
-              break;
+          const cardById = new Map(gated.cards.map((c) => [c.id, c]));
+          const survivingCards: RecommendationCardDto[] = [];
+          for (const tuple of cachedTuples) {
+            const card = cardById.get(tuple.resourceId);
+            if (card) {
+              survivingCards.push(card);
             }
           }
-        }
 
-        return {
-          data: orderedCards,
-          meta: {
-            surface,
-            sourceResourceId: params.sourceResourceId,
-            limit: effectiveLimit,
-            count: orderedCards.length,
-          },
-          _diagnostics: {
-            cacheHit: true,
-            sqlDurationMs,
-          },
-        };
+          if (
+            survivingCards.length === cachedTuples.length ||
+            survivingCards.length >= effectiveLimit
+          ) {
+            const orderedCards = survivingCards.slice(0, effectiveLimit);
+            return {
+              data: orderedCards,
+              meta: {
+                surface,
+                sourceResourceId: params.sourceResourceId,
+                limit: effectiveLimit,
+                count: orderedCards.length,
+              },
+              _diagnostics: {
+                cacheHit: true,
+                sqlDurationMs,
+              },
+            };
+          }
+          // Fall through synchronously to uncached scoring dataset to backfill ineligible cached entries
+        }
       }
     }
 
@@ -569,6 +578,7 @@ export class DefaultRecommendationService implements RecommendationService {
           const cards = await this.hydrateCardsByIds(
             countryId,
             rankedContextual.map((r) => r.resourceId),
+            evalNow,
           );
           const cardMap = new Map(cards.map((c) => [c.id, c]));
           const ordered = rankedContextual
@@ -602,37 +612,44 @@ export class DefaultRecommendationService implements RecommendationService {
         const cards = await this.hydrateCardsByIds(
           countryId,
           cachedCold.map((c) => c.resourceId),
+          evalNow,
         );
         const sqlDurationMs = performance.now() - sqlStart;
         const cardMap = new Map(cards.map((c) => [c.id, c]));
-        const ordered: RecommendationCardDto[] = [];
+        const survivingCards: RecommendationCardDto[] = [];
         for (const tuple of cachedCold) {
           const card = cardMap.get(tuple.resourceId);
           if (card) {
-            ordered.push(card);
-            if (ordered.length >= effectiveLimit) break;
+            survivingCards.push(card);
           }
         }
 
-        return {
-          data: ordered,
-          meta: {
-            surface: 'continue-exploring',
-            countryId,
-            limit: effectiveLimit,
-            count: ordered.length,
-            mode: 'cold_start',
-          },
-          _diagnostics: {
-            cacheHit: true,
-            sqlDurationMs,
-          },
-        };
+        if (
+          survivingCards.length === cachedCold.length ||
+          survivingCards.length >= effectiveLimit
+        ) {
+          const ordered = survivingCards.slice(0, effectiveLimit);
+          return {
+            data: ordered,
+            meta: {
+              surface: 'continue-exploring',
+              countryId,
+              limit: effectiveLimit,
+              count: ordered.length,
+              mode: 'cold_start',
+            },
+            _diagnostics: {
+              cacheHit: true,
+              sqlDurationMs,
+            },
+          };
+        }
+        // Fall through synchronously to recompute cold-start candidates when cached items dropped below effectiveLimit
       }
     }
 
     const sqlStart = performance.now();
-    const coldCandidates = await this.fetchColdStartCandidates(countryId);
+    const coldCandidates = await this.fetchColdStartCandidates(countryId, evalNow);
     const sqlDurationMs = performance.now() - sqlStart;
 
     const top20Cold = rankContinueExploringColdStart({
@@ -664,6 +681,7 @@ export class DefaultRecommendationService implements RecommendationService {
         ? await this.hydrateCardsByIds(
             countryId,
             winners.map((w) => w.resourceId),
+            evalNow,
           )
         : [];
     const cardMap = new Map(cards.map((c) => [c.id, c]));
@@ -1209,7 +1227,12 @@ export class DefaultRecommendationService implements RecommendationService {
     }
   }
 
-  private buildLivePublicationGateQuerySql(sourceResourceId: string, candidateIds: string[]) {
+  private buildLivePublicationGateQuerySql(
+    sourceResourceId: string,
+    candidateIds: string[],
+    evalNow: Date = new Date(),
+  ) {
+    const evalIso = evalNow.toISOString();
     const allIds = [sourceResourceId, ...candidateIds];
     const idsArraySql = sql`ARRAY[${sql.join(
       allIds.map((id) => sql`${id}::uuid`),
@@ -1228,6 +1251,16 @@ export class DefaultRecommendationService implements RecommendationService {
         ON rv.resource_id = r.id
        AND rv.status = 'PUBLISHED'
        AND rv.published_at IS NOT NULL
+       AND rv.published_at <= ${evalIso}::timestamptz
+       AND NOT EXISTS (
+         SELECT 1
+         FROM files.resource_files rf
+         WHERE rf.resource_version_id = rv.id
+           AND (
+             rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+             OR rf.object_key LIKE 'quarantine/%'
+           )
+       )
       INNER JOIN platform.countries c
         ON c.id = r.country_id
        AND c.status = 'ACTIVE'
@@ -1256,16 +1289,17 @@ export class DefaultRecommendationService implements RecommendationService {
 
   /**
    * Lean single-round-trip Active Publication Gate check for cached tuples (returns active version IDs).
-   * Enforces r.status = 'PUBLISHED', rv.status = 'PUBLISHED', rv.published_at IS NOT NULL,
-   * c.status = 'ACTIVE', rt.status = 'ACTIVE', and same-country isolation on every cached read.
+   * Enforces r.status = 'PUBLISHED', rv.status = 'PUBLISHED', rv.published_at <= evalNow,
+   * clean resource_files, c.status = 'ACTIVE', rt.status = 'ACTIVE', and same-country isolation on every cached read.
    */
   private async verifyLivePublicationGate(
     sourceResourceId: string,
     candidateIds: string[],
     optionalCountryFilter?: string,
+    evalNow: Date = new Date(),
   ): Promise<Map<string, string>> {
     const result = await this.dbInstance.execute(
-      this.buildLivePublicationGateQuerySql(sourceResourceId, candidateIds),
+      this.buildLivePublicationGateQuerySql(sourceResourceId, candidateIds, evalNow),
     );
 
     let sourceRow: any = null;
@@ -1318,7 +1352,9 @@ export class DefaultRecommendationService implements RecommendationService {
     sourceResourceId: string,
     candidateIds: string[],
     optionalCountryFilter?: string,
+    evalNow: Date = new Date(),
   ): Promise<{ countryId: string; cards: RecommendationCardDto[] }> {
+    const evalIso = evalNow.toISOString();
     const candidateArraySql =
       candidateIds.length > 0
         ? sql`ARRAY[${sql.join(
@@ -1340,6 +1376,16 @@ export class DefaultRecommendationService implements RecommendationService {
           ON rv.resource_id = r.id
          AND rv.status = 'PUBLISHED'
          AND rv.published_at IS NOT NULL
+         AND rv.published_at <= ${evalIso}::timestamptz
+         AND NOT EXISTS (
+           SELECT 1
+           FROM files.resource_files rf
+           WHERE rf.resource_version_id = rv.id
+             AND (
+               rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+               OR rf.object_key LIKE 'quarantine/%'
+             )
+         )
         INNER JOIN platform.countries c
           ON c.id = r.country_id
          AND c.status = 'ACTIVE'
@@ -1393,6 +1439,16 @@ export class DefaultRecommendationService implements RecommendationService {
           ON rv.resource_id = r.id
          AND rv.status = 'PUBLISHED'
          AND rv.published_at IS NOT NULL
+         AND rv.published_at <= ${evalIso}::timestamptz
+         AND NOT EXISTS (
+           SELECT 1
+           FROM files.resource_files rf
+           WHERE rf.resource_version_id = rv.id
+             AND (
+               rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+               OR rf.object_key LIKE 'quarantine/%'
+             )
+         )
         INNER JOIN content.resource_types rt
           ON rt.id = r.resource_type_id
          AND rt.status = 'ACTIVE'
@@ -1651,10 +1707,26 @@ export class DefaultRecommendationService implements RecommendationService {
             ON r.id = rv.resource_id
            AND r.country_id = ${params.countryId}::uuid
            AND r.status = 'PUBLISHED'
+          INNER JOIN platform.countries c
+            ON c.id = r.country_id
+           AND c.status = 'ACTIVE'
+          INNER JOIN content.resource_types rt
+            ON rt.id = r.resource_type_id
+           AND rt.status = 'ACTIVE'
           INNER JOIN content.resource_versions active_rv
             ON active_rv.resource_id = r.id
            AND active_rv.status = 'PUBLISHED'
            AND active_rv.published_at IS NOT NULL
+           AND active_rv.published_at <= ${evalIso}::timestamptz
+           AND NOT EXISTS (
+             SELECT 1
+             FROM files.resource_files rf
+             WHERE rf.resource_version_id = active_rv.id
+               AND (
+                 rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+                 OR rf.object_key LIKE 'quarantine/%'
+               )
+           )
           WHERE u.id = ${params.userId}::uuid
             AND u.status = 'ACTIVE'
             AND u.deleted_at IS NULL
@@ -1672,10 +1744,26 @@ export class DefaultRecommendationService implements RecommendationService {
             ON r.id = e.entity_id
            AND r.country_id = ${params.countryId}::uuid
            AND r.status = 'PUBLISHED'
+          INNER JOIN platform.countries c
+            ON c.id = r.country_id
+           AND c.status = 'ACTIVE'
+          INNER JOIN content.resource_types rt
+            ON rt.id = r.resource_type_id
+           AND rt.status = 'ACTIVE'
           INNER JOIN content.resource_versions active_rv
             ON active_rv.resource_id = r.id
            AND active_rv.status = 'PUBLISHED'
            AND active_rv.published_at IS NOT NULL
+           AND active_rv.published_at <= ${evalIso}::timestamptz
+           AND NOT EXISTS (
+             SELECT 1
+             FROM files.resource_files rf
+             WHERE rf.resource_version_id = active_rv.id
+               AND (
+                 rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+                 OR rf.object_key LIKE 'quarantine/%'
+               )
+           )
           WHERE e.actor_type = 'AUTHENTICATED'
             AND e.user_id = ${params.userId}::uuid
             AND e.entity_type = 'resource'
@@ -1716,10 +1804,26 @@ export class DefaultRecommendationService implements RecommendationService {
           ON r.id = e.entity_id
          AND r.country_id = ${params.countryId}::uuid
          AND r.status = 'PUBLISHED'
+        INNER JOIN platform.countries c
+          ON c.id = r.country_id
+         AND c.status = 'ACTIVE'
+        INNER JOIN content.resource_types rt
+          ON rt.id = r.resource_type_id
+         AND rt.status = 'ACTIVE'
         INNER JOIN content.resource_versions active_rv
           ON active_rv.resource_id = r.id
          AND active_rv.status = 'PUBLISHED'
          AND active_rv.published_at IS NOT NULL
+         AND active_rv.published_at <= ${evalIso}::timestamptz
+         AND NOT EXISTS (
+           SELECT 1
+           FROM files.resource_files rf
+           WHERE rf.resource_version_id = active_rv.id
+             AND (
+               rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+               OR rf.object_key LIKE 'quarantine/%'
+             )
+         )
         WHERE e.actor_type = 'ANONYMOUS'
           AND e.anonymous_session_hash = ${params.anonymousSessionHash}
           AND e.entity_type = 'resource'
@@ -1775,6 +1879,16 @@ export class DefaultRecommendationService implements RecommendationService {
         ON rv.resource_id = r.id
        AND rv.status = 'PUBLISHED'
        AND rv.published_at IS NOT NULL
+       AND rv.published_at <= ${evalIso}::timestamptz
+       AND NOT EXISTS (
+         SELECT 1
+         FROM files.resource_files rf
+         WHERE rf.resource_version_id = rv.id
+           AND (
+             rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+             OR rf.object_key LIKE 'quarantine/%'
+           )
+       )
       INNER JOIN platform.countries c
         ON c.id = r.country_id
        AND c.status = 'ACTIVE'
@@ -1953,7 +2067,10 @@ export class DefaultRecommendationService implements RecommendationService {
     return { seeds, candidates: rawCandidates, rules };
   }
 
-  private async fetchColdStartCandidates(countryId: string): Promise<
+  private async fetchColdStartCandidates(
+    countryId: string,
+    evalNow: Date = new Date(),
+  ): Promise<
     Array<{
       resourceId: string;
       resourceQualityLabel: string;
@@ -1962,6 +2079,7 @@ export class DefaultRecommendationService implements RecommendationService {
       publishedAt: Date;
     }>
   > {
+    const evalIso = evalNow.toISOString();
     const result = await this.dbInstance.execute(sql`
       SELECT
         r.id AS resource_id,
@@ -1974,6 +2092,16 @@ export class DefaultRecommendationService implements RecommendationService {
         ON rv.resource_id = r.id
        AND rv.status = 'PUBLISHED'
        AND rv.published_at IS NOT NULL
+       AND rv.published_at <= ${evalIso}::timestamptz
+       AND NOT EXISTS (
+         SELECT 1
+         FROM files.resource_files rf
+         WHERE rf.resource_version_id = rv.id
+           AND (
+             rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+             OR rf.object_key LIKE 'quarantine/%'
+           )
+       )
       INNER JOIN platform.countries c
         ON c.id = r.country_id
        AND c.status = 'ACTIVE'
@@ -2003,8 +2131,10 @@ export class DefaultRecommendationService implements RecommendationService {
   private async hydrateCardsByIds(
     countryId: string,
     candidateIds: string[],
+    evalNow: Date = new Date(),
   ): Promise<RecommendationCardDto[]> {
     if (candidateIds.length === 0) return [];
+    const evalIso = evalNow.toISOString();
 
     const candidateArraySql = sql`ARRAY[${sql.join(
       candidateIds.map((id) => sql`${id}::uuid`),
@@ -2051,6 +2181,16 @@ export class DefaultRecommendationService implements RecommendationService {
         ON rv.resource_id = r.id
        AND rv.status = 'PUBLISHED'
        AND rv.published_at IS NOT NULL
+       AND rv.published_at <= ${evalIso}::timestamptz
+       AND NOT EXISTS (
+         SELECT 1
+         FROM files.resource_files rf
+         WHERE rf.resource_version_id = rv.id
+           AND (
+             rf.malware_scan_status IN ('INFECTED', 'SCAN_ERROR')
+             OR rf.object_key LIKE 'quarantine/%'
+           )
+       )
       INNER JOIN platform.countries c
         ON c.id = r.country_id
        AND c.status = 'ACTIVE'

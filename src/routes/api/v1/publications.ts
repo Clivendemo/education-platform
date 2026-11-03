@@ -25,12 +25,15 @@ import {
 } from '../../../services/audit.service.js';
 import { createRequireAuth } from './auth.js';
 import {
-  createRequirePermission,
+  resolveStaffPermissionAccess,
   GENERIC_FORBIDDEN_MESSAGE,
 } from '../../hooks/authorize.js';
 
+import type { ResourceService } from '../../../services/resource.service.js';
+
 export interface PublicationRoutesOptions {
   publicationService?: PublicationService;
+  resourceService?: ResourceService;
   authService?: AuthService;
   rbacService?: RbacService;
   auditService?: AuditService;
@@ -61,21 +64,6 @@ const ReturnToDraftSchema = z.object({
   reason: z.string().optional(),
 });
 
-async function resolveAccessWithFallback(
-  rbacService: RbacService,
-  userId: string,
-  permission: string,
-): Promise<PermissionAccessResolution> {
-  if (typeof rbacService.resolvePermissionAccess === 'function') {
-    return rbacService.resolvePermissionAccess(userId, permission);
-  }
-  const granted = await rbacService.hasPermission(userId, permission);
-  return {
-    granted,
-    hasGlobalGrant: granted,
-    countryIds: [],
-  };
-}
 
 async function buildActorSnapshot(
   request: FastifyRequest,
@@ -114,14 +102,13 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
   opts,
 ) => {
   const publicationService = opts.publicationService || defaultPublicationService;
+  const resourceService = opts.resourceService;
   const authService = opts.authService || defaultAuthService;
   const rbacService = opts.rbacService || defaultRbacService;
   const auditService = opts.auditService || defaultAuditService;
   const dbInstance = opts.db || defaultDb;
 
   const requireAuth = createRequireAuth(authService);
-  const requirePermission = (permission: string) =>
-    createRequirePermission(rbacService, permission);
 
   // Custom Fastify Error Mapper for PublicationError
   fastify.setErrorHandler((error, request, reply) => {
@@ -175,10 +162,11 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
   const authorizePublicationAction = async (
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
-    permission: string,
+    permission: string | readonly string[],
     deniedAuditAction: string,
   ): Promise<{ resourceId: string; actorContext: PublicationActorContext } | null> => {
-    const access = await resolveAccessWithFallback(
+    reply.header('Cache-Control', 'private, no-store');
+    const access: PermissionAccessResolution = await resolveStaffPermissionAccess(
       rbacService,
       request.user!.id,
       permission,
@@ -210,11 +198,22 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
     const resourceId = paramParse.data.id;
 
     if (!access.hasGlobalGrant) {
-      const [resourceRow] = await dbInstance
-        .select({ id: resources.id, countryId: resources.countryId })
-        .from(resources)
-        .where(eq(resources.id, resourceId))
-        .limit(1);
+      let resourceRow: { id: string; countryId: string } | undefined;
+      if (resourceService) {
+        const found = await resourceService.getResourceById(resourceId, {
+          includeUnpublished: true,
+        });
+        if (found) {
+          resourceRow = { id: found.id, countryId: found.country.id };
+        }
+      } else {
+        const [dbRow] = await dbInstance
+          .select({ id: resources.id, countryId: resources.countryId })
+          .from(resources)
+          .where(eq(resources.id, resourceId))
+          .limit(1);
+        resourceRow = dbRow;
+      }
 
       if (!resourceRow) {
         reply.status(404).send({
@@ -549,24 +548,22 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
     },
   );
 
-  // 7a. GET /resources/:id/events — Preserved Prompt 14 public/authenticated contract (resource.read)
+  // 7a. GET /resources/:id/events — Staff-only publication history (resource.admin.read | resource.review + COUNTRY scope)
   fastify.get<{ Params: { id: string } }>(
     '/resources/:id/events',
-    { preHandler: [requireAuth, requirePermission('resource.read')] },
+    { preHandler: [requireAuth] },
     async (request, reply) => {
-      const paramParse = ResourceIdParamSchema.safeParse(request.params);
-      if (!paramParse.success) {
-        return reply.status(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: paramParse.error.errors.map((e) => e.message).join('; '),
-            requestId: request.id,
-          },
-        });
-      }
+      const authCtx = await authorizePublicationAction(
+        request,
+        reply,
+        ['resource.admin.read', 'resource.review'],
+        'RESOURCE_EVENTS_READ',
+      );
+      if (!authCtx) return;
 
       try {
-        const events = await publicationService.getPublicationHistory(paramParse.data.id);
+        const events = await publicationService.getPublicationHistory(authCtx.resourceId);
+        reply.header('Cache-Control', 'private, no-store');
         return reply.status(200).send({ data: events });
       } catch (err) {
         if (err instanceof PublicationError) {
@@ -583,7 +580,7 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
     },
   );
 
-  // 7b. GET /admin/resources/:id/events — Administrative publication history (resource.admin.read + COUNTRY scope)
+  // 7b. GET /admin/resources/:id/events — Administrative publication history (resource.admin.read | resource.review + COUNTRY scope)
   fastify.get<{ Params: { id: string } }>(
     '/admin/resources/:id/events',
     { preHandler: [requireAuth] },
@@ -591,7 +588,7 @@ export const publicationRoutes: FastifyPluginAsync<PublicationRoutesOptions> = a
       const authCtx = await authorizePublicationAction(
         request,
         reply,
-        'resource.admin.read',
+        ['resource.admin.read', 'resource.review'],
         'ADMIN_RESOURCE_EVENTS_READ',
       );
       if (!authCtx) return;
