@@ -16,3 +16,5 @@ export * from './schema/notifications.js';
 export * from './schema/analytics.js';
 export * from './schema/recommendations.js';
 export * from './schema/homepage.js';
+export * from './schema/system.js';
+

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { eq, inArray } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db } from '../../src/db/index.js';
 import {
   users,
@@ -69,7 +70,7 @@ describe.skipIf(!isDbAvailable)('Audit & Retention Route Integration Tests', () 
   }
 
   beforeAll(async () => {
-    app = buildApp();
+    app = enableTestCsrfAutoInject(buildApp());
     await app.ready();
 
     await defaultRetentionService.seedInitialPolicies();

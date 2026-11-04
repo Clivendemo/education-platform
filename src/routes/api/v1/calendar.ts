@@ -15,6 +15,10 @@ import {
   SESSION_COOKIE_NAME,
 } from '../../../services/auth.service.js';
 import { createRequireAuth } from './auth.js';
+import {
+  type BoundedConcurrencyRegistry,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
 
 export const CALENDAR_SESSION_COOKIE_NAME = 'calendar_session';
 const CALENDAR_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
@@ -22,6 +26,7 @@ const CALENDAR_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 export interface CalendarRouteOptions {
   calendarService?: CalendarService;
   authService?: AuthService;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
 }
 
 const CreateEventSchema = z.object({
@@ -73,6 +78,7 @@ export const calendarRoutes: FastifyPluginAsync<CalendarRouteOptions> = async (
 ) => {
   const calendarService = opts.calendarService ?? defaultCalendarService;
   const authService = opts.authService ?? defaultAuthService;
+  const concurrencyRegistry = opts.concurrencyRegistry ?? defaultConcurrencyRegistry;
   const requireAuth = createRequireAuth(authService);
 
   // Map Calendar domain errors and Zod validation errors to controlled HTTP error responses
@@ -203,6 +209,17 @@ export const calendarRoutes: FastifyPluginAsync<CalendarRouteOptions> = async (
     return reply.status(200).send({ data: view });
   });
 
+  // 5b. DELETE /calendar/session — Clear Anonymous Calendar Session Cookie (W3-AC-05)
+  fastify.delete('/calendar/session', async (_request, reply) => {
+    reply.clearCookie(CALENDAR_SESSION_COOKIE_NAME, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    });
+    return reply.status(200).send({ data: { success: true } });
+  });
+
   // 6. POST /calendar/session/events — Add Event to Anonymous Calendar
   fastify.post('/calendar/session/events', async (request, reply) => {
     const body = CreateEventSchema.parse(request.body);
@@ -273,8 +290,13 @@ export const calendarRoutes: FastifyPluginAsync<CalendarRouteOptions> = async (
       }
 
       const result = await calendarService.transferAnonymousSession(user.id, sessionId);
-      // Clear anonymous session cookie upon successful transfer
-      reply.clearCookie(CALENDAR_SESSION_COOKIE_NAME, { path: '/' });
+      // Clear anonymous session cookie upon successful transfer with aligned security attributes
+      reply.clearCookie(CALENDAR_SESSION_COOKIE_NAME, {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+      });
       return reply.status(200).send({ data: result });
     },
   );
@@ -344,7 +366,13 @@ export const calendarRoutes: FastifyPluginAsync<CalendarRouteOptions> = async (
   fastify.post('/calendar/export', async (request, reply) => {
     const body = ExportCalendarSchema.parse(request.body || {});
     const context = await resolveContext(request, reply, false);
-    const exportResult = await calendarService.exportCalendar(context, body);
+    const actorKey =
+      context.userId ?? context.sessionId ?? request.ip ?? 'anonymous';
+    const exportResult = await concurrencyRegistry.runWithPermit(
+      'calendar_pdf_export',
+      { actorKey, request, reply },
+      (signal) => calendarService.exportCalendar(context, body, { signal }),
+    );
     return reply.status(200).send({ data: exportResult });
   });
 

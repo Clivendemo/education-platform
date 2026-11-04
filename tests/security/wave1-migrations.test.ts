@@ -129,7 +129,7 @@ describe.skipIf(!isDbAvailable)(
         const appliedCount = await isolatedDb.execute(
           sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
         );
-        expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24); // 0000..0023
+        expect(Number((appliedCount.rows[0] as any).cnt)).toBe(25); // 0000..0024
 
         // Structural-only bootstrap invariant: calendar_event_types has 0 seeded rows during migration
         const calendarTypesCount = await isolatedDb.execute(
@@ -151,7 +151,7 @@ describe.skipIf(!isDbAvailable)(
           const appliedCount = await isolatedDb.execute(
             sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
           );
-          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24);
+          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(25);
         });
       } finally {
         fs.rmSync(subset0008, { recursive: true, force: true });
@@ -170,7 +170,7 @@ describe.skipIf(!isDbAvailable)(
           const appliedCount = await isolatedDb.execute(
             sql`SELECT COUNT(*)::int AS cnt FROM "drizzle"."__drizzle_migrations"`,
           );
-          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(24);
+          expect(Number((appliedCount.rows[0] as any).cnt)).toBe(25);
         });
       } finally {
         fs.rmSync(subset0009, { recursive: true, force: true });

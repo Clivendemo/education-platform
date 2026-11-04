@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db } from '../../src/db/index.js';
 import {
   users,
@@ -55,7 +56,7 @@ describe('Analytics Route Integration Tests', () => {
   }
 
   beforeAll(async () => {
-    app = buildApp();
+    app = enableTestCsrfAutoInject(buildApp());
     await app.ready();
 
     const admin = await createTestUserWithRole('system_admin');

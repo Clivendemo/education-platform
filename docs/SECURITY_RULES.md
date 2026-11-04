@@ -2195,3 +2195,73 @@ The platform must be:
 **Simple enough to maintain.**
 
 Security must support the platform's educational mission without making legitimate discovery and use unnecessarily difficult.
+
+---
+
+# 115. Security Hardening Wave 3 — HTTP Security, Rate Limiting, Concurrency & Redaction
+
+## 115.1 API Security Headers & CSP Boundary
+
+Every Fastify HTTP response emits deterministic API security headers (`src/routes/middleware/http-security.ts`):
+
+* `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'` (strictly for JSON/API responses; frontend SPA assets served via CDN/edge maintain their own document CSP).
+* `X-Content-Type-Options: nosniff`
+* `X-Frame-Options: DENY`
+* `Referrer-Policy: strict-origin-when-cross-origin`
+* `Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()`
+* `Cross-Origin-Opener-Policy: same-origin`
+* `Cross-Origin-Resource-Policy: same-site`
+
+## 115.2 RFC 6797 §7.2-Compliant Staged HSTS Rollout
+
+`Strict-Transport-Security` is emitted **only** when all three conditions hold:
+1. `NODE_ENV === 'production'`
+2. `CANONICAL_DOMAIN` begins with `https://`
+3. Effective request transport is HTTPS (`request.protocol === 'https'` via trusted reverse proxy or encrypted TLS socket)
+
+Staged operational rollout defaults (`HSTS_MAX_AGE_SECONDS`, `HSTS_INCLUDE_SUBDOMAINS`):
+* **Stage 1 (Initial Default):** `HSTS_MAX_AGE_SECONDS=300`, `HSTS_INCLUDE_SUBDOMAINS=false` (`max-age=300`)
+* **Stage 2 (After 48h TLS verification):** `HSTS_MAX_AGE_SECONDS=86400` (`24h`)
+* **Stage 3 (After 7d zero TLS incidents):** `HSTS_MAX_AGE_SECONDS=2592000` (`30d`)
+* **Stage 4 (Steady state, all subdomains TLS-verified):** `HSTS_MAX_AGE_SECONDS=31536000`, `HSTS_INCLUDE_SUBDOMAINS=true`
+
+Never emit `preload` automatically from application code without explicit domain-wide readiness approval.
+
+## 115.3 Strict CORS Allowlist & Split `Vary` Discipline
+
+* Only exact normalized origins listed in `CORS_ALLOWED_ORIGINS` receive `Access-Control-Allow-Origin: <origin>` and `Access-Control-Allow-Credentials: true`. Wildcards (`*`) with credentials and `"null"` origins are strictly prohibited.
+* **Non-`OPTIONS` responses:** `Vary` includes `Origin` (`Vary: Origin` or merged cleanly with existing `Vary` tokens).
+* **Allowed `OPTIONS` preflight (`204 No Content`):** Emits `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`, `Access-Control-Max-Age: 600`, and `Cache-Control: private, max-age=600`.
+* **Denied `OPTIONS` preflight (`403 CORS_ORIGIN_DENIED`):** Emits `Cache-Control: no-store` and omits all `Access-Control-Allow-*` headers.
+
+## 115.4 Conjunctive Stateless HMAC-Bound CSRF Defense
+
+All state-changing HTTP methods (`POST`, `PUT`, `PATCH`, `DELETE`) enforce three conjunctive checks across **all** environments (`development`, `test`, `production`) with zero test-mode bypasses (`src/routes/middleware/csrf-guard.ts`):
+
+1. **JSON Media-Type Guard (`415 UNSUPPORTED_MEDIA_TYPE`):** Non-empty request bodies must declare `Content-Type: application/json` (rejecting HTML form encodings `application/x-www-form-urlencoded`, `multipart/form-data`, and `text/plain`).
+2. **Origin / Referer Allowlist (`403 CSRF_ORIGIN_DENIED`):** Browser origin (`Origin`, falling back to `Referer` origin) must match `CORS_ALLOWED_ORIGINS`. Missing or `"null"` origins are rejected.
+3. **Stateless Cookie-Bound HMAC Token (`403 CSRF_TOKEN_MISSING` / `CSRF_TOKEN_INVALID` / `CSRF_TOKEN_EXPIRED`):** `X-CSRF-Token` (`v1.<issuedAtUnixSec>.<nonceHex32>.<hmacHex64>`) is verified in constant time (`crypto.timingSafeEqual`) against `CSRF_SECRET` (or `CSRF_SECRET_PREVIOUS` during secret rotation) bound to the SHA-256 digest of the highest-precedence active `HttpOnly` cookie (`session_token` > `calendar_session` > `rf_sid` > `elimu_anon_sid` > `csrf_ctx`).
+   * Unauthenticated clients obtain a pre-auth `HttpOnly` `csrf_ctx` cookie and token via `GET /api/v1/auth/csrf`.
+   * Any response that sets or clears a bound cookie (`login`, `register`, `logout`, `calendar/session`, feedback session) automatically emits a fresh rotated `X-CSRF-Token` response header bound to the post-mutation cookie state, invalidating pre-login tokens immediately.
+   * **Sole S2S Exception:** Verified Safaricom Daraja M-Pesa webhook endpoints (`/api/v1/commerce/webhooks/mpesa`, `/api/v1/payments/mpesa/callback`, `/api/v1/mpesa/callback`) rely on M-Pesa IP allowlisting + cryptographic signature/callback verification rather than browser cookies.
+
+## 115.5 Two-Tier Rate Limiting, Two-Phase Single-Winner Admission & 3-Stage Coordinated HMAC Secret Rotation
+
+* **Tier 1 (`Tier1MemoryRateLimiter`):** Bounded-LRU (`10,000` entries) in-memory token bucket shield on `onRequest` with `0` PostgreSQL writes for all `GET` routes, search/autocomplete, and `POST /api/v1/analytics/events`. Eviction TTL enforces `expiresAtMs >= updatedAtMs + fullRefillDurationMs + 60_000`.
+* **Tier 2 (`PostgresRateLimitStore`):** Two-phase PostgreSQL enforcement (`Tx1: system.consume_rate_limit_buckets` + `Tx2: system.claim_rate_limit_admission`) within a `250 ms` total admission budget (`50 ms` pool checkout, `waitingCount >= 4` fast shed, `150 ms` statement timeout, `75 ms` lock timeout, late-callback client release, fail-closed `503` on ambiguous `COMMIT`).
+* **Terminal Single-Winner Claim:** `Tx2` transitions `UNCLAIMED -> CLAIMED` exactly once per `admission_key`; any concurrent loser or replay against an already-`CLAIMED` row (even with a matching claim token) is rejected (`409 IDEMPOTENCY_ALREADY_CLAIMED`). Different request targets or bodies under the same `Idempotency-Key` fail closed with `409 IDEMPOTENCY_KEY_CONFLICT` before any token deduction.
+* **3-Stage Coordinated `RATE_LIMIT_HMAC_SECRET` Rotation Runbook (`V1 -> V2`):**
+  1. **Stage 1 (Dual-Verify Pre-Deploy):** Configure `RATE_LIMIT_HMAC_SECRET=V1` and `RATE_LIMIT_HMAC_SECRET_SECONDARY=V2` across all instances. Every instance signs with `V1` and verifies both `V1` and `V2`.
+  2. **Barrier 1:** Confirm `100%` of running application pods/instances have loaded Stage 1 configuration (`V1`-only verifiers = `0`) before starting Stage 2.
+  3. **Stage 2 (Primary Cutover):** Flip `RATE_LIMIT_HMAC_SECRET=V2` and `RATE_LIMIT_HMAC_SECRET_SECONDARY=V1`. Instances sign new fingerprints with `V2`, verify `V1` via `p_secondary_payload_fingerprint`, and atomically re-tag matched `UNCLAIMED` `V1` admission rows to `V2` in `Tx1` without extending `expires_at`. (Emergency rollback from Stage 2 returns to Stage 1 `active=V1, secondary=V2` — never directly to `V1`-only — re-tagging `UNCLAIMED` rows back without extending `expires_at`.)
+  4. **Barrier 2 + Post-Drain TTL Hold:** Confirm `100%` of Stage 2 instances are active (`V1`-primary writers = `0`), then hold Stage 2 (`RATE_LIMIT_HMAC_SECRET_SECONDARY=V1`) for **at least `max(admission_ttl) + clock_skew_margin` (`>= 24 hours + 15 minutes`)** after the last `V1`-signing instance drains so every `CLAIMED` `V1` row expires naturally before `V1` is removed.
+  5. **Stage 3 (Retire Old Secret):** Unset `RATE_LIMIT_HMAC_SECRET_SECONDARY` (`active=V2` only).
+
+## 115.6 Heavy-Endpoint Concurrency Semaphores (`BoundedConcurrencyRegistry`)
+
+Permits are held inside `try { ... } finally { handle.release(); }` until the underlying CPU/DB/I/O work settles — client socket disconnect (`request.raw` `'aborted'` or `reply.raw` `'close'` prior to `reply.raw.writableEnded`) aborts cooperative `AbortSignal` consumers (R2 `headObject`, pre-upload calendar PDF build) so work unwinds quickly, but **never** releases the semaphore permit while work is still executing. `POST /api/v1/payments` is explicitly non-abortable (`abortOnClientDisconnect: false`) to protect financial state consistency.
+
+## 115.7 Recursive Audit & Structured Log Redaction (WP7)
+
+`src/utils/log-redactor.ts` enforces cycle-safe (`WeakSet`), prototype-safe, depth-bounded (`maxDepth = 8`) `[REDACTED]` replacement across both `AuditService.logEvent` and Pino HTTP/application logs, preserving benign telemetry counters (`tokenCount`, `millitokens`, `countryCode`, etc.), normalizing ill-formed UTF-16 surrogates + NUL bytes, and compacting oversized audit payloads deterministically within PostgreSQL `JSONB::text` `CHECK` bounds (`<= 3,800` / `<= 1,900` UTF-8 bytes against `4,096` / `2,048` byte DB constraints) without dropping audit records.
+

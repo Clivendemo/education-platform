@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { getDb, closeDatabase } from '../../src/db/index.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import {
   products,
   orders,
@@ -78,11 +79,13 @@ describe('Commerce HTTP Route M-Pesa Integration Tests', () => {
       },
     });
 
-    app = buildApp({
-      services: {
-        commerceService: testCommerceService,
-      },
-    });
+    app = enableTestCsrfAutoInject(
+      buildApp({
+        services: {
+          commerceService: testCommerceService,
+        },
+      }),
+    );
     await app.ready();
 
     const [c] = await withDbRetry(async () =>

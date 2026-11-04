@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import {
   type AuthService,
   type AuthResult,
@@ -59,7 +60,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
   describe('POST /api/v1/auth/register', () => {
     it('returns 201 Created with user info and sets HttpOnly cookie', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -93,7 +94,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
 
     it('returns 400 Bad Request if password is shorter than 8 characters', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -113,7 +114,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
 
     it('returns 400 Bad Request if email format is invalid', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -134,7 +135,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
       const mockService = createMockAuthService({
         register: vi.fn().mockRejectedValue(new EmailAlreadyRegisteredError()),
       });
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -156,7 +157,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
   describe('POST /api/v1/auth/login', () => {
     it('returns 200 OK and sets fresh session cookie on valid credentials', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -182,7 +183,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
       const mockService = createMockAuthService({
         login: vi.fn().mockRejectedValue(new InvalidCredentialsError()),
       });
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -202,7 +203,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
 
     it('returns 400 Bad Request when missing password or email', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',
@@ -220,7 +221,7 @@ describe('Auth API Routes (/api/v1/auth)', () => {
   describe('POST /api/v1/auth/logout', () => {
     it('returns 200 OK and clears session cookie', async () => {
       const mockService = createMockAuthService();
-      const app = buildApp({ services: { authService: mockService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService: mockService } }));
 
       const response = await app.inject({
         method: 'POST',

@@ -5,6 +5,9 @@ import { checkDatabaseHealth, closeDatabase } from '../../src/db/index.js';
 
 const validProdSecurityBaseline = {
   CANONICAL_DOMAIN: 'https://elimupin.co.ke',
+  CORS_ALLOWED_ORIGINS: 'https://elimupin.co.ke,https://app.elimupin.co.ke',
+  CSRF_SECRET: 'prod-csrf-secret-value-at-least-32-chars-long-0001',
+  RATE_LIMIT_HMAC_SECRET: 'prod-rate-limit-hmac-secret-at-least-32-chars-01',
   TRUST_PROXY_HOPS: 1,
   ALLOW_PAYMENT_SIMULATION: 'false',
   R2_ACCOUNT_ID: 'prod-r2-account',
@@ -134,6 +137,27 @@ describe('PostgreSQL Foundation Configuration & Schemas', () => {
         expect(paths).toContain('TRUST_PROXY_HOPS');
         expect(paths).toContain('R2_ACCOUNT_ID');
         expect(paths).toContain('MALWARE_SCANNER_MODE');
+        expect(paths).toContain('CORS_ALLOWED_ORIGINS');
+        expect(paths).toContain('CSRF_SECRET');
+        expect(paths).toContain('RATE_LIMIT_HMAC_SECRET');
+      }
+    });
+
+    it('fails fast in production when CORS_ALLOWED_ORIGINS contains wildcard or http:// or dev placeholder secrets are reused (Wave 3 WP3/WP4)', () => {
+      const badProd = envSchema.safeParse({
+        NODE_ENV: 'production',
+        ...validProdSecurityBaseline,
+        CORS_ALLOWED_ORIGINS: '*,http://insecure.elimupin.co.ke',
+        CSRF_SECRET: 'dev-only-csrf-secret-key-at-least-32-bytes-long-0000',
+        RATE_LIMIT_HMAC_SECRET: 'dev-only-rate-limit-hmac-key-at-least-32-bytes-0000',
+        DATABASE_URL: 'postgresql://postgres:secret@db.production.internal:5432/education_platform?sslmode=require',
+      });
+      expect(badProd.success).toBe(false);
+      if (!badProd.success) {
+        const paths = badProd.error.issues.flatMap((i) => i.path.map(String));
+        expect(paths).toContain('CORS_ALLOWED_ORIGINS');
+        expect(paths).toContain('CSRF_SECRET');
+        expect(paths).toContain('RATE_LIMIT_HMAC_SECRET');
       }
     });
 

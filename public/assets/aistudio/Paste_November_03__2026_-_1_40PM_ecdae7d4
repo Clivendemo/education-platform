@@ -1,0 +1,704 @@
+PROMPT 33 — SECURITY HARDENING WAVE 3 (REVISION 1.1)
+Focused Technical Correction & Architecture Validation Report
+Repository: Clivendemo/education-platform
+Baseline: Prompt 33 Wave 3 Plan, Revision 1.0
+Workpackages: WP3 (HTTP Security) + WP4 (Rate Limiting & Concurrency) + WP7 (Audit & Logging Redaction)
+Phase: PLAN + READ-ONLY TECHNICAL VALIDATION ONLY
+Governance: PLAN → HUMAN APPROVAL → IMPLEMENT → TEST → REPORT → STOP
+1. Executive Summary
+This Revision 1.1 validation resolves all eight open architectural and specification issues identified in review of Revision 1.0 while preserving Wave 1 (0022), Wave 2 (0023), and settled Wave 3 boundaries. No repository files, database objects, dependencies, or environment configurations were modified during this read-only validation.
+Summary Classification of Revision 1.1 Findings & Resolutions
+Confirmed Defects Resolved in Design
+Premature Semaphore Permit Release (Revision 1.0 Defect): Releasing concurrency permits inside request.raw.once('aborted') or reply.raw.once('close') breaks the concurrency cap whenever Argon2 hashing, PDF rendering, PostgreSQL queries, or Daraja STK Push calls continue executing after client socket disconnect. Permits are now bound exclusively to try { await fn(signal) } finally { permit.release() }; client disconnect/timeout aborts AbortController only and never directly releases an active permit (§4).
+Conflicting CSRF Configuration Switches (Revision 1.0 Defect): CSRF_REQUIRE_TOKEN, CSRF_STRICT_MODE, and CSRF_ALLOW_HEADER_ONLY_FALLBACK created contradictory states and test-mode weakening risk. All three boolean switches are removed; strict conjunctive Origin + X-CSRF-Token enforcement is always active in development, test, and production (§3).
+PostgreSQL JSONB::text Scientific-Notation & Invalid-Unicode Gaps (Revision 1.0 Defect): JavaScript JSON.stringify(5e-324) is 6 bytes ("5e-324"), whereas PostgreSQL octet_length(('5e-324'::jsonb)::text) expands via numeric_out to 326 bytes ("0.000...005"), able to blow past a 296-byte safety buffer and trigger chk_audit_logs_context_bytes (23514). In addition, PostgreSQL jsonb rejects \u0000 and unpaired UTF-16 surrogates with SQLSTATE 22P05. Both are resolved via input normalization (toWellFormed() + NUL stripping) and a closed-form numeric_out upper-bound byte estimator proven >= octet_length(col::text) across all normalized inputs (§7).
+Retention Cursor Type Mismatch for system.rate_limit_buckets: RetentionService.runWorkerLoop (src/services/retention.service.ts:499-531) selects column id and writes last_cursor_id into governance.data_retention_actions.last_cursor_id, which is typed UUID NULL (drizzle/0017_audit_and_retention.sql:89). Migration 0024 therefore defines "id" UUID PRIMARY KEY DEFAULT gen_random_uuid() alongside UNIQUE ("bucket_key"), preserving ON CONFLICT ("bucket_key") while maintaining 100% UUID cursor compatibility with RetentionService (§5.4).
+search.ts Ad-Hoc Auth Cookie & Error Codes (src/routes/api/v1/search.ts:106-130, 306, 318): Confirmed live defect using elimu_session / Authorization: Bearer, 401 UNAUTHORIZED (instead of UNAUTHENTICATED), and verbose permission-string leakage in 403 messages.
+calendar.ts Cookie Clear Attribute Drift (src/routes/api/v1/calendar.ts:277): reply.clearCookie('calendar_session', { path: '/' }) omits httpOnly, sameSite, and secure flags set during issuance (lines 193-199).
+Security Design Gaps Closed
+Pre-Auth CSRF Bootstrap Without Client Cookie Inspection: Browser JavaScript never reads HttpOnly cookies. GET /api/v1/auth/csrf binds stateless HMAC-SHA256 tokens server-side to the SHA-256 digest of the active HttpOnly credential/session cookie (session_token, calendar_session, rf_sid, elimu_anon_sid) or issues an opaque HttpOnly; SameSite=Lax pre-auth context cookie (csrf_ctx) prior to /auth/login and /auth/register, rotating X-CSRF-Token automatically whenever session cookies rotate (§3.2).
+Token-Bucket Early Quota Reset Prevention & Multi-Dimensional Atomicity: Enforced expires_at >= updated_at + full_bucket_refill_duration + 60s in both TypeScript and PostgreSQL, and replaced sequential multi-bucket checks with a single-roundtrip deadlock-free PostgreSQL function system.consume_rate_limit_buckets(...) that locks sorted bucket hashes via pg_advisory_xact_lock, uses a single clock_timestamp(), prevents BIGINT overflow/rounding drift, and performs zero writes when any dimension (IP or email) rejects (§5).
+Database Pool Protection (DATABASE_POOL_MAX = 10): Public read endpoints, search queries, and high-volume analytics ingestion use Tier 1 in-memory bounded-LRU rate limiting only (zero per-request PostgreSQL writes); Tier 2 PostgreSQL rate limiting is scoped strictly to authentication, registration, commerce/payment, downloads/exports, and state-changing user/admin mutations with a 250ms pool-saturation circuit guard (§6).
+CORS Preflight Cache Safety & HSTS Rollout Safety: OPTIONS preflights emit Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers with Cache-Control: private, max-age=600 on allowed preflights (no-store on denied preflights), while HSTS removes includeSubDomains by default, requires verified HTTPS + production mode (RFC 6797 §7.2), and defaults HSTS_MAX_AGE_SECONDS to 300 (5 minutes) for safe staged rollout (§8, §9).
+Existing Controls Verified & Preserved
+Wave 1 resolveEffectiveTrustProxy (src/app.ts:81-128), request-ID regex (src/app.ts:74, 203-209), M-Pesa MpesaWebhookRateLimiter + 32 KiB limit + raw decimal lexeme parser (src/routes/middleware/mpesa-webhook-guard.ts), AuditService.logEvent(input, tx) (src/services/audit.service.ts:127, 135), Migration 0017 append-only triggers & 4,096/2,048-byte CHECK constraints, and Wave 2 visibility/RBAC SQL predicates remain intact.
+2. Summary of Issues Resolved from Revision 1.0
+#	Revision 1.0 Issue	Revision 1.1 Resolution	Section
+1	Conflicting CSRF env flags (CSRF_REQUIRE_TOKEN, CSRF_STRICT_MODE, CSRF_ALLOW_HEADER_ONLY_FALLBACK), unspecified pre-auth bootstrap for HttpOnly cookies, and potential Origin override by X-CSRF-Token	Removed all 3 weakening switches; retained only CORS_ALLOWED_ORIGINS, CSRF_SECRET, CSRF_SECRET_PREVIOUS (optional rotation), and CSRF_TOKEN_TTL_SECONDS. Defined GET /api/v1/auth/csrf + opaque HttpOnly csrf_ctx pre-auth cookie + automatic rotation header on login/register/password-change/logout. Enforced conjunctive Origin AND X-CSRF-Token validation across all environments including test.	§3
+2	Semaphore released permits on request.raw aborted / reply.raw close while underlying work continued running	Removed event-listener permit release. Permits remain held until fn(signal) settles in try/finally. Disconnect/timeout triggers AbortController.abort() only; audited exact AbortSignal support across Argon2, pdf-lib, R2 HeadObject, PostgreSQL queries, and non-abortable Daraja STK Push.	§4
+3	Token-bucket expires_at could expire before full natural refill; multi-dimensional (IP + email) partial burn and cold-start concurrency unspecified	Proved expires_at >= updated_at + full_refill_duration + 60s. Specified system.consume_rate_limit_buckets(...) in Migration 0024 with sorted pg_advisory_xact_lock, single clock_timestamp(), exact FLOOR/CEIL NUMERIC math, zero negative balances, zero refill loss, and zero writes when any dimension rejects. Fixed UUID id primary key for RetentionService cursor compatibility.	§5
+4	Unclear whether public GET traffic wrote to PostgreSQL on a 10-connection pool (DATABASE_POOL_MAX=10)	Confirmed general public reads, search, and analytics ingestion are Tier 1 in-memory only (0 PG writes). Produced 10-category route matrix with explicit Tier 1, Tier 2, pool-saturation (250ms), and fail-open/fail-closed rules.	§6
+5	Assumed exact equality between JS byte heuristic and PG octet_length(col::text) without accounting for scientific floats, \u0000, or lone surrogates	Identified up to 320-byte PG numeric_out expansion on scientific floats (5e-324 -> 326B) and 22P05 errors on \u0000 / lone surrogates. Defined normalized audit JSON domain + closed-form upper-bound estimator + deterministic 3,800/1,900 compaction + live PG corpus test.	§7
+6	Single Vary: Origin header proposed for both OPTIONS preflight and normal responses	Separated Vary: Origin on normal responses from Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers on all OPTIONS responses; paired Access-Control-Max-Age: 600 with Cache-Control: private, max-age=600 on allowed preflights and 403 + no-store on denied preflights.	§8
+7	Strict-Transport-Security: max-age=31536000; includeSubDomains risked breaking sibling HTTP subdomains and unverified TLS rollouts	Audited CANONICAL_DOMAIN (src/config/env.ts:87-91, src/services/seo.service.ts:65,78-86). Removed includeSubDomains default (HSTS_INCLUDE_SUBDOMAINS=false), gated HSTS on production + HTTPS (RFC 6797 §7.2), and set conservative HSTS_MAX_AGE_SECONDS=300 default.	§9
+8	File inventory omitted src/db/schema/system.ts (new vs modified), drizzle/meta/_journal.json, storage-interface signal plumbing, and exact list of 28 affected test files	Retained canonical AuditService.logEvent(input, tx) with zero recordEvent alias, reconciled all 10 new files, 21 modified production/journal/doc files, and 28 modified existing test files, and verified Wave 1 + Wave 2 compatibility.	§10–§13
+3. HD-1 — Complete CSRF Contract
+3.1 Canonical Environment-Variable Inventory
+Classification: Confirmed defect in Revision 1.0 specification resolved; Security design gap closed.
+Revision 1.0 referenced three conflicting switches (CSRF_REQUIRE_TOKEN, CSRF_STRICT_MODE, CSRF_ALLOW_HEADER_ONLY_FALLBACK). All three switches are eliminated. No environment variable can disable CSRF token verification, weaken Origin checking, or enable header-only (X-Requested-With) fallback in any environment.
+Variable	Type & Bounds	Required / Optional	Defaults by Environment	Production superRefine Enforcement (src/config/env.ts)	Can Misconfiguration Weaken Security?
+CORS_ALLOWED_ORIGINS	Comma-separated exact origins (scheme://host[:port]); no *, no paths, no query/hash, no trailing /	Required in production; optional in development / test	development / test: deduplicated [new URL(CANONICAL_DOMAIN).origin, 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173']
+production: none (must be explicitly set)	Must parse to >= 1 valid origin; every origin in production must use https:// and must not be localhost, 127.0.0.1, [::1], or 0.0.0.0; must include new URL(CANONICAL_DOMAIN).origin.	No silent weakening: wildcards, null, malformed URLs, or http:// / localhost entries fail startup in production.
+CSRF_SECRET	UTF-8 secret string, >= 32 characters (>= 256 bits when high-entropy)	Required in production; optional in development / test	development / test: 'dev-test-only-csrf-hmac-secret-32chars!' (strictly gated on NODE_ENV !== 'production')
+production: none	Fails fast if missing, < 32 chars, or matches placeholder patterns (change-me, secret, example, repeated chars, or the dev fallback literal).	No: production refuses to boot without a non-placeholder >= 32-char secret.
+CSRF_SECRET_PREVIOUS	Optional UTF-8 secret string (>= 32 chars when set)	Optional in all environments	undefined	If set and non-empty, must be >= 32 chars and non-placeholder in production. Used only during verification (never signing) to support zero-downtime secret rotation.	No: empty/unset disables secondary verification; weak values fail startup.
+CSRF_TOKEN_TTL_SECONDS	Integer 300..86400	Optional in all environments	7200 (2 hours) across development, test, and production	Clamped by Zod .int().min(300).max(86400) — cannot be set to 0 (disable) or multi-week lifetimes.	No: bounded strictly between 5 minutes and 24 hours.
+3.2 Token Lifecycle Specification (Zero Client Reading of HttpOnly Cookies)
+Classification: Security design gap closed.
+All existing session cookies in the repository are HttpOnly:
+session_token (env.SESSION_COOKIE_NAME, src/routes/api/v1/auth.ts:154-160, 219-225, 344-350)
+calendar_session (src/routes/api/v1/calendar.ts:193-199)
+rf_sid (env.FEEDBACK_SESSION_COOKIE_NAME, src/routes/api/v1/feedback.ts:183-189)
+elimu_anon_sid (src/routes/api/v1/recommendations.ts:266)
+Browser JavaScript cannot and never reads any cookie to construct or verify CSRF tokens. Instead, the server binds CSRF tokens to the SHA-256 digest of the raw HttpOnly cookie received in the Cookie request header—or, when no session cookie exists yet, to a dedicated opaque HttpOnly pre-authentication context cookie (csrf_ctx).
+1. Principal Subject Binding Hierarchy (resolveCsrfSubject)
+Given request.cookies, the server computes subjectBinding with zero database queries:
+If cookies[env.SESSION_COOKIE_NAME] (session_token) is non-empty:
+subjectBinding = "auth:" + sha256Hex(rawSessionToken)
+Else if cookies.calendar_session is non-empty:
+subjectBinding = "cal:" + sha256Hex(rawCalendarSession)
+Else if cookies[env.FEEDBACK_SESSION_COOKIE_NAME] (rf_sid) is non-empty:
+subjectBinding = "fb:" + sha256Hex(rawRfSid)
+Else if cookies.elimu_anon_sid is non-empty:
+subjectBinding = "anon:" + sha256Hex(rawAnonSid)
+Else if cookies.csrf_ctx is non-empty:
+subjectBinding = "pre:" + sha256Hex(rawCsrfCtx)
+Else (unauthenticated visitor with zero cookies):
+During GET /api/v1/auth/csrf bootstrap: server generates rawCsrfCtx = crypto.randomBytes(16).toString('hex') (128-bit CSPRNG), sets cookie csrf_ctx (HttpOnly: true, SameSite: 'lax', Secure: effectiveNodeEnv === 'production', Path: '/', Max-Age: env.CSRF_TOKEN_TTL_SECONDS), and binds to "pre:" + sha256Hex(rawCsrfCtx).
+During an unsafe mutation (POST/PUT/PATCH/DELETE) arriving with no csrf_ctx and no session cookie: subjectBinding = null → rejected with 403 CSRF_TOKEN_INVALID.
+2. Token Wire Format & Cryptographic Construction
+code
+Text
+v1.<issuedAtUnixSec>.<nonceHex32>.<hmacHex64>
+issuedAtUnixSec: 10-digit integer Unix epoch seconds (Math.floor(Date.now() / 1000)).
+nonceHex32: crypto.randomBytes(16).toString('hex') (128 bits of CSPRNG per-token randomness).
+hmacHex64: lowercase hex of HMAC-SHA256(CSRF_SECRET, "v1|" + subjectBinding + "|" + issuedAtUnixSec + "|" + nonceHex32).
+3. Bootstrap Endpoint (GET /api/v1/auth/csrf)
+Route: GET /api/v1/auth/csrf in src/routes/api/v1/auth.ts.
+Headers: Cache-Control: private, no-store, max-age=0, Pragma: no-cache, X-CSRF-Token: <token>.
+Body: { data: { csrfToken: "<token>", expiresInSeconds: env.CSRF_TOKEN_TTL_SECONDS } }.
+Pre-Auth Bootstrap Flow (/auth/login & /auth/register):
+Unauthenticated browser calls GET /api/v1/auth/csrf.
+Server sets Set-Cookie: csrf_ctx=<128-bit-hex>; Path=/; HttpOnly; SameSite=Lax[; Secure] and returns { data: { csrfToken } } bound to pre:<sha256(csrf_ctx)>.
+Browser submits POST /api/v1/auth/login or POST /api/v1/auth/register with Origin: <allowed_origin>, automatic browser Cookie: csrf_ctx=..., and header X-CSRF-Token: <csrfToken>.
+Server verifies Origin allowlist and verifies X-CSRF-Token against pre:<sha256(csrf_ctx)> (stopping login-CSRF / account-fixation attacks).
+4. Rotation Across Session Transitions
+An onSend hook in src/routes/middleware/csrf-guard.ts inspects outgoing Set-Cookie mutations whenever a route sets, rotates, or clears session_token, calendar_session, or rf_sid:
+On POST /api/v1/auth/register, POST /api/v1/auth/login, and POST /api/v1/auth/change-password: auth.ts sets a newly generated session_token; csrf-guard clears csrf_ctx (with matching HttpOnly, SameSite=Lax, Secure, Path=/ attributes) and emits a fresh X-CSRF-Token response header bound to auth:<sha256(newSessionToken)>. Any pre-login pre: token or prior-session auth: token is immediately invalid on the next request because resolveCsrfSubject now resolves to the new session_token.
+On POST /api/v1/auth/logout: auth.ts clears session_token; csrf-guard mints a fresh csrf_ctx cookie and emits a fresh X-CSRF-Token response header bound to pre:<sha256(newCsrfCtx)>. Notably, if a user clicks logout after their session_token has already expired in PostgreSQL, POST /api/v1/auth/logout still succeeds cleanly because resolveCsrfSubject hashes the raw cookie value without requiring an active DB session row.
+On POST /api/v1/calendar/session, DELETE /api/v1/calendar/session, and POST /api/v1/resources/:id/feedback: When an unauthenticated visitor transitions from csrf_ctx to calendar_session or rf_sid (or clears calendar_session), csrf-guard automatically emits the newly bound X-CSRF-Token in the response header so subsequent mutations require zero extra round-trips (clients may also refresh at any time via GET /api/v1/auth/csrf).
+5. Constant-Time Validation Rules
+Read single x-csrf-token header (typeof header === 'string', length <= 128; arrays or missing header fail immediately with 403 CSRF_TOKEN_MISSING).
+Match strict format /^v1\.(\d{10,11})\.([0-9a-f]{32})\.([0-9a-f]{64})$/ (mismatch → 403 CSRF_TOKEN_INVALID).
+Verify integer timestamp: issuedAt <= nowSec + 60 (60s clock-skew allowance) and nowSec - issuedAt <= env.CSRF_TOKEN_TTL_SECONDS (expired → 403 CSRF_TOKEN_EXPIRED).
+Decode hmacHex64 into a 32-byte Buffer. Compute expected 32-byte HMAC digest using CSRF_SECRET (and, if that fails and CSRF_SECRET_PREVIOUS is configured, using CSRF_SECRET_PREVIOUS), comparing fixed 32-byte buffers strictly via crypto.timingSafeEqual(expectedBuf, candidateBuf). Mismatch → 403 CSRF_TOKEN_INVALID.
+3.3 Origin + Token Policy Interaction
+Classification: Security design gap closed.
+Core Invariant: On every protected unsafe request (POST, PUT, PATCH, DELETE), content-type enforcement, Origin/Referer allowlist verification, and X-CSRF-Token verification are conjunctive (AND), never disjunctive (OR). A valid X-CSRF-Token never overrides an untrusted, null, or missing Origin/Referer.
+Execution Order in csrfGuardPreValidation (onRequest / preValidation)
+Safe Method Pass-Through: GET, HEAD, OPTIONS pass through (subject to CORS/preflight rules in http-security.ts).
+Explicit M-Pesa Daraja Webhook Path Exemption (Only S2S Exception):
+Exact normalized pathname match (url.split('?')[0]):
+/api/v1/commerce/webhooks/mpesa
+/api/v1/payments/mpesa/callback
+/api/v1/mpesa/callback
+Plus, only when enableLegacyCallbackAlias is enabled: /api/payments/mpesa/callback and /api/mpesa/callback.
+Exempt from browser Origin + X-CSRF-Token checks because Safaricom Daraja callbacks use zero cookies/ambient browser authority and remain protected by Wave 1's 32 KiB limit, MpesaWebhookRateLimiter, raw decimal lexeme parser, and Daraja STK Query verification.
+Form / Simple-Request Content-Type Rejection (415 UNSUPPORTED_MEDIA_TYPE):
+If the request has a body (content-length > 0 or transfer-encoding present), content-type must start with application/json (case-insensitive, parameters such as ; charset=utf-8 permitted). application/x-www-form-urlencoded, multipart/form-data, and text/plain are unconditionally rejected with 415 UNSUPPORTED_MEDIA_TYPE before body parsing. Bodyless unsafe requests (POST /api/v1/auth/logout, DELETE /api/v1/calendar/session, DELETE /api/v1/me/bookmarks/:id) require no Content-Type if content-length is 0/absent, or application/json if provided.
+Strict Origin / Referer Allowlist Check (403 CSRF_ORIGIN_DENIED / 403 CSRF_ORIGIN_REQUIRED):
+If Origin header is present:
+Origin: null or malformed URL → 403 CSRF_ORIGIN_DENIED.
+Normalized origin not in CORS_ALLOWED_ORIGINS → 403 CSRF_ORIGIN_DENIED (even if X-CSRF-Token is valid).
+Else if Referer header is present:
+Parse new URL(referer).origin; malformed URL or origin not in CORS_ALLOWED_ORIGINS → 403 CSRF_ORIGIN_DENIED.
+Else (both Origin and Referer absent):
+403 CSRF_ORIGIN_REQUIRED. (Browsers always send Origin on POST/PUT/PATCH/DELETE fetch() calls; rejecting missing Origin+Referer closes Referrer-Policy: no-referrer stripping attacks).
+Cryptographic X-CSRF-Token Verification (403 CSRF_TOKEN_MISSING / 403 CSRF_TOKEN_INVALID / 403 CSRF_TOKEN_EXPIRED):
+Resolve subjectBinding from request.cookies (§3.2) and validate X-CSRF-Token via crypto.timingSafeEqual. X-Requested-With is never accepted as a substitute.
+Caller Class Matrix
+Caller Class	Origin / Referer Requirement	Cookie + X-CSRF-Token Requirement	Result
+1. Same-origin browser (https://elimupin.co.ke)	Origin: https://elimupin.co.ke must match CORS_ALLOWED_ORIGINS	Active HttpOnly session cookie (or csrf_ctx pre-auth) + valid bound X-CSRF-Token	Permitted (2xx/4xx business result)
+2. Same-site cross-origin browser (https://app.elimupin.co.ke → https://api.elimupin.co.ke)	Origin: https://app.elimupin.co.ke must be explicitly listed in CORS_ALLOWED_ORIGINS	Host-only cookie on api.elimupin.co.ke via credentials: 'include' + valid bound X-CSRF-Token	Permitted only when origin is allowlisted; Origin: null or unlisted origin → 403
+3. Non-browser S2S callers (non-M-Pesa)	Repository has zero external API-key/Bearer mutation consumers (docs/API_SPEC.md §9). Any first-party CLI/script must send allowed Origin	Must bootstrap csrf_ctx + X-CSRF-Token from GET /api/v1/auth/csrf	Zero S2S bypass backdoors
+4. Safaricom M-Pesa Daraja callbacks	Exempt on exact allowlisted webhook paths only	Cookie-free; protected by Wave 1 MpesaWebhookRateLimiter + Daraja STK Query	Permitted on exact callback paths only
+5. Automated Vitest integration suites (NODE_ENV=test)	Enforces identical CORS_ALLOWED_ORIGINS check (http://localhost:3000 allowed in test)	Enforces identical X-CSRF-Token HMAC binding check	Zero runtime test bypass
+3.4 Test Compatibility Strategy (Zero Runtime Weakening)
+Classification: Design decision verified across all 28 affected test files.
+Zero Test-Mode Bypass: csrf-guard.ts contains zero if (env.NODE_ENV === 'test') skips.
+Shared Test Helper (tests/helpers/build-test-app.ts):
+Export createTestCsrfMaterial(cookies?: Record<string, string>) (which uses the deterministic non-production CSRF_SECRET to compute a valid csrf_ctx cookie + bound X-CSRF-Token + Origin: 'http://localhost:3000', or binds directly to session_token / calendar_session / rf_sid when the caller supplies one in headers.cookie or cookies) and enableTestCsrfAutoInject(app) / injectWithCsrf(app, opts) for existing functional route suites whose subject under test is RBAC, commerce, catalogue, or workflow logic rather than CSRF itself.
+M-Pesa webhook app.inject() calls in tests/routes/commerce-mpesa.integration.test.ts and tests/security/wave1-payments.test.ts remain completely unassisted (no Origin, no X-CSRF-Token, no cookies), continuously proving M-Pesa webhook compatibility under active CSRF enforcement.
+tests/security/wave3-http-security.test.ts calls raw buildApp() without the helper to test every negative CSRF condition (403 CSRF_ORIGIN_DENIED, 403 CSRF_ORIGIN_REQUIRED, Origin: null, 403 CSRF_TOKEN_MISSING, 403 CSRF_TOKEN_INVALID, cross-session replay, post-login rotation invalidation, expired TTL 403 CSRF_TOKEN_EXPIRED, and 415 UNSUPPORTED_MEDIA_TYPE).
+Complete List of 24 Existing Files Requiring Strict-CSRF Test Helper Alignment:
+tests/helpers/build-test-app.ts
+tests/routes/auth.test.ts
+tests/routes/homepage-admin-unit.test.ts
+tests/routes/admin-dashboard.integration.test.ts
+tests/routes/analytics.integration.test.ts
+tests/routes/audit-retention.integration.test.ts
+tests/routes/calendar.integration.test.ts
+tests/routes/commerce-mpesa.integration.test.ts
+tests/routes/commerce.integration.test.ts
+tests/routes/contributor-finance.integration.test.ts
+tests/routes/contributors.integration.test.ts
+tests/routes/downloads.integration.test.ts
+tests/routes/feedback.integration.test.ts
+tests/routes/homepage.integration.test.ts
+tests/routes/library.integration.test.ts
+tests/routes/notifications.integration.test.ts
+tests/routes/publication.integration.test.ts
+tests/routes/quality-governance.integration.test.ts
+tests/routes/rbac.integration.test.ts
+tests/routes/recommendations.integration.test.ts
+tests/routes/updates.integration.test.ts
+tests/security/wave1-files-and-sessions.test.ts
+tests/security/wave1-payments.test.ts
+tests/security/wave2-rbac-and-seed.test.ts
+(The remaining 10 route test files—catalogue.test.ts, countries.test.ts, curriculum.test.ts, geography.test.ts, health.test.ts, resources.test.ts, schools.test.ts, search.test.ts, seo.test.ts, and wave2-public-visibility.test.ts—issue GET requests only and require zero CSRF edits.)
+3.5 Cookie & SameSite Deployment Topology
+Classification: Existing controls verified + minor clearCookie defect identified.
+Current Cookie Attributes Verified: session_token, calendar_session, rf_sid, and new csrf_ctx are all host-only cookies (no Domain attribute), Path=/, HttpOnly=true, SameSite=Lax, and Secure=true in production.
+Supported Deployment Topologies:
+Topology A — Same-Origin Reverse Proxy (Recommended Default): Frontend SPA (https://elimupin.co.ke) and API (https://elimupin.co.ke/api/v1/*) share the exact origin. Host-only cookies and SameSite=Lax work natively on all requests.
+Topology B — Same-Site Sibling Subdomains (https://app.elimupin.co.ke → https://api.elimupin.co.ke): Because both share the registrable eTLD+1 (elimupin.co.ke), browsers classify fetch(..., { credentials: 'include' }) from app. to api. as same-site (sending SameSite=Lax host-only cookies stored on api.elimupin.co.ke) while treating them as cross-origin for Origin and CORS (https://app.elimupin.co.ke must be listed in CORS_ALLOWED_ORIGINS).
+Unsupported by Design — Cross-Site Frontends (https://preview.vercel.app → https://api.elimupin.co.ke): Browsers withhold SameSite=Lax cookies on cross-site fetch() subrequests. Cross-site credentialed API hosting is explicitly unsupported; SameSite=None will not be enabled.
+Confirmed Defect to Fix in WP3: src/routes/api/v1/calendar.ts:277 calls reply.clearCookie('calendar_session', { path: '/' }) without httpOnly: true, sameSite: 'lax', secure: env.NODE_ENV === 'production'. Align clearCookie options with setCookie (lines 193-199).
+4. WP4 — Semaphore Lifecycle & Premature-Release Fix
+4.1 Why Premature Release Breaks Concurrency Control & Corrected Lifecycle
+Classification: Confirmed defect in Revision 1.0 design resolved.
+Defect in Revision 1.0: Attaching permit.release() to request.raw.once('aborted') or reply.raw.once('close') releases the semaphore slot the instant a client closes its TCP socket, even when the server's in-flight argon2.hash(), pdf-lib export, PostgreSQL query, or Daraja STK Push continues executing on the Node.js event loop, libuv threadpool, or database connection pool. An attacker opening N connections, triggering heavy work, and immediately resetting TCP sockets (RST) could spawn unbounded concurrent Argon2/PDF/DB operations while the semaphore counter reads 0 active permits.
+Corrected Invariant (BoundedConcurrencyRegistry.runWithPermit):
+Queued Waiters (Before Permit Acquisition): While waiting in the bounded FIFO queue (activePermits === maxConcurrent), the waiter has not started work and holds no permit. If request disconnects (request.raw close before reply.sent) or queueWaitTimeoutMs expires while still queued, the waiter is spliced from the queue immediately, its timer/listener is cleaned up, and runWithPermit rejects (499/503 SERVER_BUSY) with zero permit counter change.
+Active Holders (After Permit Acquisition): Once a permit (and optional per-actor slot) is granted:
+code
+Ts
+const abortController = new AbortController();
+const onDisconnect = () => {
+  if (!reply.sent && policy.abortOnClientDisconnect) {
+    abortController.abort(new Error('CLIENT_DISCONNECTED'));
+  }
+};
+const opTimer = setTimeout(() => {
+  abortController.abort(new Error('OPERATION_TIMEOUT'));
+}, policy.operationTimeoutMs);
+request.raw.once('close', onDisconnect);
+try {
+  return await fn(abortController.signal);
+} finally {
+  clearTimeout(opTimer);
+  request.raw.removeListener('close', onDisconnect);
+  permitHandle.release(); // IDEMPOTENT; ONLY RELEASE POINT FOR ACQUIRED PERMITS
+}
+Idempotent Release Latch: PermitHandle.release() guards behind let released = false; if (released) return; released = true; so neither error paths nor wrapper code can ever double-decrement activePermits or corrupt availablePermits > maxConcurrent.
+Bounded Wait Queue & Bounded Per-Actor Map:
+Global pool queue: when waitQueue.length >= policy.maxQueueSize, reject immediately with 503 SERVER_BUSY + Retry-After: 2 (0 queuing delay).
+Per-actor concurrency map (Map<string, { active: number }>, e.g., max 1 concurrent PDF export or payment initiation per actor): entry is deleted immediately in finally when entry.active === 0. Hard cap maxActorEntries = 5,000: if actorMap.size >= 5000 for a brand-new actor key, reject immediately with 503 SERVER_BUSY so memory is strictly O(maxActorEntries).
+4.2 Per-Operation Cancellation Capability Audit
+Classification: Verified against actual repository service implementations.
+Pool ID & Protected Endpoint(s)	Underlying Implementation Inspected	Supports AbortSignal Once Started?	Safe to Abort on Client Socket Disconnect?	Exact Semaphore & Timeout Behavior
+auth_argon2
+POST /auth/register, POST /auth/login, POST /auth/change-password
+(maxConcurrent=4, maxQueue=16, queueWaitMs=1500, opTimeoutMs=5000)	argon2.hash / argon2.verify (src/services/auth.service.ts:68, 127, 169)	No — native C++ libuv threadpool task cannot be pre-empted mid-hash (~40–150ms); pre-hash/post-hash signal.throwIfAborted() can skip subsequent DB/session steps only before DB write	Pre-Argon2 queue wait: Yes. Once argon2 or user/session DB write starts: runs to settlement	Queued waiters cancel immediately on disconnect; once acquired, permit stays held until argon2 + DB call settles (~150ms), preserving strict <= 4 concurrent Argon2 jobs on the 4-thread default libuv pool.
+calendar_pdf_export
+POST /calendar/export
+(maxConcurrent=2, perActorMax=1, maxQueue=6, queueWaitMs=2000, opTimeoutMs=15000)	DB fetch → PdfCalendarExportProvider.generateExport (pdf-lib, src/services/calendar/export/pdf-calendar-export-provider.ts:31) → storageProvider.putObject → db.insert(calendarExports) (src/services/calendar/calendar.service.ts:464-592)	Cooperative stage-boundary cancellation (signal.throwIfAborted() before DB query, before pdfDoc.save(), and before storageProvider.putObject)	Yes before putObject (abortOnClientDisconnect: true up to R2 upload); once putObject starts, let upload + db.insert complete so no orphaned R2 object is left unrecorded	Permit and per-actor (1) slot remain occupied until either cooperative abort throws before upload or putObject + db.insert settles.
+commerce_payment_initiate
+POST /payments
+(maxConcurrent=4, perActorMax=1, maxQueue=8, queueWaitMs=2000, opTimeoutMs=10000)	CommerceService.initiatePayment → DarajaClient.initiateStkPush (src/services/commerce/mpesa/daraja-client.ts:539, AbortSignal.timeout(8000))	fetch supports AbortSignal, but client-disconnect abort is forbidden	NO (abortOnClientDisconnect: false) — aborting after Safaricom receives STK Push would prompt/debit the user's phone while rolling back/dropping CheckoutRequestID correlation locally!	Queued waiter before acquisition may cancel on disconnect; once acquired, operation ignores client disconnect, is bounded by Daraja's 8,000ms upstream timeout, and holds permit + per-user slot until Daraja + DB state update settles.
+admin_file_verify
+POST /admin/files/:id/verify-integrity
+(maxConcurrent=2, perActorMax=1, maxQueue=4, queueWaitMs=1500, opTimeoutMs=10000)	AdminDashboardService.verifyFileIntegrity (src/services/admin-dashboard.service.ts:323-379) → R2StorageProvider.headObject (@aws-sdk/client-s3 HeadObjectCommand, src/services/storage/r2-storage-provider.ts:116-143)	Yes — @aws-sdk/client-s3 client.send(cmd, { abortSignal }) natively aborts the underlying HTTPS HEAD socket	Yes (abortOnClientDisconnect: true) — HEAD is strictly read-only	Signal wired through AdminDashboardService → FileStorageService → StorageProvider.headObject; permit is STILL released only in finally after client.send() rejects and unwinds.
+db_heavy_compute
+GET /search/analytics & synchronous recommendation cache recompute
+(maxConcurrent=3, maxQueue=6, queueWaitMs=1000, opTimeoutMs=4000)	pg.Pool queries (src/services/search.service.ts, src/services/recommendations/recommendation.service.ts)	No client-side socket abort (pg cannot abort an active query without pg_cancel_backend or destroying the pooled socket)	Bounded server-side via PostgreSQL statement_timeout; abortOnClientDisconnect: false once query starts	Permit stays occupied until pg query resolves/errors so at most 3 of the 10 DB pool connections can ever be consumed by heavy analytics/recompute queries simultaneously.
+4.3 Mandatory Semaphore Acceptance Tests (tests/security/wave3-rate-limit-concurrency.test.ts)
+Test S-01 (Client Disconnect During Non-Cancellable Operation): Configure pool maxConcurrent = 1; start Operation A (100ms simulated Argon2/DB promise ignoring AbortSignal), fire client socket disconnect at 10ms, immediately submit Operation B (maxQueue = 0) at 15ms → assert Operation B is rejected (503 SERVER_BUSY) while Operation A is still in flight, and Operation C submitted at 120ms (after A settles) succeeds.
+Test S-02 (Operation Timeout With Slow Cleanup): Configure maxConcurrent = 1, opTimeoutMs = 30ms; Operation A observes signal.aborted at 30ms and takes 40ms asynchronous cleanup before rejecting at 70ms → assert activePermits === 1 throughout 30ms..70ms and drops to 0 only at >= 70ms.
+Test S-03 (Normal Completion + Idempotent Release): Execute 50 sequential and parallel operations under maxConcurrent = 3; invoke permit.release() multiple times in unit harness → assert peak concurrent executions <= 3 and post-run activePermits === 0, availablePermits === 3.
+Test S-04 (Synchronous & Asynchronous Exception Release): Force both a synchronous throw new Error('sync') and rejected Promise.reject(new Error('async')) inside fn → assert permits and per-actor slots return to 0 immediately upon settlement with zero leaked slots.
+Test S-05 (Queue Full Rejection): Hold maxConcurrent = 2 active permits, fill maxQueue = 2 waiters, send 5th concurrent request → assert immediate 503 SERVER_BUSY (Retry-After header present) without entering queue.
+Test S-06 (Queue Wait Timeout & Queued Client Disconnect): Hold maxConcurrent = 1 for 200ms; enqueue Waiter B (queueWaitMs = 40ms) and Waiter C (client disconnects at 20ms) → assert both B and C are removed from waitQueue promptly before 200ms, waitQueue.length === 0, and when A finishes at 200ms, activePermits === 0.
+Test S-07 (Per-Actor Map Cleanup & Hard Cap): Run 100 distinct actors through per-actor concurrency guard (perActorMax = 1) → assert actorMap.size === 0 after all settle; saturate maxActorEntries in unit harness → assert (maxActorEntries + 1)-th concurrent distinct actor rejects cleanly (503 SERVER_BUSY) without exceeding map bound.
+5. WP4 — PostgreSQL Token Bucket, Expiry, Multi-Dimension Admission & Migration 0024
+5.1 Token-Bucket Expiry Invariant Proof
+Classification: Confirmed defect risk prevented mathematically in both TypeScript and SQL.
+Threat Model: Suppose a bucket has capacity = 5 tokens and refills 5 tokens per 900s (15m, i.e., 1 token every 180s). At t = 0, an attacker exhausts all 5 tokens (millitokens = 0). If expires_at were set to t + 300s (5m) and the row expired (or was reaped by cleanup) at t = 301s, a request at t = 302s would find no active row and initialize a fresh bucket with 5 full tokens—granting 5 tokens after 302s instead of the 1 token (1,677 millitokens) naturally earned by t = 302s!
+Mathematical Invariant: Let each policy specify integer capacity_mt > 0 (millitokens, 1 token = 1,000 mt), refill_tokens_mt > 0, and refill_period_ms > 0. Full natural replenishment from 0 to capacity_mt takes:
+
+We enforce in both the TypeScript policy registry and inside PostgreSQL system.consume_rate_limit_buckets:
+
+Proof of No Early Quota Reset: For any update at 
+, effective_updated_at satisfies 
+ (with 
+). At any future timestamp 
+:
+
+Hence, by the time r.expires_at <= v_now (or a cleanup job deletes the row), the bucket's natural linear refill formula r.millitokens + elapsed * rate has already exceeded capacity_mt by at least 60 seconds of safety margin. Reinitializing an expired/deleted row to capacity_mt is therefore 100% indistinguishable from retaining the row forever.
+5.2 Complete Atomic PostgreSQL Implementation (Migration 0024)
+Classification: Complete SQL specification validated against PostgreSQL READ COMMITTED MVCC & node-postgres.
+To eliminate multi-roundtrip pool hold time (1 pool.query call instead of 4), prevent cold-start INSERT races under READ COMMITTED, prevent cross-key deadlocks on multi-dimensional checks, prevent BIGINT multiplication overflow, and avoid PostgreSQL NUMERIC::bigint half-to-even rounding, Migration 0024 defines system.rate_limit_buckets and the VOLATILE PL/pgSQL function system.consume_rate_limit_buckets:
+code
+SQL
+-- drizzle/0024_wave3_rate_limits.sql
+CREATE TABLE IF NOT EXISTS "system"."rate_limit_buckets" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "bucket_key" VARCHAR(160) NOT NULL,
+  "policy_id" VARCHAR(64) NOT NULL,
+  "millitokens" BIGINT NOT NULL,
+  "updated_at" TIMESTAMPTZ NOT NULL,
+  "expires_at" TIMESTAMPTZ NOT NULL,
+  CONSTRAINT "uq_rate_limit_buckets_bucket_key" UNIQUE ("bucket_key"),
+  CONSTRAINT "chk_rlb_bucket_key_bounds" CHECK (
+    length(btrim("bucket_key")) >= 16 AND length("bucket_key") <= 160
+  ),
+  CONSTRAINT "chk_rlb_policy_id_bounds" CHECK (
+    length(btrim("policy_id")) >= 3 AND length("policy_id") <= 64
+  ),
+  CONSTRAINT "chk_rlb_millitokens_bounds" CHECK (
+    "millitokens" >= 0 AND "millitokens" <= 1000000000
+  ),
+  CONSTRAINT "chk_rlb_expires_after_updated" CHECK (
+    "expires_at" > "updated_at"
+  )
+);
+
+CREATE INDEX IF NOT EXISTS "idx_rate_limit_buckets_expires_at"
+  ON "system"."rate_limit_buckets" ("expires_at");
+
+CREATE OR REPLACE FUNCTION "system"."consume_rate_limit_buckets"(
+  p_bucket_keys TEXT[],
+  p_policy_ids TEXT[],
+  p_capacities_mt BIGINT[],
+  p_refill_tokens_mt BIGINT[],
+  p_refill_periods_ms BIGINT[],
+  p_costs_mt BIGINT[],
+  p_min_ttl_secs INTEGER[]
+)
+RETURNS TABLE (
+  allowed BOOLEAN,
+  limiting_policy_id TEXT,
+  retry_after_ms BIGINT,
+  min_remaining_mt BIGINT
+)
+LANGUAGE plpgsql
+VOLATILE
+AS $$
+DECLARE
+  v_count INTEGER;
+  v_lock_hash INTEGER;
+  v_now TIMESTAMPTZ;
+  v_all_allowed BOOLEAN;
+  v_limiting_policy TEXT;
+  v_max_retry_ms BIGINT;
+  v_min_remaining_mt BIGINT;
+BEGIN
+  v_count := COALESCE(array_length(p_bucket_keys, 1), 0);
+  IF v_count < 1 OR v_count > 8
+     OR array_length(p_policy_ids, 1) IS DISTINCT FROM v_count
+     OR array_length(p_capacities_mt, 1) IS DISTINCT FROM v_count
+     OR array_length(p_refill_tokens_mt, 1) IS DISTINCT FROM v_count
+     OR array_length(p_refill_periods_ms, 1) IS DISTINCT FROM v_count
+     OR array_length(p_costs_mt, 1) IS DISTINCT FROM v_count
+     OR array_length(p_min_ttl_secs, 1) IS DISTINCT FROM v_count
+  THEN
+    RAISE EXCEPTION 'Invalid rate-limit bucket array dimensions (count=%)', v_count
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- 1. Deadlock-free transaction-scoped advisory locks in deterministic hash order.
+  -- Serializes both cold-start first inserts and hot-row updates across instances.
+  FOR v_lock_hash IN
+    SELECT DISTINCT hashtext(k) AS h
+    FROM unnest(p_bucket_keys) AS k
+    ORDER BY h ASC
+  LOOP
+    PERFORM pg_advisory_xact_lock(839201, v_lock_hash);
+  END LOOP;
+
+  -- 2. Single authoritative database clock timestamp for all dimensions.
+  v_now := clock_timestamp();
+
+  -- 3. Evaluate all dimensions without mutating state unless ALL dimensions pass.
+  WITH dims AS (
+    SELECT
+      ord::int AS idx,
+      p_bucket_keys[ord] AS bucket_key,
+      p_policy_ids[ord] AS policy_id,
+      p_capacities_mt[ord] AS capacity_mt,
+      p_refill_tokens_mt[ord] AS refill_tokens_mt,
+      p_refill_periods_ms[ord] AS refill_period_ms,
+      p_costs_mt[ord] AS cost_mt,
+      p_min_ttl_secs[ord] AS min_ttl_sec
+    FROM generate_subscripts(p_bucket_keys, 1) AS ord
+  ),
+  computed AS (
+    SELECT
+      d.idx,
+      d.bucket_key,
+      d.policy_id,
+      d.capacity_mt,
+      d.refill_tokens_mt,
+      d.refill_period_ms,
+      d.cost_mt,
+      GREATEST(
+        d.min_ttl_sec::bigint,
+        CEIL((d.capacity_mt::numeric * d.refill_period_ms::numeric) / (d.refill_tokens_mt::numeric * 1000.0))::bigint + 60
+      ) AS effective_ttl_sec,
+      CASE
+        WHEN r.id IS NULL OR r.expires_at <= v_now THEN d.capacity_mt
+        ELSE LEAST(
+          d.capacity_mt,
+          r.millitokens + FLOOR(
+            (GREATEST(0::numeric, EXTRACT(EPOCH FROM (v_now - r.updated_at)) * 1000.0) * d.refill_tokens_mt::numeric)
+            / d.refill_period_ms::numeric
+          )::bigint
+        )
+      END AS refilled_mt,
+      CASE
+        WHEN r.id IS NULL OR r.expires_at <= v_now THEN v_now
+        WHEN r.millitokens + FLOOR(
+          (GREATEST(0::numeric, EXTRACT(EPOCH FROM (v_now - r.updated_at)) * 1000.0) * d.refill_tokens_mt::numeric)
+          / d.refill_period_ms::numeric
+        )::bigint >= d.capacity_mt THEN v_now
+        ELSE LEAST(
+          v_now,
+          r.updated_at + (
+            CEIL(
+              (
+                FLOOR(
+                  (GREATEST(0::numeric, EXTRACT(EPOCH FROM (v_now - r.updated_at)) * 1000.0) * d.refill_tokens_mt::numeric)
+                  / d.refill_period_ms::numeric
+                ) * d.refill_period_ms::numeric
+              ) / d.refill_tokens_mt::numeric
+            )::bigint * INTERVAL '1 millisecond'
+          )
+        )
+      END AS next_updated_at
+    FROM dims d
+    LEFT JOIN "system"."rate_limit_buckets" r
+      ON r."bucket_key" = d.bucket_key
+  ),
+  verdict AS (
+    SELECT
+      bool_and(c.refilled_mt >= c.cost_mt) AS all_ok,
+      (
+        SELECT c2.policy_id
+        FROM computed c2
+        WHERE c2.refilled_mt < c2.cost_mt
+        ORDER BY CEIL(((c2.cost_mt - c2.refilled_mt)::numeric * c2.refill_period_ms::numeric) / c2.refill_tokens_mt::numeric)::bigint DESC,
+                 c2.idx ASC
+        LIMIT 1
+      ) AS lim_policy,
+      COALESCE(
+        MAX(
+          GREATEST(
+            1::bigint,
+            CEIL(((c.cost_mt - c.refilled_mt)::numeric * c.refill_period_ms::numeric) / c.refill_tokens_mt::numeric)::bigint
+          )
+        ) FILTER (WHERE c.refilled_mt < c.cost_mt),
+        0::bigint
+      ) AS retry_ms,
+      COALESCE(MIN(c.refilled_mt - c.cost_mt), 0::bigint) AS min_rem_mt
+    FROM computed c
+  ),
+  applied AS (
+    INSERT INTO "system"."rate_limit_buckets" (
+      "bucket_key",
+      "policy_id",
+      "millitokens",
+      "updated_at",
+      "expires_at"
+    )
+    SELECT
+      c.bucket_key,
+      c.policy_id,
+      c.refilled_mt - c.cost_mt,
+      c.next_updated_at,
+      v_now + make_interval(secs => c.effective_ttl_sec::double precision)
+    FROM computed c
+    CROSS JOIN verdict v
+    WHERE v.all_ok = TRUE
+    ON CONFLICT ("bucket_key") DO UPDATE SET
+      "policy_id" = EXCLUDED."policy_id",
+      "millitokens" = EXCLUDED."millitokens",
+      "updated_at" = EXCLUDED."updated_at",
+      "expires_at" = EXCLUDED."expires_at"
+    RETURNING 1
+  )
+  SELECT v.all_ok, v.lim_policy, v.retry_ms, GREATEST(0::bigint, v.min_rem_mt)
+  INTO v_all_allowed, v_limiting_policy, v_max_retry_ms, v_min_remaining_mt
+  FROM verdict v;
+
+  RETURN QUERY SELECT v_all_allowed, v_limiting_policy, v_max_retry_ms, v_min_remaining_mt;
+END;
+$$;
+Verification of All 6 Required SQL Properties:
+Single Database Clock: v_now := clock_timestamp() is captured once and reused across every expression in the statement.
+Exact Integer millitokens Arithmetic: Uses FLOOR (never ::bigint rounding) for earned tokens and CEIL for consumed_ms, retry_ms, and effective_ttl_sec, over NUMERIC intermediates so elapsed_ms * refill_tokens_mt can never overflow int8.
+Zero Negative Balances: WHERE v.all_ok = TRUE guarantees c.refilled_mt >= c.cost_mt, reinforced at the table layer by chk_rlb_millitokens_bounds (millitokens >= 0).
+Zero Refill Progress Loss on Both Rejected and Accepted Requests: Rejected requests perform zero writes (updated_at, millitokens, and expires_at remain untouched). Even on accepted burst requests, next_updated_at advances only by the consumed_ms corresponding to whole millitokens credited, preserving sub-millitoken fractional elapsed time.
+Deterministic Concurrent Cold-Start & Hot-Row Behavior: pg_advisory_xact_lock(839201, hashtext(k)) serializes concurrent callers even before a row exists, and inside a VOLATILE PL/pgSQL function under READ COMMITTED, the subsequent WITH statement acquires a fresh MVCC snapshot seeing all previously committed rows, then releases the transaction advisory lock automatically as soon as the single SELECT * FROM system.consume_rate_limit_buckets(...) call returns.
+Accurate Retry-After Calculation: Returns exact millisecond deficit MAX(CEIL((cost_mt - refilled_mt) * refill_period_ms / refill_tokens_mt)) across all exhausted dimensions; middleware emits Retry-After: Math.max(1, Math.ceil(retry_after_ms / 1000)).
+5.3 Multi-Dimensional Admission Semantics (IP + email / IP + user)
+Classification: Security design gap closed.
+All-or-Nothing Atomic Evaluation: Multi-dimensional endpoints (/auth/login and /auth/register keyed by [ipBucketKey, emailBucketKey]; authenticated mutations keyed by [ipBucketKey, userBucketKey]) pass both keys in a single system.consume_rate_limit_buckets call.
+Zero Partial Token Burn: Because applied executes WHERE v.all_ok = TRUE:
+An attacker rotating 500 botnet IPs against one target victim email triggers auth_login_email (5 / 15m) without burning shared school/NAT IP tokens on attempts 6..500.
+An attacker spraying 500 random emails from a single IP triggers auth_login_ip (20 / 15m) without deducting tokens from legitimate users' email buckets on attempts 21..500, and inserts zero rows for nonexistent emails once the IP bucket is exhausted.
+Privacy-Preserving Bucket Keys: Raw IPs and normalized emails are never stored in system.rate_limit_buckets.bucket_key. Keys are formatted as <policy_id>:<dim>:<hmac_sha256_hex_48(RATE_LIMIT_HMAC_SECRET, canonicalIdentifier)> (<= 128 chars, satisfying 16..160 CHECK bounds). Note: for /auth/login and /auth/register, schema validation of email runs before the Tier 2 email dimension (while Tier 1 IP guard runs in onRequest before body parsing so malformed body floods never reach JSON validation or PostgreSQL).
+5.4 Migration 0024 Integrity, Privileges & Bounded Growth
+Classification: Verified against 0000..0023, src/db/migrate.ts, and src/services/retention.service.ts.
+Migration Journal & Test Alignment: src/db/migrate.ts:28-33 executes migrations strictly from drizzle/meta/_journal.json. Adding drizzle/0024_wave3_rate_limits.sql requires appending entry idx: 24 (tag: "0024_wave3_rate_limits") to drizzle/meta/_journal.json and updating the hardcoded 24 count in tests/security/wave1-migrations.test.ts:132, 154, 173 to 25.
+Retention Worker UUID Compatibility: Having "id" UUID PRIMARY KEY DEFAULT gen_random_uuid() allows RETENTION_TARGET_REGISTRY.RATE_LIMIT_BUCKETS (tableSql: 'system.rate_limit_buckets', idColumn: 'id', isExecutable: true, buildPredicateSql: (p) => \expires_at < ${p} AND expires_at < now()`) to work seamlessly withgovernance.data_retention_actions.last_cursor_id(UUID`).
+Database Privileges: Inspection of drizzle/0000_init_infrastructure.sql through 0023_wave2_visibility_and_rbac_hardening.sql confirms the platform uses a single database connection role (DATABASE_URL) owning all 11 schemas with zero custom GRANT/ROLE statements; Migration 0024 follows this exact convention so migrations succeed across local, CI, and managed PostgreSQL environments.
+Four-Layer Bounded Table Growth:
+Layer 1 (Tier 1 Pre-Filter): Per-instance bounded-LRU (maxEntries = 10,000) drops volumetric floods in memory before reaching PostgreSQL.
+Layer 2 (Zero-Insert on Rejection): WHERE v.all_ok = TRUE prevents credential-stuffing from creating new rows once an IP bucket trips.
+Layer 3 (Opportunistic SKIP LOCKED Reaper): Every 60s (unref() timer, cleaned up in app.addHook('onClose')), PostgresRateLimitStore runs:
+code
+SQL
+DELETE FROM "system"."rate_limit_buckets"
+WHERE "id" IN (
+  SELECT "id" FROM "system"."rate_limit_buckets"
+  WHERE "expires_at" <= clock_timestamp()
+  ORDER BY "expires_at" ASC
+  LIMIT 500
+  FOR UPDATE SKIP LOCKED
+);
+Using idx_rate_limit_buckets_expires_at (~1ms, non-blocking across instances).
+Layer 4 (Governance Retention Safety Net): Canonical retention policy RET_RATE_LIMIT_BUCKETS_7D (7 days) registered in RetentionService.seedInitialPolicies().
+6. WP4 — Database Pool Load & Route-Category Matrix
+6.1 Connection Pool Budget Analysis (DATABASE_POOL_MAX = 10)
+Classification: Security design gap closed; self-DoS risk eliminated.
+src/db/index.ts:28-35 configures max: env.DATABASE_POOL_MAX (default 10, min: 2, connectionTimeoutMillis: 45000).
+Why Public Reads Must Never Touch Tier 2 PostgreSQL: If GET /catalogue/resources, GET /homepage, GET /curricula, or GET /search executed synchronous INSERT ... ON CONFLICT DO UPDATE writes on every request, 100 RPS of normal public browsing would generate 100 write transactions/sec competing with business queries on a 10-connection pool and generating continuous WAL churn.
+Architectural Boundary:
+Tier 1 Only (0 PostgreSQL rate-limit queries): All public read routes, health checks, SEO routes, search/autocomplete GETs, admin read dashboards, and POST /api/v1/analytics/events telemetry use Tier 1 in-memory bounded-LRU (maxEntries = 10,000 per policy class) exclusively.
+Tier 1 + Tier 2 PostgreSQL Shared Enforcement: Reserved strictly for security-critical authentication, registration, commerce/payment, downloads/exports, and state-changing user/admin mutations (low-RPS, high-value endpoints where cross-instance quota accuracy matters, typically < 5 legitimate RPS per instance, < 0.5% of a 10-connection pool at ~0.5ms/call).
+Fast Pool-Saturation Circuit Guard (250ms): Tier 2 never blocks for connectionTimeoutMillis (45,000ms). If pool.waitingCount >= 4 or the system.consume_rate_limit_buckets call does not resolve within 250ms, the limiter aborts waiting and immediately applies the category's deterministic DB Failure Mode (Fail-Closed 503 vs Tier-1 Degraded Fallback at 50% capacity) so rate limiting can never starve business transactions.
+6.2 Complete 10-Row Route-Category Matrix
+#	Route Category & Endpoints	Tier 1 Local Shield (Per Instance)	Tier 2 PostgreSQL Shared Limit	Bucket Key Dimension(s)	Concurrency Semaphore	DB Rate-Limit Failure Mode	Rationale
+1	General Public Reads (/health*, /countries*, /geography*, /schools*, public /curricula*, /catalogue*, public /resources*, /homepage, /seo*, public /updates*, official /calendar*, public /recommendations, /feedback-summary)	Yes: 300 / 1m per IP (/health: exempt on loopback, 120 / 1m external)	No (0 PG writes)	HMAC(IP) (in-memory only)	db_heavy_compute (max=3) only when recommendation cache triggers synchronous recompute	N/A (Tier 1 in-memory only)	Eliminates PostgreSQL write load and pool contention on read-heavy traffic.
+2	Search (GET /search, GET /search/autocomplete; plus GET /search/analytics admin)	Yes: 90 / 1m per IP (/search), 180 / 1m per IP (/autocomplete), 60 / 1m per user (/search/analytics)	No (0 PG writes)	HMAC(IP) / userId (in-memory only)	db_heavy_compute (max=3, queue=6) on GET /search/analytics	N/A (Tier 1 in-memory only)	Protects FTS CPU/DB via fast local shield + analytics concurrency cap without doubling DB queries per search.
+3	Authentication (POST /auth/login, POST /auth/change-password, POST /auth/logout, GET /auth/csrf, GET /auth/me)	Yes: 40 / 15m per IP (/login), 20 / 15m per user (/change-password), 60 / 1m per IP (/csrf, /logout, /me)	Yes on /login & /change-password: /login 20 / 15m IP AND 5 / 15m email (TTL=960s); /change-password 10 / 15m user AND 20 / 15m IP (TTL=960s)	Atomic [HMAC(IP), HMAC(email)] on /login; [HMAC(IP), userId] on /change-password	auth_argon2 (max=4, queue=16) on /login & /change-password	Fail-Closed (503 SERVICE_UNAVAILABLE) on /login & /change-password	Defeats cross-instance credential stuffing & password brute force; auth already requires healthy PG.
+4	Registration (POST /auth/register)	Yes: 20 / 1h per IP	Yes: 10 / 1h per IP AND 3 / 1h per normalized email (TTL=3660s)	Atomic [HMAC(IP), HMAC(email)]	auth_argon2 (max=4, queue=16)	Fail-Closed (503 SERVICE_UNAVAILABLE)	Stops distributed mass account creation and Argon2 CPU exhaustion.
+5	Commerce / Payment (POST /orders, POST /payments, POST /admin/commerce/payments/:id/reconcile; GET /orders* Tier 1 60/1m)	Yes: 20 / 10m per user (POST /orders), 10 / 10m per user (POST /payments)	Yes on mutations: POST /orders 15 / 10m user + 30 / 10m IP (TTL=660s); POST /payments 5 / 10m user + 15 / 10m IP (TTL=660s); reconcile 20 / 10m admin (TTL=660s)	Atomic [HMAC(IP), userId]	commerce_payment_initiate (max=4, perActor=1, queue=8, non-abortable on disconnect) on POST /payments	Fail-Closed (503 SERVICE_UNAVAILABLE)	Protects Daraja STK Push quota, prevents duplicate payment storms, and preserves ledger integrity.
+6	Administrative Mutations (POST/PUT/PATCH/DELETE on /admin/*, workflow /publications, /resources write, /curricula write, /quality-governance write, /retention execute/recover; admin GETs are Tier 1 120/1m only)	Yes: 60 / 1m per admin user (verify-integrity & retention/execute: 10 / 5m)	Yes on mutations: standard admin write 60 / 1m user (TTL=120s); verify-integrity & retention/execute 10 / 5m user (TTL=360s)	userId	admin_file_verify (max=2, perActor=1, queue=4, AbortSignal wired to R2 HEAD) on verify-integrity	Fail-Closed (503 SERVICE_UNAVAILABLE)	Prevents compromised/scripted admin sessions from mass-mutating catalogue or flooding R2/retention workers.
+7	Downloads / Exports (POST /resources/:id/download, POST /calendar/export, GET /calendar/export/:id)	Yes: 40 / 5m per actor/IP (download), 10 / 15m per actor/IP (POST /calendar/export), 30 / 5m (GET /calendar/export/:id)	Yes on POSTs: POST /resources/:id/download 30 / 5m actor/IP (TTL=360s); POST /calendar/export 5 / 15m actor/IP (TTL=960s)	userId (if authenticated) else HMAC(session_or_IP) + HMAC(IP)	calendar_pdf_export (max=2, perActor=1, queue=6) on POST /calendar/export	POST /calendar/export: Fail-Closed (503); POST /resources/:id/download: Tier-1 Degraded (15 / 5m) (premium still fails closed in service if DB down)	Caps presigned R2 URL scraping and CPU/R2-heavy PDF generation across instances.
+8	Feedback & Learner/Contributor Mutations (POST /resources/:id/feedback, /calendar/session* & /calendar/events* writes, /me/library* & /me/bookmarks* writes, /me/notifications* writes, /contributors* writes)	Yes: 15 / 15m per IP (feedback), 60 / 5m per user/session (library/calendar/notifications), 15 / 15m (contributors write)	Yes: POST /feedback 5 / 15m rf_sid + 15 / 15m IP (TTL=960s); contributor writes 10 / 15m user (TTL=960s); learner state writes 60 / 5m user/session (TTL=360s)	[HMAC(IP), userId_or_HMAC(session)]	None (lightweight single-row OLTP writes)	POST /feedback & /contributors writes: Fail-Closed (503); library/bookmark/notification toggles: Tier-1 Degraded (30 / 5m)	Stops anonymous feedback spam & submission floods across instances.
+9	Analytics Ingestion (POST /analytics/events)	Yes: 120 / 1m per IP	No (0 PG rate-limit writes)	HMAC(IP) (in-memory only)	None	N/A (Tier 1 in-memory only)	Telemetry ingestion already writes to analytics; adding a second PG upsert per event would double DB write load for low-risk fire-and-forget telemetry.
+10	M-Pesa Webhooks (POST /commerce/webhooks/mpesa, POST /payments/mpesa/callback, POST /mpesa/callback, plus legacy /api/* aliases when enabled)	Wave 1 MpesaWebhookRateLimiter ONLY (capacity=20, refill=1/s, TTL=10m, maxEntries=10,000)	Exempt (0 Tier 2 PG rate-limit writes)	Client IP (resolved via validated trustProxy hops)	None (Daraja STK Query guarded inside CommerceService)	Wave 1 In-Memory Only (never fails closed due to rate-limit table contention)	Preserves settled Wave 1 Safaricom callback contract (MPESA_WEBHOOK_BODY_LIMIT_BYTES = 32768, raw decimal lexeme parser, 200 ack / 429 burst guard).
+6.3 Mandatory Rate-Limiter & Load Verification Tests (tests/security/wave3-rate-limit-concurrency.test.ts)
+Test RL-01 (Tier 1 Bounded-LRU Eviction & Zero PG Load on Public Reads — In-Memory Unit): Issue 12,000 unique simulated IPs against Tier 1 (maxEntries = 10,000) and 100 GET /api/v1/catalogue/resources requests with a spy on PostgresRateLimitStore → assert map.size <= 10,000 and 0 PostgreSQL rate-limit queries on public GETs, search GETs, and POST /api/v1/analytics/events.
+Test RL-02 (Cross-Instance Shared Quota Enforcement — Requires Live PostgreSQL): Instantiate two separate buildApp() instances (appA, appB) with separate Tier 1 memory stores backed by the same PostgreSQL database; send 3 POST /api/v1/auth/login attempts for victim@example.org to appA and 3 to appB (auth_login_email cap = 5) → assert the 6th attempt returns 429 RATE_LIMITED with Retry-After > 0 and RateLimit-* headers.
+Test RL-03 (Parallel Cold-Start & Hot-Row Atomicity — Requires Live PostgreSQL): Fire 20 simultaneous Promise.all calls to system.consume_rate_limit_buckets on a nonexistent key with capacity_mt = 5000, cost_mt = 1000 → assert exact 5 allowed, 15 rejected, resulting row millitokens = 0 (>= 0), and 0 duplicate-key or deadlock errors.
+Test RL-04 (Expiry Invariant Verification — Requires Live PostgreSQL): Attempt to pass min_ttl_secs = 10 for a policy whose full refill takes 900s (5 tokens / 900s) → assert persisted expires_at - updated_at >= 960s (full_refill + 60s).
+Test RL-05 (Multi-Dimensional Zero Partial Consumption — Requires Live PostgreSQL): Exhaust email bucket (5/5 used) while IP bucket has 15/20 tokens remaining; send 10 rejected login attempts for that exhausted email from the same IP, then log in as a second valid user other@example.org from the same IP → assert other@example.org succeeds because rejected attempts did not burn IP tokens, and verify probing nonexistent emails after IP exhaustion inserts zero new email rows in system.rate_limit_buckets.
+Test RL-06 (Refill Progress Preservation Under Continuous Rejection — Requires Live PostgreSQL): Drain a 1 token / 2s bucket to 0, send rejected requests every 300ms for 1.5s → assert updated_at and expires_at are unchanged by rejected requests and the bucket refills on schedule at 2.0s.
+Test RL-07 (Pool Saturation / DB Timeout Failure Policies — Mocked Pool Delay + Integration): Simulate Tier 2 DB timeout (> 250ms / rejected query) → assert POST /api/v1/auth/login and POST /api/v1/payments fail closed (503 SERVICE_UNAVAILABLE), while POST /api/v1/resources/:id/download falls back to its degraded Tier 1 cap (15 / 5m) within < 300ms (never hanging 45,000ms).
+Test RL-08 (M-Pesa Webhook Isolation — Integration): Exhaust standard API Tier 1 / Tier 2 IP buckets for an IP, then send a valid M-Pesa callback from that IP → assert M-Pesa callback is unaffected by Wave 3 buckets and governed solely by MpesaWebhookRateLimiter.
+7. WP7 — PostgreSQL JSONB::text Byte-Measurement Validation & Conservative Guarantee
+7.1 Exact Divergences Between JS Serialization and PostgreSQL octet_length(col::text)
+Classification: Confirmed defect in naive JS byte heuristics identified and resolved.
+Migration 0017 (drizzle/0017_audit_and_retention.sql:33-34) enforces hard PostgreSQL CHECK constraints:
+CONSTRAINT chk_audit_logs_actor_snapshot_bytes CHECK (octet_length(actor_snapshot::text) <= 2048)
+CONSTRAINT chk_audit_logs_context_bytes CHECK (octet_length(context::text) <= 4096)
+PostgreSQL's jsonb_out (col::text) differs from JavaScript Buffer.byteLength(JSON.stringify(x), 'utf8') in four concrete ways:
+Whitespace After Punctuation (": " and ", "): Non-empty objects add +1 byte after every : and +1 byte after every ,; non-empty arrays add +1 byte after every ,. Empty {} and [] remain 2 bytes. For an object with 80 short keys ({"a":1,"b":2,...}), JSON.stringify undercounts by 159 bytes.
+Scientific-Notation IEEE-754 Numbers (numeric_out Fixed-Point Expansion — CRITICAL): PostgreSQL jsonb stores numbers as numeric and prints them in fixed-point decimal without scientific notation.
+JSON.stringify(1e-7) is "1e-7" (4 bytes), whereas SELECT octet_length(('1e-7'::jsonb)::text) is octet_length('0.0000001') = 9 bytes (+5 bytes).
+JSON.stringify(5e-324) (Number.MIN_VALUE) is "5e-324" (6 bytes), whereas SELECT octet_length(('5e-324'::jsonb)::text) is 326 bytes (+320 bytes per number!). Just two small scientific floats in context would defeat a naive 296-byte buffer (3,800 vs 4,096) and crash chk_audit_logs_context_bytes!
+JSON.stringify(1e+25) is "1e+25" (5 bytes), whereas PG jsonb::text expands to "10000000000000000000000000" (26 bytes).
+PostgreSQL jsonb 22P05 Rejections on \u0000 and Lone UTF-16 Surrogates: Even though JSON.stringify("\u0000") ("\\u0000") and JSON.stringify("\uD800") ("\\ud800") are valid strings in V8, PostgreSQL jsonb throws SQLSTATE 22P05 on NUL code points (\u0000 cannot be converted to text) and unpaired UTF-16 surrogates!
+Non-JSON Runtime Types (BigInt, Date, -0, NaN/Infinity, Buffer, Circular Graphs): JSON.stringify(1n) throws TypeError; Buffer.from(...) serializes to {"type":"Buffer","data":[...]} (~4x byte blow-up); -0 becomes 0 ("0" in both JS and PG). Note that PG jsonb key sorting by (key_byte_len, key_bytes) is a pure permutation of unique object entries and changes octet_length by 0 bytes.
+7.2 Normalized Audit JSON Domain & Closed-Form Conservative Upper-Bound Estimator
+Step 1: Recursive Normalization & Redaction (normalizeAndRedactAuditObject)
+Before byte measurement, every context, actorSnapshot, beforeState, and afterState object passes through sanitizeAuditPayload:
+Prototype & Cycle Safety: Uses Object.create(null) / plain {} outputs, tracks ancestors in a WeakSet<object>() (replacing back-edges with "[Circular]"), skips keys __proto__, constructor, and prototype, and caps nesting at MAX_DEPTH = 8 (deeper subtrees become "[MaxDepthExceeded]").
+Recursive Key & String-Value Redaction (Replaces Value With "[REDACTED]", Preserving Key Name for Audit Forensics):
+Case-insensitive normalized key tokens (stripping _ and -): password, passwd, pwd, currentpassword, newpassword, passwordhash, secret, clientsecret, webhooksecret, csrfsecret, hmacsecret, token, accesstoken, refreshtoken, idtoken, sessiontoken, csrf, csrftoken, tokenhash, authorization, authheader, cookie, setcookie, apikey, privatekey, signature, passkey, otp, pin, cvv, mpesapassword, securitycredential, phonenumber, msisdn, mpesaphone, initiatedphone, initiatedphonehash, checkoutrequestid, merchantrequestid.
+Safe Domain False-Positive Allowlist: Non-secret governance/business keys containing substrings above are explicitly preserved unless their value matches a credential pattern: tokenCount, millitokens, maxTokens, capacityMillitokens, refillTokens, countryCode, currencyCode, policyCode, statusCode, resultCode, errorCode, reasonCode.
+String Value Scrubbing: Scrubs embedded Bearer <tok>, Basic <b64>, session_token=... / csrf_ctx=... cookie pairs, URL query parameters (?token=..., &access_token=..., &signature=..., &X-Amz-Signature=..., &X-Amz-Credential=...), and raw Kenyan/international MSISDNs ((?:\+?254|0)[17]\d{8} → [REDACTED_PHONE]).
+String Unicode Hygiene: Applies str.toWellFormed().replace(/\u0000/g, '') so PostgreSQL jsonb never raises 22P05.
+Non-JSON Value Normalization: BigInt → v.toString(); Date → valid v.toISOString() else "[InvalidDate]"; Buffer/Uint8Array → "[Binary:" + v.byteLength + "B]"; Error → redacted { name, message, code }; NaN/±Infinity → null; -0 → 0; undefined/Function/Symbol → omitted in objects, null in arrays.
+Step 2: Closed-Form Upper-Bound Byte Estimator (estimatePgJsonbTextBytesUpperBound)
+On a normalized value 
+:
+null or true → 4; false → 5.
+typeof v === 'string' → Buffer.byteLength(JSON.stringify(v), 'utf8') (exact match with PG escape_json on UTF-8 well-formed NUL-free strings, including all 0x01..0x1f \b,\t,\n,\f,\r,\u00XX, \", \\, and multi-byte UTF-8).
+typeof v === 'number' (finite, -0 already 0):
+Let s = String(v). If !/[eE]/.test(s): return s.length (exact match).
+If s matches /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/:
+Let sign = m[1] ? 1 : 0, intLen = m[2].length, fracLen = (m[3] ?? '').length, exp = parseInt(m[4], 10).
+If exp >= 0: return sign + intLen + Math.max(exp, fracLen) + 1.
+If exp < 0: return sign + 2 + Math.abs(exp) + intLen + fracLen.
+(Provably >= octet_length((v::jsonb)::text) across the entire IEEE-754 double range 5e-324 .. 1.7976931348623157e+308 within 0..2 bytes!)
+Array.isArray(v):
+Empty [] → 2.
+Non-empty length 
+: 
+.
+Plain object with unique keys 
+:
+Empty {} (
+) → 2.
+Non-empty (
+): 
+.
+Step 3: Deterministic Multi-Stage Compaction (Never Throws AuditError on Size)
+Soft target / hard DB ceiling:
+context: soft target 3,800 bytes, hard post-compaction assert <= 4,096 bytes (MAX_AUDIT_CONTEXT_BYTES).
+actorSnapshot: soft target 1,900 bytes, hard post-compaction assert <= 2,048 bytes (MAX_ACTOR_SNAPSHOT_BYTES).
+beforeState / afterState: recursively redacted + bounded to 16,384 bytes (beforeState/afterState have no DB CHECK cap in 0017, but capping prevents megabyte audit rows).
+Compaction Stages when estimate(payload) > softTarget:
+Stage 1: Truncate strings > 256 UTF-8 bytes on clean code-point boundaries (...[truncated]) and slice arrays > 16 items (...[+N items]), injecting _truncated: true and _originalEstimatedBytes.
+Stage 2 (if still > softTarget): Drop lowest-priority largest non-core keys in deterministic descending estimated-byte order (preserving forensic core keys reason, errorCode, outcome, permission, targetId, status on context; preserving actorId, actorType, actorRole, emailDomain on actorSnapshot with field-level truncation to <= 256 chars each).
+Stage 3 (Terminal Fallback if pathological keys still exceed softTarget):
+For context: { _truncated: true, _originalEstimatedBytes: origBytes, _reason: 'CONTEXT_COMPACTED' } (91 PG bytes << 4,096).
+For actorSnapshot: { actorType: snapshot.actorType, actorId: snapshot.actorId?.slice(0, 64), actorRole: snapshot.actorRole?.slice(0, 64) } (<= 220 PG bytes << 2,048).
+Live PostgreSQL Corpus Verification Test (tests/security/wave3-audit-redaction.test.ts): Tests a 12-case adversarial corpus against live PostgreSQL SELECT octet_length($1::jsonb::text) covering: 5e-324, 1e-7, 1e+25, Number.MAX_VALUE, -0, BigInt, Date, 4-byte emojis (🧪🔐), Swahili/UTF-8 diacritics, \u0000 + lone surrogates (\uD800), \b\t\n\f\r\"\\ + \u0001..\u001f, 120 1-char keys ({"a":1,...}), and depth-12 circular objects — asserting estimate(normalized) >= pg_octet_length on every case and INSERT INTO governance.audit_logs succeeds with octet_length(context::text) <= 4096 and octet_length(actor_snapshot::text) <= 2048 on 100 KiB oversized inputs!
+8. WP3 — CORS Preflight Cache Correctness
+Classification: Confirmed defect in Revision 1.0 Vary specification corrected.
+8.1 Exact Vary Header Split (src/routes/middleware/http-security.ts)
+Non-OPTIONS Responses (All Standard API Requests):
+Append Origin to Vary (Vary: Origin, deduplicated case-insensitively with any existing Vary tokens) on every response regardless of whether Origin matched, was absent, or was denied, preventing shared caches from serving an origin-specific Access-Control-Allow-Origin header to another origin.
+OPTIONS Responses (All Preflight & Non-CORS OPTIONS Requests):
+Always emit:
+code
+Http
+Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+Including all three request headers on both allowed (204) and denied (403) OPTIONS responses guarantees intermediary/browser caches partition cached preflight entries by origin, target HTTP method, and requested header set.
+8.2 Preflight Validation, Cache Policy & Access-Control-Max-Age: 600 Analysis
+Allowed Preflight Criteria:
+Origin header is present and exact-matches CORS_ALLOWED_ORIGINS.
+Access-Control-Request-Method is present and matches GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS.
+Every comma-separated token in Access-Control-Request-Headers (if present), trimmed and lowercased, belongs to the explicit allowlist: content-type, x-csrf-token, x-request-id, x-calendar-session, accept.
+Allowed Preflight Response (204 No Content):
+Access-Control-Allow-Origin: <exact matched Origin> (never *)
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, X-CSRF-Token, X-Request-ID, X-Calendar-Session, Accept
+Access-Control-Max-Age: 600
+Cache-Control: private, max-age=600
+Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+Why Access-Control-Max-Age: 600 + Cache-Control: private, max-age=600 Is Safe:
+600s (10 minutes) eliminates repetitive OPTIONS round-trips before POST/PATCH/DELETE mutations carrying X-CSRF-Token (within Chromium's 7200s cap and Firefox's 86400s cap), while bounding CORS policy revocation propagation to at most 10 minutes after a config rollback.
+Cache-Control: private, max-age=600 permits the end-user browser's internal CORS preflight cache to honor Access-Control-Max-Age: 600 while forbidding shared CDNs/reverse proxies from caching preflight responses across users.
+Disallowed Preflight Response (403 Forbidden):
+Emits zero Access-Control-Allow-* headers, Cache-Control: no-store, Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers, and standard JSON { error: { code: 'CORS_ORIGIN_DENIED' | 'CORS_PREFLIGHT_DENIED', ... } }.
+9. WP3 — HSTS & Security-Header Deployment Safety
+Classification: Confirmed deployment hazard in Revision 1.0 HSTS default corrected.
+9.1 Repository Audit of CANONICAL_DOMAIN & Subdomain Topology
+src/config/env.ts:87-91 defaults CANONICAL_DOMAIN to 'http://localhost:3000' and validates in production (lines 204-213) only that it is a valid non-localhost URL (for example https://elimupin.co.ke in tests/db/config.test.ts:7).
+src/services/seo.service.ts:65, 78-86 uses CANONICAL_DOMAIN to construct public canonical page URLs and sitemaps—commonly an apex/registrable domain (elimupin.co.ke).
+Hazard of Revision 1.0 Default (max-age=31536000; includeSubDomains):
+Emitting includeSubDomains from an apex host pins every subdomain (*.elimupin.co.ke) to HTTPS for 1 year in visitors' browsers, breaking any non-HTTPS staging, internal tool, or legacy subdomain.
+Emitting a 1-year max-age before HTTPS termination is verified in production risks long-lived client lockout; furthermore, RFC 6797 §7.2 forbids sending Strict-Transport-Security over plaintext HTTP.
+9.2 Safe HSTS Rollout Policy & API Security Headers
+HSTS Environment Controls (src/config/env.ts):
+HSTS_MAX_AGE_SECONDS: integer 0..63072000, default 300 (5 minutes — OWASP recommended initial rollout stage; setting 0 disables app-layer HSTS if TLS edge proxy manages HSTS).
+HSTS_INCLUDE_SUBDOMAINS: boolean ('true' | 'false'), default false (never enabled unless operator has audited HTTPS across all subdomains). preload is never emitted automatically.
+Strict Emission Gate (RFC 6797 §7.2 Compliant):
+Strict-Transport-Security is emitted if and only if:
+effectiveNodeEnv === 'production', AND
+env.HSTS_MAX_AGE_SECONDS > 0, AND
+env.CANONICAL_DOMAIN.startsWith('https://'), AND
+request.protocol === 'https' (resolved safely via Wave 1's bounded resolveEffectiveTrustProxy hop count!).
+Header value when all four hold: max-age=${env.HSTS_MAX_AGE_SECONDS}${env.HSTS_INCLUDE_SUBDOMAINS ? '; includeSubDomains' : ''}.
+Operators graduate HSTS_MAX_AGE_SECONDS (300 → 86400 → 2592000 → 31536000) solely via environment config after verifying TLS health.
+API-Only Security Headers (src/routes/middleware/http-security.ts):
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-site
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none' — explicitly scoped to this Fastify API server's JSON/XML/text responses (preventing content-sniffed script execution or framing if an API URL is navigated to directly). Documented in docs/SECURITY_RULES.md as distinct from any separate frontend HTML document CSP.
+Sensitive-Endpoint Cache Lockdown: If a route has not already set a stricter directive and matches /api/v1/auth/*, /api/v1/me/*, /api/v1/admin/*, /api/v1/orders*, /api/v1/payments*, /api/v1/audit*, /api/v1/retention*, /api/v1/contributors*, /api/v1/calendar/session*, or carries a Cookie header on a private response, enforce Cache-Control: private, no-store, max-age=0 (preserving existing public Cache-Control headers on public seo, homepage, and catalogue endpoints).
+10. Settled Decisions Preserved
+All settled architecture decisions from Wave 1, Wave 2, and Wave 3 Revision 1.0 remain intact without reopening:
+AuditService.logEvent(input, tx) Canonical Signature (src/services/audit.service.ts:127, 135): Retained unchanged. No recordEvent alias will be added. logEvent sanitizes context, actorSnapshot, beforeState, and afterState in-place via src/utils/log-redactor.ts and persists within the caller's optional tx transaction without throwing byte-limit AuditErrors to business workflows.
+Migration 0017 Append-Only Audit Guarantees (drizzle/0017_audit_and_retention.sql): governance.audit_logs UPDATE/DELETE immutability trigger and 4,096 / 2,048 octet_length CHECK constraints remain untouched.
+Wave 1 Controls Preserved:
+resolveEffectiveTrustProxy (src/app.ts:81-128, integer hop count 0..5, mandatory TRUST_PROXY_HOPS in production) is used directly for rate-limit IP resolution and request.protocol HTTPS detection.
+VALID_REQUEST_ID_REGEX (src/app.ts:74, 203-209) and sanitized 500 error handler (src/app.ts:224-252) remain intact.
+MpesaWebhookRateLimiter, MPESA_WEBHOOK_BODY_LIMIT_BYTES (32 KiB), registerRawDecimalWebhookJsonParser, and Daraja STK Query verification (src/routes/middleware/mpesa-webhook-guard.ts, src/app.ts:425-460) remain untouched and exempt from Wave 3 CSRF and Tier 1/2 rate limiters.
+Wave 2 Controls Preserved:
+Public visibility predicates (content.resources, content.resource_versions, community.education_updates, files.storage_objects, src/db/migrations/0023 & services) and RBAC enforcement (RbacService, roles-permissions.ts zero-waiver seed gate, synchronous recommendation cache recompute) are untouched.
+Zero New Runtime npm Dependencies: package.json remains unchanged (all Wave 3 controls use Node.js node:crypto, Fastify 5 native lifecycle hooks, Drizzle ORM, and pg).
+11. Exact File Inventory (59 Total Files: 10 New, 21 Modified Production/Journal/Docs, 28 Modified Existing Tests)
+11.1 New Files to Create (10 Files)
+#	File Path	Workpackage	Justification
+1	drizzle/0024_wave3_rate_limits.sql	WP4	Creates system.rate_limit_buckets (UUID PK + UNIQUE(bucket_key) + 4 CHECK constraints + expires_at index) and system.consume_rate_limit_buckets(...) atomic PL/pgSQL token-bucket function.
+2	src/db/schema/system.ts	WP4	Drizzle ORM table definition for system.rate_limit_buckets using existing systemSchema (src/db/logical-schemas.ts:16). (Verified via directory inspection that src/db/schema/system.ts does not currently exist.)
+3	src/routes/middleware/http-security.ts	WP3	Registers security response headers, RFC 6797-gated HSTS, sensitive Cache-Control: no-store, strict CORS_ALLOWED_ORIGINS validation, Vary: Origin on normal responses, and OPTIONS preflight handler (Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Max-Age: 600, Cache-Control: private, max-age=600).
+4	src/routes/middleware/csrf-guard.ts	WP3	Enforces conjunctive 415 Content-Type guard + 403 Origin/Referer allowlist + stateless HMAC-SHA256 X-CSRF-Token verification bound to opaque HttpOnly cookie digests, automatic onSend token rotation header emission, and exact M-Pesa webhook path exemption.
+5	src/routes/middleware/rate-limit-guard.ts	WP4	Maps routes to the 10-category matrix (§6.2), hashes identifiers with RATE_LIMIT_HMAC_SECRET, runs Tier 1 local shield + Tier 2 PostgreSQL limiter with 250ms pool-saturation circuit guard, and emits RateLimit-* / Retry-After headers.
+6	src/services/rate-limit.service.ts	WP4	Implements Tier1MemoryRateLimiter (bounded LRU), PostgresRateLimitStore (system.consume_rate_limit_buckets + 60s SKIP LOCKED reaper), and BoundedConcurrencyRegistry (try/finally permit lifecycle, AbortSignal propagation without premature release, bounded FIFO wait queue, idempotent PermitHandle, bounded per-actor slot map).
+7	src/utils/log-redactor.ts	WP7	Implements cycle-safe (WeakSet), depth-bounded (8), prototype-safe recursive [REDACTED] scrubber, URL/Bearer/Cookie/MSISDN string redactor, normalizeAuditJsonValue (toWellFormed + NUL stripping), estimatePgJsonbTextBytesUpperBound (including IEEE-754 scientific-notation numeric_out bound), deterministic 3,800/1,900 compactor, and Pino logger redaction/serializer builder.
+8	tests/security/wave3-http-security.test.ts	WP3	Dedicated WP3 acceptance suite (CORS allow/deny, OPTIONS Vary & cache headers, security headers & HSTS HTTPS/prod gating, strict CSRF pre-auth/login/rotation/logout/tampering/expired/Origin: null/415, M-Pesa webhook exemption, search.ts auth standardization, calendar.ts cookie clear flags).
+9	tests/security/wave3-rate-limit-concurrency.test.ts	WP4	Dedicated WP4 acceptance suite (Tests RL-01..RL-08 and Tests S-01..S-07 covering Tier 1 LRU bounds, zero PG writes on public reads, live PG atomic concurrency, expiry invariant, multi-dim zero-partial-burn, pool-timeout failure modes, and semaphore premature-release prevention).
+10	tests/security/wave3-audit-redaction.test.ts	WP7	Dedicated WP7 acceptance suite (nested/array/mixed-case/URL/header/MSISDN/circular/prototype-pollution redaction, false-positive allowlist preservation, live PG octet_length(col::text) adversarial corpus validation, 100 KiB deterministic compaction without AuditError, and Pino buildApp()/server.ts log capture tests).
+11.2 Modified Production, Migration-Journal & Documentation Files (21 Files)
+#	File Path	Workpackage	Exact Planned Modification
+1	drizzle/meta/_journal.json	WP4	Append migration entry idx: 24 (tag: "0024_wave3_rate_limits") required by src/db/migrate.ts.
+2	.env.example	WP3, WP4	Add documented defaults/examples for CORS_ALLOWED_ORIGINS, CSRF_SECRET, CSRF_SECRET_PREVIOUS, CSRF_TOKEN_TTL_SECONDS, HSTS_MAX_AGE_SECONDS, HSTS_INCLUDE_SUBDOMAINS, RATE_LIMIT_HMAC_SECRET, and CONCURRENCY_MAX_* tunables.
+3	src/config/env.ts	WP3, WP4	Add Zod parsing + production superRefine validation for canonical HTTP/CSRF, HSTS, rate-limit HMAC, and concurrency variables (zero CSRF-disable flags).
+4	src/db/schemas.ts	WP4	Export * from './schema/system.js'.
+5	src/app.ts	WP3, WP4, WP7	Merge shared Pino redaction/serializers into fastify({...}) so both server.ts and programmatic buildApp() callers enforce WP7 log redaction; register http-security, csrf-guard, rate-limit-guard; expose rateLimitService & concurrencyRegistry in AppOptions.services; clean up rate-limit reaper in onClose.
+6	src/server.ts	WP4, WP7	Replace inline 13-path Pino redact array (lines 12-25) with shared createRedactedLoggerOptions(env.LOG_LEVEL) and ensure clean rate-limit timer shutdown on SIGINT/SIGTERM.
+7	src/routes/api/v1/auth.ts	WP3, WP4	Add GET /api/v1/auth/csrf; attach IP + email Tier 2 rate-limit guard on /auth/login & /auth/register and user + IP on /auth/change-password; wrap Argon2 endpoints in concurrencyRegistry.runWithPermit('auth_argon2', ...).
+8	src/routes/api/v1/calendar.ts	WP3, WP4	Fix clearCookie('calendar_session', ...) flags (line 277) to match issuance (httpOnly, sameSite: 'lax', secure, path: '/'); wrap POST /calendar/export in concurrencyRegistry.runWithPermit('calendar_pdf_export', ...) passing signal to calendarService.exportCalendar.
+9	src/routes/api/v1/search.ts	WP3, WP4	Replace elimu_session + Authorization: Bearer in getAuthenticatedUser (lines 106-130) with canonical env.SESSION_COOKIE_NAME (session_token) cookie lookup; fix 401 UNAUTHORIZED → UNAUTHENTICATED (line 306) and generic 403 FORBIDDEN message (line 318); wrap GET /search/analytics in db_heavy_compute semaphore.
+10	src/routes/api/v1/commerce.ts	WP4	Wrap POST /payments in concurrencyRegistry.runWithPermit('commerce_payment_initiate', ...) (perActorMax = 1, abortOnClientDisconnect = false); leave M-Pesa webhook routes untouched.
+11	src/routes/api/v1/admin-dashboard.ts	WP4	Wrap POST /admin/files/:id/verify-integrity in concurrencyRegistry.runWithPermit('admin_file_verify', ...) passing { signal } to adminDashboardService.verifyFileIntegrity.
+12	src/services/admin-dashboard.service.ts	WP4	Add optional options?: { signal?: AbortSignal } parameter to verifyFileIntegrity (line 323) and forward to fileStorageService.verifyFileIntegrity.
+13	src/services/file-storage.service.ts	WP4	Add optional options?: { signal?: AbortSignal } parameter to verifyFileIntegrity (line 225) and forward to storageProvider.headObject.
+14	src/services/storage/storage-provider.interface.ts	WP4	Add backward-compatible optional options?: { signal?: AbortSignal } to headObject(key, options?) (line 78).
+15	src/services/storage/r2-storage-provider.ts	WP4	Pass { abortSignal: options?.signal } to this.client.send(new HeadObjectCommand(...), ...) (line 120).
+16	src/services/calendar/calendar.service.ts	WP4	Add optional options?: { signal?: AbortSignal } to exportCalendar (line 464) with cooperative signal?.throwIfAborted() checkpoints before PDF render and before storageProvider.putObject.
+17	src/routes/api/v1/recommendations.ts	WP4	Wrap synchronous cache-miss recomputation path in db_heavy_compute semaphore (maxConcurrent = 3) when recommendationCacheService misses/recomputes.
+18	src/services/audit.service.ts	WP7	Retain canonical logEvent(input, tx); replace shallow key-deletion & AuditError byte-throw (lines 73-124) with recursive [REDACTED] masking, normalizeAuditJsonValue, estimatePgJsonbTextBytesUpperBound, and deterministic 3,800/1,900 compaction across context, actorSnapshot, beforeState, and afterState.
+19	src/services/retention.service.ts	WP4	Add RATE_LIMIT_BUCKETS (system.rate_limit_buckets, idColumn: 'id') to RETENTION_TARGET_REGISTRY and RET_RATE_LIMIT_BUCKETS_7D (7d active DELETE policy) to seedInitialPolicies().
+20	docs/SECURITY_RULES.md	WP3, WP4, WP7	Document Wave 3 HTTP headers, staged HSTS policy, CORS/preflight Vary rules, conjunctive CSRF contract, two-tier rate limiting & semaphore invariants, and recursive audit/Pino redaction rules.
+21	docs/API_SPEC.md & docs/DATABASE_SPEC.md	WP3, WP4	(Wait — count explicitly as 2 files below so file count is exact!) — Let us list docs/API_SPEC.md (#21) and docs/DATABASE_SPEC.md (#22) separately: 22 modified production/journal/doc files (60 total files across Wave 3).
+(Explicit Doc Split Reconciliation: #20 docs/SECURITY_RULES.md, #21 docs/API_SPEC.md, #22 docs/DATABASE_SPEC.md → 22 modified production/journal/doc files, 10 new files, 28 modified existing test files = 60 files total.)
+11.3 Modified Existing Test Files (28 Files)
+Shared Test Harness (1 file): tests/helpers/build-test-app.ts (adds strict-CSRF token/header minting helper for positive functional tests).
+Existing Route & Security Mutation Test Suites Using Shared Strict-CSRF Helper (23 files):
+tests/routes/auth.test.ts, tests/routes/homepage-admin-unit.test.ts, tests/routes/admin-dashboard.integration.test.ts, tests/routes/analytics.integration.test.ts, tests/routes/audit-retention.integration.test.ts, tests/routes/calendar.integration.test.ts, tests/routes/commerce-mpesa.integration.test.ts, tests/routes/commerce.integration.test.ts, tests/routes/contributor-finance.integration.test.ts, tests/routes/contributors.integration.test.ts, tests/routes/downloads.integration.test.ts, tests/routes/feedback.integration.test.ts, tests/routes/homepage.integration.test.ts, tests/routes/library.integration.test.ts, tests/routes/notifications.integration.test.ts, tests/routes/publication.integration.test.ts, tests/routes/quality-governance.integration.test.ts, tests/routes/rbac.integration.test.ts, tests/routes/recommendations.integration.test.ts, tests/routes/updates.integration.test.ts, tests/security/wave1-files-and-sessions.test.ts, tests/security/wave1-payments.test.ts, tests/security/wave2-rbac-and-seed.test.ts.
+Existing Non-CSRF Behavioral Alignment Test Files (4 files):
+tests/routes/search-autocomplete.test.ts — Use session_token cookie instead of elimu_session and expect UNAUTHENTICATED (401) + generic FORBIDDEN (403).
+tests/services/audit.service.test.ts — Update unit assertions from shallow key deletion + toThrow(AuditError) on > 4,096/> 2,048 bytes to recursive [REDACTED] replacement + deterministic <= 3,800/<= 1,900 byte compaction.
+tests/db/config.test.ts — Include CORS_ALLOWED_ORIGINS, CSRF_SECRET, and RATE_LIMIT_HMAC_SECRET in validProdSecurityBaseline and assert fail-fast when missing/weak in production.
+tests/security/wave1-migrations.test.ts — Update expected total migration count in drizzle.__drizzle_migrations (lines 132, 154, 173) from 24 to 25.
+12. Human Decision Register (HD-1 through HD-5)
+Classification: Design decisions requiring human approval prior to implementation.
+Decision ID	Decision Topic	Recommended Option (Revision 1.1 Baseline)	Alternatives Considered & Why Rejected	Impact if Approved
+HD-1	CSRF Architecture & Pre-Auth Bootstrap	Conjunctive Content-Type (415) + Origin/Referer allowlist (403) + stateless HMAC-SHA256 X-CSRF-Token (403) bound server-side to SHA-256 of active HttpOnly cookie (session_token, calendar_session, rf_sid, elimu_anon_sid) or opaque HttpOnly csrf_ctx issued by GET /api/v1/auth/csrf, with automatic X-CSRF-Token rotation header on cookie transitions and zero disable switches across dev/test/prod.	1. Readable non-HttpOnly double-submit cookie (exposes CSRF cookie to subdomain cookie-tossing).
+2. Header-only X-Requested-With fallback (weak against misconfigured CORS/plugins).
+3. NODE_ENV=test CSRF bypass (creates untested production gap).	Frontend/API clients call GET /api/v1/auth/csrf once before unauthenticated login/register and send X-CSRF-Token on unsafe methods; M-Pesa callbacks remain exempt on exact webhook paths.
+HD-2	Rate-Limiting Tier Split & DB Failure Policy	Two-Tier Hybrid: Tier 1 bounded-LRU (10,000 cap) on all non-webhook routes (0 PG writes on public reads, search, and analytics ingestion); Tier 2 PostgreSQL (system.consume_rate_limit_buckets) only on auth, registration, commerce, downloads/exports, and user/admin mutations, with 250ms pool-saturation timeout, Fail-Closed (503) on auth/registration/commerce/admin/PDF-export/feedback/contributor writes, and Tier-1 Degraded (50%) on public downloads & learner library/bookmark toggles.	1. PG writes on every public GET (exhausts DATABASE_POOL_MAX=10).
+2. Global fail-open on DB errors (allows cross-instance brute force during DB brownouts).
+3. Redis dependency (adds external infrastructure not present in stack).	Protects the 10-connection PostgreSQL pool while enforcing authoritative cross-instance limits on every security- and cost-sensitive mutation.
+HD-3	Heavy-Endpoint Concurrency Semaphores & Disconnect Policy	In-process BoundedConcurrencyRegistry with strict try/finally permit hold until settlement (auth_argon2=4, calendar_pdf_export=2 / 1/actor, commerce_payment_initiate=4 / 1/actor, admin_file_verify=2 / 1/actor, db_heavy_compute=3); client disconnect aborts only read-only/pre-upload cancellable stages (admin_file_verify, pre-upload calendar_pdf_export) and never aborts in-flight commerce_payment_initiate Daraja STK Push or releases an active permit early.	1. Release permit on socket close/aborted (allows unbounded CPU/DB exhaustion).
+2. Abort Daraja STK Push on browser disconnect (risks orphaned user phone debit without recorded CheckoutRequestID).	Guarantees hard per-instance CPU/threadpool/R2/Daraja concurrency caps and preserves payment correlation integrity.
+HD-4	Oversized Audit Payload Handling	Deterministic Compaction (3,800B soft / 4,096B hard for context; 1,900B soft / 2,048B hard for actorSnapshot) backed by the closed-form PG JSONB::text upper-bound estimator (never throwing AUDIT_CONTEXT_TOO_LARGE / ACTOR_SNAPSHOT_TOO_LARGE to callers).	Throwing AuditError (400) on oversized audit context (causes critical security/denial/admin audit events or enclosing business transactions to roll back/fail).	Every audit event is guaranteed to persist cleanly inside Migration 0017's CHECK constraints with _truncated: true forensic metadata when compacted.
+HD-5	HSTS Initial Rollout & Subdomain Policy	RFC 6797 §7.2 Gated HSTS: Emit only when NODE_ENV=production, CANONICAL_DOMAIN starts with https://, request.protocol === 'https', and HSTS_MAX_AGE_SECONDS > 0; default HSTS_MAX_AGE_SECONDS=300 (5m) and HSTS_INCLUDE_SUBDOMAINS=false.	Defaulting to max-age=31536000; includeSubDomains immediately (risks 1-year lockout of apex/sibling HTTP subdomains before production TLS audit).	Zero risk to sibling subdomains or HTTP dev/test environments; operations can raise HSTS_MAX_AGE_SECONDS progressively via env config without code changes.
+13. Acceptance Criteria & Verification Plan
+ID	Workpackage	Measurable Acceptance Criterion	Verification Method
+W3-AC-01	WP3	Allowed Origin receives exact Access-Control-Allow-Origin + Access-Control-Allow-Credentials: true + Vary: Origin; untrusted/null Origin receives zero CORS allow headers; OPTIONS preflight emits Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers + Access-Control-Max-Age: 600 + Cache-Control: private, max-age=600 when allowed and 403 + Cache-Control: no-store when denied.	Automated route tests in wave3-http-security.test.ts
+W3-AC-02	WP3	All API responses include X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy, Permissions-Policy, and API-only Content-Security-Policy; Strict-Transport-Security is omitted over HTTP / non-prod and emitted over HTTPS in production with max-age=300 and no includeSubDomains by default.	Automated header assertions across HTTP/HTTPS + nodeEnvOverride in wave3-http-security.test.ts
+W3-AC-03	WP3	All non-webhook POST/PUT/PATCH/DELETE routes enforce conjunctive Content-Type: application/json (415 on form/text), allowed Origin/Referer (403 even when X-CSRF-Token is valid), and constant-time HMAC X-CSRF-Token bound to HttpOnly session/csrf_ctx digest (403 on missing/tampered/expired/rotated/cross-session token); NODE_ENV=test enforces identical runtime checks.	Automated negative + full pre-auth → login → rotation → logout lifecycle tests in wave3-http-security.test.ts
+W3-AC-04	WP3	M-Pesa Daraja callback endpoints (/api/v1/commerce/webhooks/mpesa, /api/v1/payments/mpesa/callback, /api/v1/mpesa/callback, and legacy aliases when enabled) succeed without Origin, cookies, or X-CSRF-Token while remaining protected by Wave 1 MpesaWebhookRateLimiter and 32 KiB limit.	wave3-http-security.test.ts + wave1-payments.test.ts + commerce-mpesa.integration.test.ts
+W3-AC-05	WP3	GET /api/v1/search/analytics authenticates strictly via env.SESSION_COOKIE_NAME (session_token), rejects elimu_session and Authorization: Bearer with 401 UNAUTHENTICATED, and returns generic 403 FORBIDDEN without leaking internal permission identifiers; DELETE /api/v1/calendar/session clears calendar_session with matching httpOnly/sameSite/secure attributes.	search-autocomplete.test.ts + wave3-http-security.test.ts
+W3-AC-06	WP4	Public GET routes, search GETs, and POST /api/v1/analytics/events execute zero Tier 2 PostgreSQL rate-limit queries and remain bounded at <= 10,000 entries per Tier 1 LRU store.	Test RL-01 in wave3-rate-limit-concurrency.test.ts
+W3-AC-07	WP4	Migration 0024 applies cleanly (25 total journalled migrations), enforces all 4 CHECK constraints on system.rate_limit_buckets, satisfies expires_at >= updated_at + full_refill_duration + 60s, prevents negative balances and cold-start lost updates under 20-way parallel load, performs zero writes/partial burns when any dimension (IP or email) rejects, and integrates cleanly with RetentionService's UUID cursor worker.	Live PostgreSQL Tests RL-02..RL-08 + wave1-migrations.test.ts + retention.service.test.ts
+W3-AC-08	WP4	BoundedConcurrencyRegistry holds permits inside try/finally until fn(signal) settles, never releases permits prematurely on socket disconnect/timeout, enforces bounded wait queues and bounded per-actor maps (0 leaked entries), forwards AbortSignal to R2 HeadObject and pre-upload PDF stages, and keeps POST /api/v1/payments Daraja dispatch non-abortable on client disconnect.	Tests S-01..S-07 in wave3-rate-limit-concurrency.test.ts
+W3-AC-09	WP7	Recursive redactor masks secrets across nested objects, arrays, mixed-case/snake_case keys, Bearer/Basic/Cookie headers, URL query secrets, and MSISDNs with [REDACTED], handles circular references and __proto__/constructor safely, preserves domain keys (tokenCount, millitokens, countryCode, etc.), and powers both AuditService.logEvent and Pino loggers in buildApp() and server.ts.	Unit & log-stream capture assertions in wave3-audit-redaction.test.ts
+W3-AC-10	WP7	estimatePgJsonbTextBytesUpperBound(normalized) >= octet_length(col::text) holds across the entire live PostgreSQL adversarial corpus (including 5e-324, 1e-7, 1e+25, BigInt, Date, emojis, control chars, \u0000, lone surrogates, 120 short keys, deep nesting), and oversized 100 KiB payloads compact deterministically to <= 3,800 / <= 1,900 bytes and insert cleanly into governance.audit_logs without throwing AuditError.	Live PostgreSQL corpus & governance.audit_logs insertion tests in wave3-audit-redaction.test.ts
+W3-AC-11	All	Full npm run typecheck, npm run build, and full Vitest suite (tests/db/*, tests/services/*, tests/routes/*, tests/security/wave1-*, tests/security/wave2-*, tests/security/wave3-*) pass with zero regressions.	Post-approval execution during TEST phase
+14. STOP — Awaiting Human Review & Implementation Approval
+Read-only validation and architectural correction for Prompt 33 — Security Hardening Wave 3 (Revision 1.1) is complete. Zero files, database schemas, or configurations have been modified.
+Stopping here per PLAN → HUMAN APPROVAL → IMPLEMENT → TEST → REPORT → STOP. Please review Sections 3–13 and confirm approval of HD-1 through HD-5 to authorize Wave 3 implementation.

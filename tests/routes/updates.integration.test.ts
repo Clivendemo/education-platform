@@ -13,6 +13,7 @@ import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { seedEducationUpdateCategories } from '../../src/db/seeds/education-updates-categories.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Prompt 23: Education Updates Fastify API Integration', () => {
@@ -20,13 +21,15 @@ describe('Prompt 23: Education Updates Fastify API Integration', () => {
   const authService = new DefaultAuthService(db);
   const rbacService = new DefaultRbacService(db);
 
-  const app = buildApp({
-    services: {
-      educationUpdateService: updateService,
-      authService,
-      rbacService,
-    },
-  });
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        educationUpdateService: updateService,
+        authService,
+        rbacService,
+      },
+    }),
+  );
 
   let adminCookie = '';
   let standardUserCookie = '';

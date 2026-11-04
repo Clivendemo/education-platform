@@ -30,12 +30,17 @@ import {
 } from '../../../services/audit.service.js';
 import { createRequireAuth } from './auth.js';
 import { GENERIC_FORBIDDEN_MESSAGE } from '../../hooks/authorize.js';
+import {
+  type BoundedConcurrencyRegistry,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
 
 export interface AdminDashboardRouteOptions {
   adminDashboardService?: AdminDashboardService;
   authService?: AuthService;
   rbacService?: RbacService;
   auditService?: AuditService;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
 }
 
 const UuidParamSchema = z
@@ -194,6 +199,7 @@ export const adminDashboardRoutes: FastifyPluginAsync<AdminDashboardRouteOptions
   const authService = opts.authService || defaultAuthService;
   const rbacService = opts.rbacService || defaultRbacService;
   const auditService = opts.auditService || defaultAuditService;
+  const concurrencyRegistry = opts.concurrencyRegistry || defaultConcurrencyRegistry;
 
   const requireAuth = createRequireAuth(authService);
 
@@ -660,14 +666,20 @@ export const adminDashboardRoutes: FastifyPluginAsync<AdminDashboardRouteOptions
 
       try {
         const actorSnapshot = await buildActorSnapshot(request, rbacService);
-        const result = await adminDashboardService.verifyFileIntegrity(
-          parsedParams.data.id,
-          {
-            actorUserId: request.user!.id,
-            actorSnapshot,
-            requestId: request.id.slice(0, 64),
-          },
-          access,
+        const result = await concurrencyRegistry.runWithPermit(
+          'admin_file_verify',
+          { actorKey: request.user!.id, request, reply },
+          (signal) =>
+            adminDashboardService.verifyFileIntegrity(
+              parsedParams.data.id,
+              {
+                actorUserId: request.user!.id,
+                actorSnapshot,
+                requestId: request.id.slice(0, 64),
+              },
+              access,
+              { signal },
+            ),
         );
         return reply.status(200).send({ data: result });
       } catch (err) {

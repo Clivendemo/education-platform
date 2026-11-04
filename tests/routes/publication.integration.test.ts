@@ -15,19 +15,22 @@ import { DefaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth
 import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Prompt 08: Publication Workflow Integration & Engine Rules', () => {
   const publicationService = new DbPublicationService(db);
   const authService = new DefaultAuthService(db);
   const rbacService = new DefaultRbacService(db);
-  const app = buildApp({
-    services: {
-      publicationService,
-      authService,
-      rbacService,
-    },
-  });
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        publicationService,
+        authService,
+        rbacService,
+      },
+    }),
+  );
 
   let authCookie = '';
   const createdUserIds: string[] = [];

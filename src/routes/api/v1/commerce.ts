@@ -29,6 +29,10 @@ import {
   registerRawDecimalWebhookJsonParser,
   createMpesaWebhookPreHandler,
 } from '../../middleware/mpesa-webhook-guard.js';
+import {
+  type BoundedConcurrencyRegistry,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
 
 export interface CommerceRouteOptions {
   commerceService?: CommerceService;
@@ -37,6 +41,7 @@ export interface CommerceRouteOptions {
   auditService?: AuditService;
   webhookRateLimiter?: MpesaWebhookRateLimiter;
   enableLegacyCallbackAlias?: boolean;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
 }
 
 const CheckoutItemSchema = z.object({
@@ -122,6 +127,7 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
   const rbacService = opts.rbacService ?? defaultRbacService;
   const auditService = opts.auditService ?? defaultAuditService;
   const webhookRateLimiter = opts.webhookRateLimiter ?? defaultMpesaWebhookRateLimiter;
+  const concurrencyRegistry = opts.concurrencyRegistry ?? defaultConcurrencyRegistry;
   const enableLegacyAlias =
     opts.enableLegacyCallbackAlias ?? env.MPESA_ENABLE_LEGACY_CALLBACK_ALIAS;
 
@@ -233,18 +239,23 @@ export const commerceRoutes: FastifyPluginAsync<CommerceRouteOptions> = async (
     },
   );
 
-  // 7. POST /payments — Initiate Payment for an Order
+  // 7. POST /payments — Initiate Payment for an Order (`commerce_payment_initiate` semaphore, non-abortable on disconnect)
   fastify.post(
     '/payments',
     { preHandler: [requireAuth] },
     async (request, reply) => {
       const user = request.user!;
       const body = InitiatePaymentSchema.parse(request.body);
-      const result = await commerceService.initiatePayment(
-        user.id,
-        body.orderId,
-        body.providerCode,
-        body.phoneNumber ? { phoneNumber: body.phoneNumber } : undefined,
+      const result = await concurrencyRegistry.runWithPermit(
+        'commerce_payment_initiate',
+        { actorKey: user.id, request, reply },
+        () =>
+          commerceService.initiatePayment(
+            user.id,
+            body.orderId,
+            body.providerCode,
+            body.phoneNumber ? { phoneNumber: body.phoneNumber } : undefined,
+          ),
       );
       return reply.status(201).send({ data: result });
     },

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { inArray, eq } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db } from '../../src/db/index.js';
 import {
   users,
@@ -24,12 +25,14 @@ describe('Free Downloads HTTP Route Integration Tests', () => {
   const downloadService = new DefaultDownloadService(db, memoryStorage, 300);
   const authService = defaultAuthService;
 
-  const app = buildApp({
-    services: {
-      downloadService,
-      authService,
-    },
-  });
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        downloadService,
+        authService,
+      },
+    }),
+  );
 
   let testCountryId: string;
   let testTypeId: string;

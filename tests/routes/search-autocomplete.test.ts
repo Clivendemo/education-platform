@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import type { SearchService } from '../../src/services/search.service.js';
-import type { AuthService } from '../../src/services/auth.service.js';
+import { SESSION_COOKIE_NAME, type AuthService } from '../../src/services/auth.service.js';
 import type { RbacService } from '../../src/services/rbac.service.js';
 
 describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
@@ -169,7 +169,7 @@ describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
   });
 
   describe('GET /api/v1/admin/search/demand', () => {
-    it('returns 401 UNAUTHORIZED when no session token is provided', async () => {
+    it('returns 401 UNAUTHENTICATED when no session token is provided', async () => {
       const app = buildApp({
         services: {
           searchService: mockSearchService,
@@ -184,7 +184,7 @@ describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
       });
 
       expect(res.statusCode).toBe(401);
-      expect(res.json().error.code).toBe('UNAUTHORIZED');
+      expect(res.json().error.code).toBe('UNAUTHENTICATED');
     });
 
     it('returns 403 FORBIDDEN when user lacks analytics.read permission', async () => {
@@ -205,7 +205,7 @@ describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
         method: 'GET',
         url: '/api/v1/admin/search/demand',
         cookies: {
-          elimu_session: 'valid-token',
+          [SESSION_COOKIE_NAME]: 'valid-token',
         },
       });
 
@@ -235,7 +235,7 @@ describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
         method: 'GET',
         url: '/api/v1/admin/search/demand?window=30d&type=all',
         cookies: {
-          elimu_session: 'valid-admin-token',
+          [SESSION_COOKIE_NAME]: 'valid-admin-token',
         },
       });
 
@@ -265,7 +265,7 @@ describe('Search Autocomplete, Related Discovery & Demand Routes', () => {
         method: 'GET',
         url: '/api/v1/admin/search/demand?minCount=1',
         cookies: {
-          elimu_session: 'valid-admin-token',
+          [SESSION_COOKIE_NAME]: 'valid-admin-token',
         },
       });
 

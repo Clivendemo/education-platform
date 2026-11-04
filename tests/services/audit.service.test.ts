@@ -4,22 +4,33 @@ import {
   validateAndSanitizeActorSnapshot,
   MAX_AUDIT_CONTEXT_BYTES,
   MAX_ACTOR_SNAPSHOT_BYTES,
-  AuditError,
 } from '../../src/services/audit.service.js';
+import {
+  REDACTED_LITERAL,
+  AUDIT_CONTEXT_SOFT_TARGET_BYTES,
+  ACTOR_SNAPSHOT_SOFT_TARGET_BYTES,
+  estimatePgJsonbTextBytesUpperBound,
+} from '../../src/utils/log-redactor.js';
 
 describe('AuditService Unit Tests', () => {
-  describe('Context Validation & Sanitization', () => {
+  describe('Context Validation, Recursive Redaction & Deterministic Compaction', () => {
     it('returns empty object when context is undefined', () => {
       expect(validateAndSanitizeContext(undefined)).toEqual({});
     });
 
-    it('retains safe context properties', () => {
-      const input = { resourceId: '123', actionType: 'PUBLISH', category: 'CBC' };
+    it('retains safe context properties including false-positive allowlist counters', () => {
+      const input = {
+        resourceId: '123',
+        actionType: 'PUBLISH',
+        category: 'CBC',
+        tokenCount: 42,
+        millitokens: 5000,
+      };
       const output = validateAndSanitizeContext(input);
       expect(output).toEqual(input);
     });
 
-    it('strips sensitive auth tokens and credentials', () => {
+    it('recursively replaces sensitive auth tokens and credentials with [REDACTED]', () => {
       const input = {
         resourceId: 'abc',
         password: 'my-secret-password',
@@ -28,29 +39,43 @@ describe('AuditService Unit Tests', () => {
         authorization: 'Bearer token-123',
         cookie: 'sessionId=abc',
         refreshToken: 'refresh-999',
+        nested: {
+          apiKey: 'sk-live-secret',
+        },
       };
       const output = validateAndSanitizeContext(input);
-      expect(output).toEqual({ resourceId: 'abc' });
-      expect(output).not.toHaveProperty('password');
-      expect(output).not.toHaveProperty('sessionToken');
-      expect(output).not.toHaveProperty('userSecret');
-      expect(output).not.toHaveProperty('authorization');
-      expect(output).not.toHaveProperty('cookie');
-      expect(output).not.toHaveProperty('refreshToken');
+      expect(output).toEqual({
+        resourceId: 'abc',
+        password: REDACTED_LITERAL,
+        sessionToken: REDACTED_LITERAL,
+        userSecret: REDACTED_LITERAL,
+        authorization: REDACTED_LITERAL,
+        cookie: REDACTED_LITERAL,
+        refreshToken: REDACTED_LITERAL,
+        nested: {
+          apiKey: REDACTED_LITERAL,
+        },
+      });
     });
 
-    it('rejects context payloads exceeding 4,096 bytes', () => {
+    it('deterministically compacts context payloads exceeding 3,800 bytes without throwing', () => {
       const largePayload = {
-        data: 'x'.repeat(MAX_AUDIT_CONTEXT_BYTES + 50),
+        requestId: 'req-oversized-1',
+        data: 'x'.repeat(MAX_AUDIT_CONTEXT_BYTES + 20_000),
       };
-      expect(() => validateAndSanitizeContext(largePayload)).toThrow(AuditError);
-      expect(() => validateAndSanitizeContext(largePayload)).toThrow(
-        /Audit context exceeds maximum permitted byte size of 4096 bytes/,
+      const compacted = validateAndSanitizeContext(largePayload);
+      expect(compacted._truncated).toBe(true);
+      expect(compacted.requestId).toBe('req-oversized-1');
+      expect(estimatePgJsonbTextBytesUpperBound(compacted)).toBeLessThanOrEqual(
+        AUDIT_CONTEXT_SOFT_TARGET_BYTES,
+      );
+      expect(Buffer.byteLength(JSON.stringify(compacted), 'utf8')).toBeLessThan(
+        MAX_AUDIT_CONTEXT_BYTES,
       );
     });
   });
 
-  describe('Actor Snapshot Validation & Sanitization', () => {
+  describe('Actor Snapshot Validation, Redaction & Deterministic Compaction', () => {
     it('defaults to SYSTEM actor if snapshot is undefined', () => {
       expect(validateAndSanitizeActorSnapshot(undefined)).toEqual({ actorType: 'SYSTEM' });
     });
@@ -66,16 +91,22 @@ describe('AuditService Unit Tests', () => {
       expect(output).toEqual(input);
     });
 
-    it('rejects actor snapshots exceeding 2,048 bytes', () => {
+    it('deterministically compacts actor snapshots exceeding 1,900 bytes without throwing', () => {
       const oversized = {
         actorId: 'user-uuid',
         actorType: 'AUTHENTICATED' as const,
-        actorRole: 'r'.repeat(MAX_ACTOR_SNAPSHOT_BYTES + 100),
+        actorRole: 'r'.repeat(MAX_ACTOR_SNAPSHOT_BYTES + 5_000),
       };
-      expect(() => validateAndSanitizeActorSnapshot(oversized)).toThrow(AuditError);
-      expect(() => validateAndSanitizeActorSnapshot(oversized)).toThrow(
-        /Actor snapshot exceeds maximum permitted byte size of 2048 bytes/,
+      const compacted = validateAndSanitizeActorSnapshot(oversized);
+      expect(compacted._truncated).toBe(true);
+      expect(compacted.actorType).toBe('AUTHENTICATED');
+      expect(estimatePgJsonbTextBytesUpperBound(compacted)).toBeLessThanOrEqual(
+        ACTOR_SNAPSHOT_SOFT_TARGET_BYTES,
+      );
+      expect(Buffer.byteLength(JSON.stringify(compacted), 'utf8')).toBeLessThan(
+        MAX_ACTOR_SNAPSHOT_BYTES,
       );
     });
   });
 });
+

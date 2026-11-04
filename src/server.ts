@@ -5,24 +5,15 @@ import { defaultNotificationService } from './services/notification.service.js';
 import { defaultRecommendationCacheService } from './services/recommendations/recommendation-cache.service.js';
 import { defaultMpesaReconciliationWorker } from './services/commerce/mpesa/mpesa-reconciliation.worker.js';
 import { defaultFileProcessingWorker } from './services/file-processing.worker.js';
+import { RateLimitService } from './services/rate-limit.service.js';
+import { createRedactedLoggerOptions } from './utils/log-redactor.js';
+
+const serverRateLimitService = new RateLimitService();
 
 const app = buildApp({
-  logger: {
-    level: env.LOG_LEVEL,
-    redact: [
-      'req.headers.cookie',
-      'req.headers.authorization',
-      '*.password',
-      '*.currentPassword',
-      '*.newPassword',
-      '*.token',
-      '*.sessionToken',
-      '*.token_hash',
-      '*.tokenHash',
-      '*.checkoutRequestId',
-      '*.phoneNumber',
-      '*.initiatedPhoneHash',
-    ],
+  logger: createRedactedLoggerOptions(env.LOG_LEVEL),
+  services: {
+    rateLimitService: serverRateLimitService,
   },
 });
 
@@ -70,6 +61,9 @@ async function startServer(): Promise<void> {
 
       defaultFileProcessingWorker.start();
       app.log.info('File quarantine & malware scan background worker active');
+
+      serverRateLimitService.startBackgroundMaintenance();
+      app.log.info('Rate-limit bucket & admission expiry reaper active');
     }
     app.log.info(`Server running at http://${env.HOST}:${port}`);
   } catch (err) {
@@ -86,6 +80,7 @@ for (const signal of signals) {
     try {
       defaultMpesaReconciliationWorker.stop();
       defaultFileProcessingWorker.stop();
+      serverRateLimitService.stopBackgroundMaintenance();
       await defaultRecommendationCacheService.stopListener();
       await app.close();
       await closeDatabase();

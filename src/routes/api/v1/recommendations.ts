@@ -26,6 +26,11 @@ import {
   GENERIC_FORBIDDEN_MESSAGE,
   resolveStaffPermissionAccess,
 } from '../../hooks/authorize.js';
+import { defaultRecommendationCacheService } from '../../../services/recommendations/recommendation-cache.service.js';
+import {
+  type BoundedConcurrencyRegistry,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
 
 export interface RecommendationRouteOptions {
   recommendationService?: RecommendationService;
@@ -33,6 +38,7 @@ export interface RecommendationRouteOptions {
   rbacService?: RbacService;
   auditService?: AuditService;
   db?: AppDatabase;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -115,6 +121,7 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
   const rbacService = opts.rbacService || defaultRbacService;
   const auditService = opts.auditService || defaultAuditService;
   const dbInstance = opts.db || defaultDb;
+  const concurrencyRegistry = opts.concurrencyRegistry || defaultConcurrencyRegistry;
 
   fastify.setErrorHandler((error: any, request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof RecommendationError) {
@@ -236,14 +243,29 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
   fastify.get('/resources/:id/recommendations', async (request, reply) => {
     const { id } = ResourceIdParamSchema.parse(request.params);
     const query = ResourceRecommendationsQuerySchema.parse(request.query);
+    const bypassCache = isBenchmarkBypassAllowed(request);
 
-    const result = await recommendationService.getResourceRecommendations({
-      sourceResourceId: id,
-      surface: query.surface,
-      limit: query.limit,
-      country: query.country,
-      bypassCache: isBenchmarkBypassAllowed(request),
-    });
+    const likelyCacheMiss =
+      bypassCache ||
+      defaultRecommendationCacheService.getListenerState() === 'DISCONNECTED' ||
+      defaultRecommendationCacheService.size() === 0;
+
+    const executeRecommendation = () =>
+      recommendationService.getResourceRecommendations({
+        sourceResourceId: id,
+        surface: query.surface,
+        limit: query.limit,
+        country: query.country,
+        bypassCache,
+      });
+
+    const result = likelyCacheMiss
+      ? await concurrencyRegistry.runWithPermit(
+          'db_heavy_compute',
+          { request, reply },
+          executeRecommendation,
+        )
+      : await executeRecommendation();
 
     return reply.status(200).send({
       data: result.data,
@@ -280,14 +302,31 @@ export const recommendationRoutes: FastifyPluginAsync<RecommendationRouteOptions
           ? profileData.country
           : null;
 
-    const result = await recommendationService.getContinueExploring({
-      country: query.country,
-      userCountryHint,
-      userId: user?.id ?? null,
-      anonymousSessionHash,
-      limit: query.limit,
-      bypassCache: isBenchmarkBypassAllowed(request),
-    });
+    const bypassCache = isBenchmarkBypassAllowed(request);
+    const likelyUncachedCompute =
+      bypassCache ||
+      Boolean(user?.id) ||
+      Boolean(anonymousSessionHash) ||
+      defaultRecommendationCacheService.getListenerState() === 'DISCONNECTED' ||
+      defaultRecommendationCacheService.size() === 0;
+
+    const executeExplore = () =>
+      recommendationService.getContinueExploring({
+        country: query.country,
+        userCountryHint,
+        userId: user?.id ?? null,
+        anonymousSessionHash,
+        limit: query.limit,
+        bypassCache,
+      });
+
+    const result = likelyUncachedCompute
+      ? await concurrencyRegistry.runWithPermit(
+          'db_heavy_compute',
+          { actorKey: user?.id, request, reply },
+          executeExplore,
+        )
+      : await executeExplore();
 
     return reply.status(200).send({
       data: result.data,

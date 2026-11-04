@@ -33,6 +33,7 @@ import { HomepageCacheService } from '../../src/services/homepage-cache.js';
 import { DefaultHomepageService } from '../../src/services/homepage.service.js';
 import { DefaultHomepageAdminService } from '../../src/services/homepage-admin.service.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 const isDbAvailable = Boolean(
@@ -61,17 +62,19 @@ describe.skipIf(!isDbAvailable)(
       auditService,
     );
 
-    const app = buildApp({
-      logger: false,
-      services: {
-        authService,
-        rbacService,
-        auditService,
-        geographyService: defaultGeographyService,
-        homepageService,
-        homepageAdminService,
-      },
-    });
+    const app = enableTestCsrfAutoInject(
+      buildApp({
+        logger: false,
+        services: {
+          authService,
+          rbacService,
+          auditService,
+          geographyService: defaultGeographyService,
+          homepageService,
+          homepageAdminService,
+        },
+      }),
+    );
 
     const createdCountryIds: string[] = [];
 

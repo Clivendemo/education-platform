@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../../src/services/auth.service.js';
 import type { RbacService, PermissionAccessResolution } from '../../src/services/rbac.service.js';
 import type { AuditService } from '../../src/services/audit.service.js';
@@ -148,20 +149,22 @@ function buildInstrumentedHarness(params: {
     },
   };
 
-  const app = buildApp({
-    logger: false,
-    services: {
-      authService: makeMockAuthService(),
-      rbacService,
-      auditService,
-      homepageAdminService,
-      homepageAdminInstrumentation: {
-        onOperation: (cat: HomepageAdminOperationCategory) => {
-          counts[cat] += 1;
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      logger: false,
+      services: {
+        authService: makeMockAuthService(),
+        rbacService,
+        auditService,
+        homepageAdminService,
+        homepageAdminInstrumentation: {
+          onOperation: (cat: HomepageAdminOperationCategory) => {
+            counts[cat] += 1;
+          },
         },
       },
-    },
-  });
+    }),
+  );
 
   if (params.failureMode === 'FM-3b') {
     app.addHook('onRequest', async (req) => {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../../src/services/auth.service.js';
 import {
   DefaultRbacService,
@@ -507,129 +508,131 @@ describe('Wave 2 WP5: RBAC Inventory, Seed Precondition Gate, Scope Enforcement 
       hasPermission: vi.fn(async () => false),
     } as unknown as RbacService;
 
-    const app = buildApp({
-      services: {
-        authService: mockAuthService,
-        rbacService: mockRbacService,
-        educationUpdateService: {
-          resolveCountryIdByIdentifier: vi.fn(async (c: string) =>
-            c === 'KE' || c === COUNTRY_KE
-              ? COUNTRY_KE
-              : c === 'UG' || c === COUNTRY_UG
-                ? COUNTRY_UG
-                : null,
-          ),
-          listAdminUpdates: vi.fn(async () => ({
-            data: [],
-            meta: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
-          })),
-          createUpdate: vi.fn(async (input: any) => ({
-            id: UPDATE_KE,
-            title: input.title,
-            slug: 'ke-circular',
-            countryId: input.countryId,
-            publicationStatus: 'DRAFT',
-          })),
-          getAdminUpdateById: vi.fn(async (id: string) => {
-            if (id === UPDATE_KE) return { id: UPDATE_KE, countryId: COUNTRY_KE, title: 'KE Update' };
-            if (id === UPDATE_UG) return { id: UPDATE_UG, countryId: COUNTRY_UG, title: 'UG Update' };
-            return null;
-          }),
-          publishUpdate: vi.fn(async (id: string) => ({
-            id,
-            countryId: COUNTRY_KE,
-            publicationStatus: 'PUBLISHED',
-          })),
-        } as any,
-        qualityService: {
-          listCheckTypes: vi.fn(async () => [{ id: 'ct-1', code: 'FACTUAL_ACCURACY' }]),
-          createCheckType: vi.fn(async (input: any) => ({ id: 'ct-2', ...input })),
-          getResourceCountryId: vi.fn(async (resId: string) => {
-            if (resId === RESOURCE_KE) return COUNTRY_KE;
-            if (resId === RESOURCE_UG) return COUNTRY_UG;
-            return null;
-          }),
-          verifyResourceVersion: vi.fn(async () => ({
-            id: 'verif-1',
-            resourceId: RESOURCE_KE,
-            verificationStatus: 'VERIFIED',
-          })),
-        } as any,
-        feedbackService: {
-          listFeedbackQueue: vi.fn(async () => ({
-            items: [],
-            total: 0,
-            page: 1,
-            limit: 20,
-          })),
-          getFeedbackResourceCountryId: vi.fn(async (fbId: string) => {
-            if (fbId === FEEDBACK_KE) return COUNTRY_KE;
-            if (fbId === FEEDBACK_UG) return COUNTRY_UG;
-            return null;
-          }),
-          getFeedbackById: vi.fn(async (fbId: string) => ({
-            id: fbId,
-            resourceId: RESOURCE_KE,
-            status: 'PENDING',
-            events: [],
-          })),
-          triageFeedback: vi.fn(async (fbId: string, input: any) => ({
-            id: fbId,
-            status: input.toStatus,
-          })),
-        } as any,
-        recommendationService: {
-          listRules: vi.fn(async () => ({
-            data: [],
-            meta: { page: 1, pageSize: 20, total: 0, hasMore: false },
-          })),
-          createRule: vi.fn(async (input: any) => ({
-            id: RULE_KE,
-            countryId: input.countryId,
-            ruleType: input.ruleType,
-            status: 'ACTIVE',
-          })),
-          getRuleById: vi.fn(async (id: string) => {
-            if (id === RULE_KE) return { id: RULE_KE, countryId: COUNTRY_KE, status: 'ACTIVE' };
-            if (id === RULE_UG) return { id: RULE_UG, countryId: COUNTRY_UG, status: 'ACTIVE' };
-            return null;
-          }),
-          deactivateRule: vi.fn(async ({ ruleId }: any) => ({
-            id: ruleId,
-            countryId: COUNTRY_KE,
-            status: 'INACTIVE',
-          })),
-        } as any,
-        auditService: {
-          logEvent: vi.fn(async () => ({})),
-          getAuditLogs: vi.fn(async () => ({
-            logs: [],
-            pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
-          })),
-        } as any,
-        retentionService: {
-          getPolicies: vi.fn(async () => []),
-        } as any,
-        analyticsService: {
-          getOverviewMetrics: vi.fn(async () => ({
-            actionCount: 0,
-            authenticatedUsers: 0,
-            pureAnonymousSessions: 0,
-            estimatedActorCount: 0,
-            downloadUrlIssuedCount: 0,
-            zeroResultRate: 0,
-          })),
-        } as any,
-        notificationService: {
-          listAdminDeliveries: vi.fn(async () => ({
-            items: [],
-            total: 0,
-            page: 1,
-            pageSize: 20,
-          })),
-        } as any,
-      },
-    });
+    const app = enableTestCsrfAutoInject(
+      buildApp({
+        services: {
+          authService: mockAuthService,
+          rbacService: mockRbacService,
+          educationUpdateService: {
+            resolveCountryIdByIdentifier: vi.fn(async (c: string) =>
+              c === 'KE' || c === COUNTRY_KE
+                ? COUNTRY_KE
+                : c === 'UG' || c === COUNTRY_UG
+                  ? COUNTRY_UG
+                  : null,
+            ),
+            listAdminUpdates: vi.fn(async () => ({
+              data: [],
+              meta: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
+            })),
+            createUpdate: vi.fn(async (input: any) => ({
+              id: UPDATE_KE,
+              title: input.title,
+              slug: 'ke-circular',
+              countryId: input.countryId,
+              publicationStatus: 'DRAFT',
+            })),
+            getAdminUpdateById: vi.fn(async (id: string) => {
+              if (id === UPDATE_KE) return { id: UPDATE_KE, countryId: COUNTRY_KE, title: 'KE Update' };
+              if (id === UPDATE_UG) return { id: UPDATE_UG, countryId: COUNTRY_UG, title: 'UG Update' };
+              return null;
+            }),
+            publishUpdate: vi.fn(async (id: string) => ({
+              id,
+              countryId: COUNTRY_KE,
+              publicationStatus: 'PUBLISHED',
+            })),
+          } as any,
+          qualityService: {
+            listCheckTypes: vi.fn(async () => [{ id: 'ct-1', code: 'FACTUAL_ACCURACY' }]),
+            createCheckType: vi.fn(async (input: any) => ({ id: 'ct-2', ...input })),
+            getResourceCountryId: vi.fn(async (resId: string) => {
+              if (resId === RESOURCE_KE) return COUNTRY_KE;
+              if (resId === RESOURCE_UG) return COUNTRY_UG;
+              return null;
+            }),
+            verifyResourceVersion: vi.fn(async () => ({
+              id: 'verif-1',
+              resourceId: RESOURCE_KE,
+              verificationStatus: 'VERIFIED',
+            })),
+          } as any,
+          feedbackService: {
+            listFeedbackQueue: vi.fn(async () => ({
+              items: [],
+              total: 0,
+              page: 1,
+              limit: 20,
+            })),
+            getFeedbackResourceCountryId: vi.fn(async (fbId: string) => {
+              if (fbId === FEEDBACK_KE) return COUNTRY_KE;
+              if (fbId === FEEDBACK_UG) return COUNTRY_UG;
+              return null;
+            }),
+            getFeedbackById: vi.fn(async (fbId: string) => ({
+              id: fbId,
+              resourceId: RESOURCE_KE,
+              status: 'PENDING',
+              events: [],
+            })),
+            triageFeedback: vi.fn(async (fbId: string, input: any) => ({
+              id: fbId,
+              status: input.toStatus,
+            })),
+          } as any,
+          recommendationService: {
+            listRules: vi.fn(async () => ({
+              data: [],
+              meta: { page: 1, pageSize: 20, total: 0, hasMore: false },
+            })),
+            createRule: vi.fn(async (input: any) => ({
+              id: RULE_KE,
+              countryId: input.countryId,
+              ruleType: input.ruleType,
+              status: 'ACTIVE',
+            })),
+            getRuleById: vi.fn(async (id: string) => {
+              if (id === RULE_KE) return { id: RULE_KE, countryId: COUNTRY_KE, status: 'ACTIVE' };
+              if (id === RULE_UG) return { id: RULE_UG, countryId: COUNTRY_UG, status: 'ACTIVE' };
+              return null;
+            }),
+            deactivateRule: vi.fn(async ({ ruleId }: any) => ({
+              id: ruleId,
+              countryId: COUNTRY_KE,
+              status: 'INACTIVE',
+            })),
+          } as any,
+          auditService: {
+            logEvent: vi.fn(async () => ({})),
+            getAuditLogs: vi.fn(async () => ({
+              logs: [],
+              pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
+            })),
+          } as any,
+          retentionService: {
+            getPolicies: vi.fn(async () => []),
+          } as any,
+          analyticsService: {
+            getOverviewMetrics: vi.fn(async () => ({
+              actionCount: 0,
+              authenticatedUsers: 0,
+              pureAnonymousSessions: 0,
+              estimatedActorCount: 0,
+              downloadUrlIssuedCount: 0,
+              zeroResultRate: 0,
+            })),
+          } as any,
+          notificationService: {
+            listAdminDeliveries: vi.fn(async () => ({
+              items: [],
+              total: 0,
+              page: 1,
+              pageSize: 20,
+            })),
+          } as any,
+        },
+      }),
+    );
 
     const cookieHeader = (tok: keyof typeof USERS) => ({
       cookie: `${SESSION_COOKIE_NAME}=${tok}`,

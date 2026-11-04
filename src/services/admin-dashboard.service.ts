@@ -240,6 +240,7 @@ export interface AdminDashboardService {
     fileId: string,
     actorContext: AdminActorContext,
     access: PermissionAccessResolution,
+    options?: { signal?: AbortSignal },
   ): Promise<Record<string, unknown>>;
 }
 
@@ -2036,12 +2037,26 @@ export class DefaultAdminDashboardService implements AdminDashboardService {
     fileId: string,
     actorContext: AdminActorContext,
     access: PermissionAccessResolution,
+    options?: { signal?: AbortSignal },
   ): Promise<Record<string, unknown>> {
     if (!access.granted) {
       throw new AdminDashboardError('FORBIDDEN', GENERIC_FORBIDDEN_MESSAGE, 403);
     }
 
     this.enforceVerifyRateLimit(actorContext.actorUserId);
+
+    if (options?.signal?.aborted) {
+      const reason = options.signal.reason;
+      const msg = reason instanceof Error ? reason.message : String(reason || 'ABORTED');
+      const abortErr = new Error(
+        msg === 'CLIENT_DISCONNECTED'
+          ? 'Client disconnected during file integrity verification.'
+          : 'File integrity verification timed out.',
+      ) as Error & { statusCode?: number; code?: string };
+      abortErr.statusCode = msg === 'CLIENT_DISCONNECTED' ? 499 : 503;
+      abortErr.code = msg === 'CLIENT_DISCONNECTED' ? 'CLIENT_CLOSED_REQUEST' : 'SERVER_BUSY';
+      throw abortErr;
+    }
 
     const [row] = await this.dbInstance
       .select({
@@ -2084,8 +2099,21 @@ export class DefaultAdminDashboardService implements AdminDashboardService {
 
     let verification;
     try {
-      verification = await this.fileStorageService.verifyFileIntegrity(fileId);
+      verification = await this.fileStorageService.verifyFileIntegrity(fileId, options);
     } catch (err) {
+      if (options?.signal?.aborted || (err as { name?: string })?.name === 'AbortError') {
+        const reason = options?.signal?.reason;
+        const msg = reason instanceof Error ? reason.message : String(reason || 'ABORTED');
+        const abortErr = new Error(
+          msg === 'CLIENT_DISCONNECTED'
+            ? 'Client disconnected during storage HEAD verification.'
+            : 'Storage HEAD verification timed out.',
+        ) as Error & { statusCode?: number; code?: string };
+        abortErr.statusCode = msg === 'CLIENT_DISCONNECTED' ? 499 : 503;
+        abortErr.code = msg === 'CLIENT_DISCONNECTED' ? 'CLIENT_CLOSED_REQUEST' : 'SERVER_BUSY';
+        throw abortErr;
+      }
+
       try {
         await this.auditService.logEvent({
           action: 'ADMIN_FILE_INTEGRITY_VERIFIED',

@@ -93,6 +93,16 @@ export const RETENTION_TARGET_REGISTRY: Record<string, TargetRegistryEntry> = {
       throw new RetentionError('AUDIT_LOGS archiving unsupported in this milestone', 400, 'UNSUPPORTED_TARGET');
     },
   },
+  RATE_LIMIT_BUCKETS: {
+    table: 'system.rate_limit_buckets',
+    idColumn: 'id',
+    referenceColumn: 'expires_at',
+    timestampColumn: 'expires_at',
+    mutation: 'DELETE',
+    isExecutable: true,
+    requiredIndex: 'idx_rate_limit_buckets_expires_at',
+    buildPredicateSql: (param) => `expires_at < ${param} AND expires_at < now()`,
+  },
 };
 
 export interface CreatePolicyInput {
@@ -873,6 +883,18 @@ export class DefaultRetentionService implements RetentionService {
         disposition: 'ARCHIVE' as const,
         status: 'INACTIVE' as const,
         legalBasis: 'Platform security policy default',
+      },
+      {
+        policyCode: 'RET_RATE_LIMIT_BUCKETS_7D',
+        name: 'Expired Rate-Limit Buckets 7-Day Purge',
+        description: 'Purges expired distributed rate-limit token buckets 7 days after expiration',
+        dataCategory: 'RATE_LIMIT_BUCKETS',
+        targetIdentifier: 'system.rate_limit_buckets',
+        referencePoint: 'expires_at',
+        retentionDurationDays: 7,
+        disposition: 'DELETE' as const,
+        status: 'ACTIVE' as const,
+        legalBasis: 'Operational hygiene and bounded system table growth',
       },
     ];
 

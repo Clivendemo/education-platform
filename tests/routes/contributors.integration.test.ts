@@ -15,18 +15,21 @@ import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { contributorService } from '../../src/services/contributor.service.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Contributor System HTTP Route Integration Tests', () => {
   const authService = new DefaultAuthService(db);
   const rbacService = new DefaultRbacService(db);
-  const app = buildApp({
-    services: {
-      authService,
-      rbacService,
-      contributorService,
-    },
-  });
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        authService,
+        rbacService,
+        contributorService,
+      },
+    }),
+  );
 
   let adminCookie = '';
   let adminUserId = '';

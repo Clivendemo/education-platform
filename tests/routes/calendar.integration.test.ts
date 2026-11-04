@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { getDb, closeDatabase } from '../../src/db/index.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import {
   calendars,
   calendarEvents,
@@ -27,7 +28,7 @@ describe('Calendar HTTP Route Integration Tests', () => {
 
   beforeAll(async () => {
     await withDbRetry(() => setupCalendarSchema(db));
-    app = buildApp();
+    app = enableTestCsrfAutoInject(buildApp());
     await app.ready();
 
     // 1. Resolve country

@@ -19,6 +19,12 @@ import {
   type RbacService,
 } from '../../../services/rbac.service.js';
 import { sanitizeSearchQuery } from '../../../utils/search-sanitizer.js';
+import { GENERIC_FORBIDDEN_MESSAGE } from '../../hooks/authorize.js';
+import {
+  type BoundedConcurrencyRegistry,
+  ConcurrencyBusyError,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
 
 export const defaultSearchService: SearchService = new DefaultSearchService();
 
@@ -27,6 +33,7 @@ export interface SearchRouteOptions {
   analyticsService?: AnalyticsService;
   authService?: AuthService;
   rbacService?: RbacService;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
 }
 
 const SearchQuerySchema = z.object({
@@ -102,27 +109,23 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
   const analyticsService = opts.analyticsService || defaultAnalyticsService;
   const authService = opts.authService || defaultAuthService;
   const rbacService = opts.rbacService || defaultRbacService;
+  const concurrencyRegistry = opts.concurrencyRegistry || defaultConcurrencyRegistry;
 
   const getAuthenticatedUser = async (request: FastifyRequest) => {
     const directUser = (request as any).user;
     if (directUser?.id) return directUser;
 
-    const authHeader = request.headers.authorization;
-    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
-
-    const cookieHeader = request.headers.cookie;
-    const cookieToken =
-      request.cookies?.[SESSION_COOKIE_NAME] ||
-      request.cookies?.['session_token'] ||
-      (cookieHeader
-        ? cookieHeader.match(/(?:^|;\s*)(?:session_token|elimu_session)=([^;]+)/)?.[1]
-        : null);
-
-    const rawToken = bearerToken || cookieToken;
+    // Strictly authenticate via canonical HttpOnly SESSION_COOKIE_NAME (`session_token`) only.
+    // Ad-hoc `elimu_session` cookies and `Authorization: Bearer` headers are rejected (W3-AC-05).
+    const rawCookieVal = request.cookies?.[SESSION_COOKIE_NAME];
+    const rawToken =
+      typeof rawCookieVal === 'string' && rawCookieVal.trim().length > 0
+        ? rawCookieVal.trim()
+        : null;
     if (!rawToken) return null;
 
     try {
-      const sessionResult = await authService.validateSession(rawToken.trim());
+      const sessionResult = await authService.validateSession(rawToken);
       return sessionResult ? sessionResult.user : null;
     } catch {
       return null;
@@ -295,16 +298,19 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
   });
 
   /**
-   * Protected Search Demand Analytics: GET /api/v1/admin/search/demand
-   * Requires valid authenticated user session and canonical permission 'analytics.read'.
+   * Protected Search Demand Analytics: GET /api/v1/admin/search/demand (and /api/v1/search/analytics alias)
+   * Requires valid authenticated user session (`session_token`) and canonical permission 'analytics.read'.
    */
-  fastify.get('/admin/search/demand', async (request: FastifyRequest, reply: FastifyReply) => {
+  const handleSearchDemandAnalytics = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
     const user = await getAuthenticatedUser(request);
     if (!user) {
       return reply.status(401).send({
         error: {
-          code: 'UNAUTHORIZED',
-          message: 'Authentication required to access search demand analytics',
+          code: 'UNAUTHENTICATED',
+          message: 'Authentication is required to access this resource',
           requestId: request.id,
         },
       });
@@ -315,7 +321,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
       return reply.status(403).send({
         error: {
           code: 'FORBIDDEN',
-          message: 'Insufficient permissions to view search demand analytics',
+          message: GENERIC_FORBIDDEN_MESSAGE,
           requestId: request.id,
         },
       });
@@ -336,12 +342,19 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
       if (!searchService.getSearchDemand) {
         throw new Error('getSearchDemand is not supported by the configured SearchService');
       }
-      const result = await searchService.getSearchDemand(parseRes.data);
+      const result = await concurrencyRegistry.runWithPermit(
+        'db_heavy_compute',
+        { actorKey: user.id, request, reply },
+        () => searchService.getSearchDemand!(parseRes.data),
+      );
       return reply.status(200).send({
         data: result.data,
         meta: result.meta,
       });
     } catch (err: any) {
+      if (err instanceof ConcurrencyBusyError) {
+        throw err;
+      }
       request.log.error(err, 'Search demand report error');
       return reply.status(500).send({
         error: {
@@ -351,5 +364,8 @@ export const searchRoutes: FastifyPluginAsync<SearchRouteOptions> = async (
         },
       });
     }
-  });
+  };
+
+  fastify.get('/admin/search/demand', handleSearchDemandAnalytics);
+  fastify.get('/search/analytics', handleSearchDemandAnalytics);
 };

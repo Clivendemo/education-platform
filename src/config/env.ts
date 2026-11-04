@@ -51,6 +51,80 @@ const optionalTrustProxyHops = z.preprocess((val) => {
   return val;
 }, z.number().int().min(0).max(5).optional());
 
+const DEV_CSRF_FALLBACK_SECRET = 'dev-test-only-csrf-hmac-secret-32chars!';
+const DEV_RL_HMAC_FALLBACK_SECRET = 'dev-test-only-rl-hmac-secret-32chars!!';
+
+function isWeakOrPlaceholderSecret(val: string, devFallbackLiteral: string): boolean {
+  const trimmed = val.trim();
+  if (trimmed.length < 32) return true;
+  if (trimmed === devFallbackLiteral) return true;
+  if (/^(.)\1+$/.test(trimmed)) return true;
+  const lower = trimmed.toLowerCase();
+  const forbiddenPatterns = [
+    'change-me',
+    'changeme',
+    'your_',
+    'your-',
+    'example',
+    'placeholder',
+    'default-secret',
+    'dev-only',
+    'dev-test-only',
+  ];
+  return forbiddenPatterns.some((p) => lower.includes(p));
+}
+
+function parseSingleExactOrigin(rawEntry: string): string | null {
+  const trimmed = rawEntry.trim();
+  if (!trimmed || trimmed === '*' || trimmed.toLowerCase() === 'null') {
+    return null;
+  }
+  if (trimmed.endsWith('/')) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      (parsed.pathname !== '/' && parsed.pathname !== '')
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return (
+    lower === 'localhost' ||
+    lower === '127.0.0.1' ||
+    lower === '[::1]' ||
+    lower === '::1' ||
+    lower === '0.0.0.0'
+  );
+}
+
+const optionalSecretString = z.preprocess((val) => {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === 'string' && val.trim() === '') return undefined;
+  return val;
+}, z.string().min(32).optional());
+
+const optionalCorsOriginsRaw = z.preprocess((val) => {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === 'string' && val.trim() === '') return undefined;
+  return val;
+}, z.string().optional());
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -108,6 +182,23 @@ export const envSchema = z
     MPESA_PASSKEY: z.string().optional(),
     MPESA_CALLBACK_URL: z.string().url().optional(),
     MPESA_ENABLE_LEGACY_CALLBACK_ALIAS: strictEnvBoolean(false),
+
+    // Wave 3 WP3: Strict CORS, CSRF & Staged HSTS Configuration (Zero Disable Switches)
+    CORS_ALLOWED_ORIGINS: optionalCorsOriginsRaw,
+    CSRF_SECRET: optionalSecretString,
+    CSRF_SECRET_PREVIOUS: optionalSecretString,
+    CSRF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86400).default(7200),
+    HSTS_MAX_AGE_SECONDS: z.coerce.number().int().min(0).max(63072000).default(300),
+    HSTS_INCLUDE_SUBDOMAINS: strictEnvBoolean(false),
+
+    // Wave 3 WP4: Distributed Rate-Limit HMAC Secrets & Heavy-Endpoint Concurrency Caps
+    RATE_LIMIT_HMAC_SECRET: optionalSecretString,
+    RATE_LIMIT_HMAC_SECRET_SECONDARY: optionalSecretString,
+    CONCURRENCY_MAX_AUTH_ARGON2: z.coerce.number().int().min(1).max(64).default(4),
+    CONCURRENCY_MAX_CALENDAR_EXPORT: z.coerce.number().int().min(1).max(32).default(2),
+    CONCURRENCY_MAX_PAYMENT_INITIATE: z.coerce.number().int().min(1).max(64).default(4),
+    CONCURRENCY_MAX_ADMIN_FILE_VERIFY: z.coerce.number().int().min(1).max(32).default(2),
+    CONCURRENCY_MAX_DB_HEAVY: z.coerce.number().int().min(1).max(32).default(3),
   })
   .superRefine((data, ctx) => {
     // Cross-field pool range validation
@@ -116,6 +207,56 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         message: 'DATABASE_POOL_MIN must be less than or equal to DATABASE_POOL_MAX.',
         path: ['DATABASE_POOL_MIN'],
+      });
+    }
+
+    // Validate CORS_ALLOWED_ORIGINS syntax whenever explicitly provided
+    const parsedOrigins: string[] = [];
+    if (data.CORS_ALLOWED_ORIGINS !== undefined) {
+      const rawItems = data.CORS_ALLOWED_ORIGINS.split(',');
+      for (const item of rawItems) {
+        const origin = parseSingleExactOrigin(item);
+        if (!origin) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Invalid origin "${item.trim()}" in CORS_ALLOWED_ORIGINS: must be exact scheme://host[:port] with no wildcards, paths, or trailing slashes.`,
+            path: ['CORS_ALLOWED_ORIGINS'],
+          });
+        } else {
+          parsedOrigins.push(origin);
+        }
+      }
+      if (parsedOrigins.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'CORS_ALLOWED_ORIGINS must contain at least one valid origin.',
+          path: ['CORS_ALLOWED_ORIGINS'],
+        });
+      }
+    }
+
+    if (
+      data.CSRF_SECRET &&
+      data.CSRF_SECRET_PREVIOUS &&
+      data.CSRF_SECRET === data.CSRF_SECRET_PREVIOUS
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CSRF_SECRET_PREVIOUS must differ from active CSRF_SECRET when configured.',
+        path: ['CSRF_SECRET_PREVIOUS'],
+      });
+    }
+
+    if (
+      data.RATE_LIMIT_HMAC_SECRET &&
+      data.RATE_LIMIT_HMAC_SECRET_SECONDARY &&
+      data.RATE_LIMIT_HMAC_SECRET === data.RATE_LIMIT_HMAC_SECRET_SECONDARY
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'RATE_LIMIT_HMAC_SECRET_SECONDARY must differ from active RATE_LIMIT_HMAC_SECRET during coordinated key rotation.',
+        path: ['RATE_LIMIT_HMAC_SECRET_SECONDARY'],
       });
     }
 
@@ -166,7 +307,7 @@ export const envSchema = z
       });
     }
 
-    // Production environment fail-fast security invariants (W1-AC-03, W1-AC-08, W1-AC-09)
+    // Production environment fail-fast security invariants (W1-AC-03, W1-AC-08, W1-AC-09, W3-AC-01..03)
     if (data.NODE_ENV === 'production') {
       if (data.ALLOW_PAYMENT_SIMULATION) {
         ctx.addIssue({
@@ -186,6 +327,7 @@ export const envSchema = z
         });
       }
 
+      let canonicalOriginInProd: string | null = null;
       if (
         !data.CANONICAL_DOMAIN ||
         data.CANONICAL_DOMAIN.includes('localhost') ||
@@ -196,6 +338,102 @@ export const envSchema = z
           message:
             'In production, CANONICAL_DOMAIN must be explicitly set to a valid public URL and cannot be localhost.',
           path: ['CANONICAL_DOMAIN'],
+        });
+      } else {
+        try {
+          const parsedCanonical = new URL(data.CANONICAL_DOMAIN);
+          if (parsedCanonical.protocol !== 'https:' || isLoopbackHost(parsedCanonical.hostname)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'In production, CANONICAL_DOMAIN must use https:// and a non-loopback host.',
+              path: ['CANONICAL_DOMAIN'],
+            });
+          } else {
+            canonicalOriginInProd = parsedCanonical.origin;
+          }
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'In production, CANONICAL_DOMAIN must be a valid https:// URL.',
+            path: ['CANONICAL_DOMAIN'],
+          });
+        }
+      }
+
+      if (data.CORS_ALLOWED_ORIGINS === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'In production, CORS_ALLOWED_ORIGINS must be explicitly configured.',
+          path: ['CORS_ALLOWED_ORIGINS'],
+        });
+      } else {
+        for (const origin of parsedOrigins) {
+          const urlObj = new URL(origin);
+          if (urlObj.protocol !== 'https:' || isLoopbackHost(urlObj.hostname)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `In production, every CORS_ALLOWED_ORIGINS entry ("${origin}") must use https:// and must not be a loopback host.`,
+              path: ['CORS_ALLOWED_ORIGINS'],
+            });
+          }
+        }
+        if (canonicalOriginInProd && !parsedOrigins.includes(canonicalOriginInProd)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `In production, CORS_ALLOWED_ORIGINS must include CANONICAL_DOMAIN origin (${canonicalOriginInProd}).`,
+            path: ['CORS_ALLOWED_ORIGINS'],
+          });
+        }
+      }
+
+      if (
+        !data.CSRF_SECRET ||
+        isWeakOrPlaceholderSecret(data.CSRF_SECRET, DEV_CSRF_FALLBACK_SECRET)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'In production, CSRF_SECRET (>= 32 high-entropy non-placeholder characters) is strictly required.',
+          path: ['CSRF_SECRET'],
+        });
+      }
+
+      if (
+        data.CSRF_SECRET_PREVIOUS &&
+        isWeakOrPlaceholderSecret(data.CSRF_SECRET_PREVIOUS, DEV_CSRF_FALLBACK_SECRET)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'In production, CSRF_SECRET_PREVIOUS must be >= 32 non-placeholder characters when set.',
+          path: ['CSRF_SECRET_PREVIOUS'],
+        });
+      }
+
+      if (
+        !data.RATE_LIMIT_HMAC_SECRET ||
+        isWeakOrPlaceholderSecret(data.RATE_LIMIT_HMAC_SECRET, DEV_RL_HMAC_FALLBACK_SECRET)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'In production, RATE_LIMIT_HMAC_SECRET (>= 32 high-entropy non-placeholder characters) is strictly required.',
+          path: ['RATE_LIMIT_HMAC_SECRET'],
+        });
+      }
+
+      if (
+        data.RATE_LIMIT_HMAC_SECRET_SECONDARY &&
+        isWeakOrPlaceholderSecret(
+          data.RATE_LIMIT_HMAC_SECRET_SECONDARY,
+          DEV_RL_HMAC_FALLBACK_SECRET,
+        )
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'In production, RATE_LIMIT_HMAC_SECRET_SECONDARY must be >= 32 non-placeholder characters when set.',
+          path: ['RATE_LIMIT_HMAC_SECRET_SECONDARY'],
         });
       }
 
@@ -271,6 +509,47 @@ export const envSchema = z
         });
       }
     }
+  })
+  .transform((data) => {
+    const effectiveCsrfSecret =
+      data.CSRF_SECRET ??
+      (data.NODE_ENV !== 'production' ? DEV_CSRF_FALLBACK_SECRET : '');
+    const effectiveRateLimitHmacSecret =
+      data.RATE_LIMIT_HMAC_SECRET ??
+      (data.NODE_ENV !== 'production' ? DEV_RL_HMAC_FALLBACK_SECRET : '');
+
+    let allowedCorsOrigins: string[];
+    if (data.CORS_ALLOWED_ORIGINS !== undefined) {
+      allowedCorsOrigins = Array.from(
+        new Set(
+          data.CORS_ALLOWED_ORIGINS.split(',')
+            .map((entry) => parseSingleExactOrigin(entry))
+            .filter((origin): origin is string => Boolean(origin)),
+        ),
+      );
+    } else if (data.NODE_ENV !== 'production') {
+      const defaults = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+      ];
+      try {
+        defaults.unshift(new URL(data.CANONICAL_DOMAIN).origin);
+      } catch {
+        // Ignore malformed canonical domain in non-prod fallback array
+      }
+      allowedCorsOrigins = Array.from(new Set(defaults));
+    } else {
+      allowedCorsOrigins = [];
+    }
+
+    return {
+      ...data,
+      CSRF_SECRET: effectiveCsrfSecret,
+      RATE_LIMIT_HMAC_SECRET: effectiveRateLimitHmacSecret,
+      ALLOWED_CORS_ORIGINS_LIST: allowedCorsOrigins,
+    };
   });
 
 const parsed = envSchema.safeParse(process.env);
@@ -282,3 +561,4 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export type Env = z.infer<typeof envSchema>;
+

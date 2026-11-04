@@ -4,6 +4,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { db } from '../db/index.js';
 import * as schemas from '../db/schemas.js';
 import { auditLogs, type AuditLog, type NewAuditLog } from '../db/schema/governance.js';
+import {
+  sanitizeAndBoundAuditState,
+  sanitizeAndCompactActorSnapshot,
+  sanitizeAndCompactAuditContext,
+} from '../utils/log-redactor.js';
 
 export class AuditError extends Error {
   constructor(
@@ -22,6 +27,8 @@ export interface ActorSnapshot {
   actorRole?: string;
   emailDomain?: string;
   displayName?: string;
+  _truncated?: boolean;
+  _originalEstimatedBytes?: number;
 }
 
 export interface AuditEventInput {
@@ -68,59 +75,22 @@ export const MAX_AUDIT_CONTEXT_BYTES = 4096;
 export const MAX_ACTOR_SNAPSHOT_BYTES = 2048;
 
 /**
- * Sanitizes and validates context payload size.
+ * Recursively masks sensitive keys/values with `[REDACTED]` (preserving false-positive allowlist keys),
+ * normalizes Unicode (`toWellFormed` + NUL removal), and deterministically compacts oversized payloads
+ * to `<= 3,800` PG JSONB text bytes (`<= 4,096` hard DB CHECK) without throwing `AuditError`.
  */
-export function validateAndSanitizeContext(context?: Record<string, unknown>): Record<string, unknown> {
-  if (!context) return {};
-
-  // Strip sensitive credentials/tokens
-  const sanitized = { ...context };
-  const sensitiveKeys = ['password', 'token', 'secret', 'authorization', 'cookie', 'accessToken', 'refreshToken'];
-  for (const key of Object.keys(sanitized)) {
-    if (sensitiveKeys.some((s) => key.toLowerCase().includes(s))) {
-      delete sanitized[key];
-    }
-  }
-
-  const jsonStr = JSON.stringify(sanitized);
-  const byteLength = Buffer.byteLength(jsonStr, 'utf8');
-  if (byteLength > MAX_AUDIT_CONTEXT_BYTES) {
-    throw new AuditError(
-      `Audit context exceeds maximum permitted byte size of ${MAX_AUDIT_CONTEXT_BYTES} bytes (actual: ${byteLength} bytes).`,
-      400,
-      'AUDIT_CONTEXT_TOO_LARGE',
-    );
-  }
-
-  return sanitized;
+export function validateAndSanitizeContext(
+  context?: Record<string, unknown>,
+): Record<string, unknown> {
+  return sanitizeAndCompactAuditContext(context);
 }
 
 /**
- * Sanitizes and validates actor snapshot payload size.
+ * Normalizes, scrubs, and deterministically compacts `actorSnapshot` to `<= 1,900` PG JSONB text bytes
+ * (`<= 2,048` hard DB CHECK) without throwing `AuditError`.
  */
 export function validateAndSanitizeActorSnapshot(snapshot?: ActorSnapshot): ActorSnapshot {
-  if (!snapshot) {
-    return { actorType: 'SYSTEM' };
-  }
-
-  const sanitized: ActorSnapshot = {
-    actorId: snapshot.actorId,
-    actorType: snapshot.actorType,
-    actorRole: snapshot.actorRole,
-    emailDomain: snapshot.emailDomain,
-  };
-
-  const jsonStr = JSON.stringify(sanitized);
-  const byteLength = Buffer.byteLength(jsonStr, 'utf8');
-  if (byteLength > MAX_ACTOR_SNAPSHOT_BYTES) {
-    throw new AuditError(
-      `Actor snapshot exceeds maximum permitted byte size of ${MAX_ACTOR_SNAPSHOT_BYTES} bytes (actual: ${byteLength} bytes).`,
-      400,
-      'ACTOR_SNAPSHOT_TOO_LARGE',
-    );
-  }
-
-  return sanitized;
+  return sanitizeAndCompactActorSnapshot(snapshot);
 }
 
 export interface AuditService {
@@ -138,6 +108,8 @@ export class DefaultAuditService implements AuditService {
     const eventId = input.eventId || crypto.randomUUID();
     const sanitizedContext = validateAndSanitizeContext(input.context);
     const sanitizedActor = validateAndSanitizeActorSnapshot(input.actorSnapshot);
+    const sanitizedBeforeState = sanitizeAndBoundAuditState(input.beforeState);
+    const sanitizedAfterState = sanitizeAndBoundAuditState(input.afterState);
 
     const rowToInsert: NewAuditLog = {
       eventId,
@@ -150,8 +122,8 @@ export class DefaultAuditService implements AuditService {
       outcome: input.outcome,
       requestId: input.requestId || null,
       countryId: input.countryId || null,
-      beforeState: input.beforeState || null,
-      afterState: input.afterState || null,
+      beforeState: sanitizedBeforeState,
+      afterState: sanitizedAfterState,
       context: sanitizedContext,
       occurredAt: input.occurredAt || new Date(),
     };

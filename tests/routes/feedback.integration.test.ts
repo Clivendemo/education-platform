@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq, inArray } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db } from '../../src/db/index.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 import {
@@ -54,7 +55,7 @@ describe.skipIf(!isDbAvailable)('Resource Feedback Route Integration Tests', () 
   let adminUserId: string;
 
   beforeAll(async () => {
-    app = buildApp();
+    app = enableTestCsrfAutoInject(buildApp());
     await app.ready();
 
     // 1. Resolve country & resource type

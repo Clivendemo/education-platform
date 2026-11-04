@@ -39,6 +39,18 @@ import {
   createMpesaWebhookPreHandler,
   registerRawDecimalWebhookJsonParser,
 } from './routes/middleware/mpesa-webhook-guard.js';
+import { registerHttpSecurity } from './routes/middleware/http-security.js';
+import { registerCsrfGuard } from './routes/middleware/csrf-guard.js';
+import {
+  DEFAULT_GLOBAL_BODY_LIMIT_BYTES,
+  registerRateLimitGuard,
+} from './routes/middleware/rate-limit-guard.js';
+import {
+  BoundedConcurrencyRegistry,
+  RateLimitService,
+  defaultConcurrencyRegistry,
+} from './services/rate-limit.service.js';
+import { createRedactedLoggerOptions } from './utils/log-redactor.js';
 import type { GeographyService } from './services/geography.service.js';
 import type { SchoolService } from './services/school.service.js';
 import type { CurriculumService } from './services/curriculum.service.js';
@@ -136,6 +148,14 @@ export interface AppOptions extends Omit<FastifyServerOptions, 'trustProxy'> {
     | ((address: string, hop: number) => boolean);
   nodeEnvOverride?: 'development' | 'test' | 'production';
   configuredTrustProxyHopsOverride?: number;
+  corsAllowedOriginsOverride?: string[];
+  canonicalDomainOverride?: string;
+  hstsMaxAgeSecondsOverride?: number;
+  hstsIncludeSubDomainsOverride?: boolean;
+  csrfSecretOverride?: string;
+  csrfSecretPreviousOverride?: string;
+  csrfTokenTtlSecondsOverride?: number;
+  csrfNowSecFn?: () => number;
   services?: {
     geographyService?: GeographyService;
     schoolService?: SchoolService;
@@ -168,6 +188,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, 'trustProxy'> {
     homepageAdminInstrumentation?: HomepageAdminInstrumentation;
     webhookRateLimiter?: MpesaWebhookRateLimiter;
     enableLegacyCallbackAlias?: boolean;
+    rateLimitService?: RateLimitService;
+    concurrencyRegistry?: BoundedConcurrencyRegistry;
   };
 }
 
@@ -177,6 +199,14 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     trustProxy: optsTrustProxy,
     nodeEnvOverride,
     configuredTrustProxyHopsOverride,
+    corsAllowedOriginsOverride,
+    canonicalDomainOverride,
+    hstsMaxAgeSecondsOverride,
+    hstsIncludeSubDomainsOverride,
+    csrfSecretOverride,
+    csrfSecretPreviousOverride,
+    csrfTokenTtlSecondsOverride,
+    csrfNowSecFn,
     ...restServerOpts
   } = opts;
 
@@ -198,6 +228,13 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       ? false
       : (_address: string, hop: number) => hop < effectiveTrustProxy;
 
+  const effectiveBodyLimit =
+    restServerOpts.bodyLimit ?? DEFAULT_GLOBAL_BODY_LIMIT_BYTES;
+  const effectiveLogger = createRedactedLoggerOptions(
+    env.LOG_LEVEL,
+    restServerOpts.logger,
+  );
+
   const app = fastify({
     requestIdHeader: false, // Prevents Fastify from blindly adopting unvalidated headers
     genReqId: (req) => {
@@ -211,6 +248,8 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       return logger.child({ ...bindings, requestId: bindings.reqId }, options);
     },
     ...restServerOpts,
+    logger: effectiveLogger,
+    bodyLimit: effectiveBodyLimit,
     // Placed strictly AFTER ...restServerOpts so unvalidated options can never overwrite trustProxy
     trustProxy: fastifyTrustProxy,
   });
@@ -262,8 +301,44 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     });
   });
 
+  const enableLegacyAlias =
+    services?.enableLegacyCallbackAlias ?? env.MPESA_ENABLE_LEGACY_CALLBACK_ALIAS;
+  const effectiveRateLimitService =
+    services?.rateLimitService ?? new RateLimitService({ nodeEnv: effectiveNodeEnv });
+  const effectiveConcurrencyRegistry =
+    services?.concurrencyRegistry ?? defaultConcurrencyRegistry;
+
   // Register cookie parser/serializer without signing secret
   app.register(fastifyCookie);
+
+  // Wave 3 WP3 & WP4 global HTTP security, strict CSRF, and two-tier rate-limit guards
+  registerHttpSecurity(app, {
+    nodeEnv: effectiveNodeEnv,
+    allowedOrigins: corsAllowedOriginsOverride,
+    canonicalDomain: canonicalDomainOverride,
+    hstsMaxAgeSeconds: hstsMaxAgeSecondsOverride,
+    hstsIncludeSubDomains: hstsIncludeSubDomainsOverride,
+  });
+
+  registerCsrfGuard(app, {
+    nodeEnv: effectiveNodeEnv,
+    allowedOrigins: corsAllowedOriginsOverride,
+    csrfSecret: csrfSecretOverride,
+    csrfSecretPrevious: csrfSecretPreviousOverride,
+    csrfTokenTtlSeconds: csrfTokenTtlSecondsOverride,
+    enableLegacyCallbackAlias: enableLegacyAlias,
+    nowSecFn: csrfNowSecFn,
+  });
+
+  registerRateLimitGuard(app, {
+    rateLimitService: effectiveRateLimitService,
+    defaultBodyLimitBytes: effectiveBodyLimit,
+    enableLegacyCallbackAlias: enableLegacyAlias,
+  });
+
+  app.addHook('onClose', async () => {
+    effectiveRateLimitService.stopBackgroundMaintenance();
+  });
 
   // Mount API v1 routes
   app.register(healthRoutes, { prefix: '/api/v1' });
@@ -309,6 +384,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     analyticsService: services?.analyticsService,
     authService: services?.authService,
     rbacService: services?.rbacService,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
   });
   app.register(seoRoutes, {
     prefix: '/api/v1',
@@ -317,6 +393,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(authRoutes, {
     prefix: '/api/v1',
     authService: services?.authService,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
+    nodeEnvOverride: effectiveNodeEnv,
+    csrfSecretOverride,
+    csrfTokenTtlSecondsOverride,
   });
   app.register(libraryRoutes, {
     prefix: '/api/v1',
@@ -333,6 +413,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     prefix: '/api/v1',
     calendarService: services?.calendarService,
     authService: services?.authService,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
   });
   app.register(commerceRoutes, {
     prefix: '/api/v1',
@@ -342,6 +423,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     auditService: services?.auditService,
     webhookRateLimiter: services?.webhookRateLimiter,
     enableLegacyCallbackAlias: services?.enableLegacyCallbackAlias,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
   });
   app.register(contributorRoutes, {
     prefix: '/api/v1',
@@ -392,6 +474,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     authService: services?.authService,
     rbacService: services?.rbacService,
     auditService: services?.auditService,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
   });
   app.register(retentionRoutes, {
     prefix: '/api/v1',
@@ -405,6 +488,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     authService: services?.authService,
     rbacService: services?.rbacService,
     auditService: services?.auditService,
+    concurrencyRegistry: effectiveConcurrencyRegistry,
   });
   app.register(homepageRoutes, {
     prefix: '/api/v1',
@@ -422,8 +506,6 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   // Legacy unversioned callback aliases are disabled by default (W1-AC-08).
   // When explicitly enabled via MPESA_ENABLE_LEGACY_CALLBACK_ALIAS=true, enforce identical 32 KiB body limit,
   // raw decimal lexeme extraction, and bounded-LRU per-IP rate limiting.
-  const enableLegacyAlias =
-    services?.enableLegacyCallbackAlias ?? env.MPESA_ENABLE_LEGACY_CALLBACK_ALIAS;
   if (enableLegacyAlias) {
     const rateLimiter = services?.webhookRateLimiter ?? defaultMpesaWebhookRateLimiter;
     const webhookPreHandler = createMpesaWebhookPreHandler(rateLimiter);

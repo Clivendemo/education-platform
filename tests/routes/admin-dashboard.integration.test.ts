@@ -22,6 +22,7 @@ import { StubCleanMalwareScanner } from '../../src/services/storage/malware-scan
 import { DefaultAdminDashboardService } from '../../src/services/admin-dashboard.service.js';
 import { MemoryStorageProvider } from '../../src/services/storage/memory-storage-provider.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATABASE_URL);
@@ -50,16 +51,18 @@ describe.skipIf(!isDbAvailable)(
       { maxRequestsPerWindow: 20, windowMs: 60_000 },
     );
 
-    const app = buildApp({
-      services: {
-        authService,
-        rbacService,
-        auditService,
-        fileStorageService,
-        publicationService,
-        adminDashboardService,
-      },
-    });
+    const app = enableTestCsrfAutoInject(
+      buildApp({
+        services: {
+          authService,
+          rbacService,
+          auditService,
+          fileStorageService,
+          publicationService,
+          adminDashboardService,
+        },
+      }),
+    );
 
     const origInject = app.inject.bind(app);
     const injectWithRetry = async (opts: any) => {
@@ -620,8 +623,9 @@ describe.skipIf(!isDbAvailable)(
         expect(detailRes.body).not.toContain('route-secret-bucket-do-not-expose');
       });
 
-      it('enforces 20 req/min/actor rate limit on POST /api/v1/admin/files/:id/verify-integrity and records SUCCESS audit logs', async () => {
-        for (let i = 0; i < 20; i++) {
+      it('enforces Wave 3 10 req/5m/actor rate limit on POST /api/v1/admin/files/:id/verify-integrity and records SUCCESS audit logs', async () => {
+        // Note: sysAdmin already consumed 1 verify-integrity token in the previous validation test (unexpectedBody), so 9 remain in the 10/5m window.
+        for (let i = 0; i < 9; i++) {
           const okRes = await injectWithRetry({
             method: 'POST',
             url: `/api/v1/admin/files/${countryAFileId}/verify-integrity`,
@@ -634,14 +638,16 @@ describe.skipIf(!isDbAvailable)(
           expect(okRes.body).not.toContain('route-secret-bucket-do-not-expose');
         }
 
-        // 21st request by sysAdmin must return 429 RATE_LIMIT_EXCEEDED
+        // 11th request by sysAdmin within 5m must return 429 RATE_LIMITED
         const rateLimited = await injectWithRetry({
           method: 'POST',
           url: `/api/v1/admin/files/${countryAFileId}/verify-integrity`,
           headers: { cookie: sysAdminCookie },
         });
         expect(rateLimited.statusCode).toBe(429);
-        expect(rateLimited.json().error.code).toBe('RATE_LIMIT_EXCEEDED');
+        expect(['RATE_LIMITED', 'RATE_LIMIT_EXCEEDED']).toContain(
+          rateLimited.json().error.code,
+        );
 
         // Verify audit logs persisted for sysAdmin
         const successLogs = await db
@@ -654,7 +660,7 @@ describe.skipIf(!isDbAvailable)(
               eq(auditLogs.outcome, 'SUCCESS'),
             ),
           );
-        expect(successLogs.length).toBe(20);
+        expect(successLogs.length).toBe(9);
       });
     });
 

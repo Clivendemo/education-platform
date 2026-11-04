@@ -9,6 +9,13 @@ import {
   InvalidCredentialsError,
 } from '../../../services/auth.service.js';
 import type { User, UserSession } from '../../../db/schemas.js';
+import { issueCsrfBootstrap } from '../../middleware/csrf-guard.js';
+import {
+  type BoundedConcurrencyRegistry,
+  defaultConcurrencyRegistry,
+} from '../../../services/rate-limit.service.js';
+
+export const AUTH_BODY_LIMIT_BYTES = 16_384; // 16 KiB
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -19,6 +26,10 @@ declare module 'fastify' {
 
 export interface AuthRoutesOptions {
   authService?: AuthService;
+  concurrencyRegistry?: BoundedConcurrencyRegistry;
+  nodeEnvOverride?: 'development' | 'test' | 'production';
+  csrfSecretOverride?: string;
+  csrfTokenTtlSecondsOverride?: number;
 }
 
 const RegisterBodySchema = z.object({
@@ -112,36 +123,59 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
   opts,
 ) => {
   const service = opts.authService ?? defaultAuthService;
+  const concurrencyRegistry = opts.concurrencyRegistry ?? defaultConcurrencyRegistry;
   const requireAuth = createRequireAuth(service);
+
+  /**
+   * GET /api/v1/auth/csrf
+   * Issues stateless HMAC-SHA256 CSRF token bound to active HttpOnly session cookie digest
+   * or mints an opaque HttpOnly `csrf_ctx` pre-authentication context cookie.
+   */
+  fastify.get('/auth/csrf', async (request, reply) => {
+    const data = issueCsrfBootstrap(request, reply, {
+      nodeEnv: opts.nodeEnvOverride,
+      csrfSecret: opts.csrfSecretOverride,
+      csrfTokenTtlSeconds: opts.csrfTokenTtlSecondsOverride,
+    });
+    return reply.status(200).send({ data });
+  });
 
   /**
    * POST /api/v1/auth/register
    * Creates identity.users + auth_identities + user_sessions atomically in single transaction.
    * Race-safe duplicate email handling returns 409 EMAIL_ALREADY_REGISTERED.
    */
-  fastify.post('/auth/register', async (request, reply) => {
-    const parseResult = RegisterBodySchema.safeParse(request.body);
-    if (!parseResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'INVALID_REQUEST_BODY',
-          message:
-            parseResult.error.issues[0]?.message ?? 'Invalid registration body',
-          requestId: request.id,
-        },
-      });
-    }
+  fastify.post(
+    '/auth/register',
+    { bodyLimit: AUTH_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parseResult = RegisterBodySchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_REQUEST_BODY',
+            message:
+              parseResult.error.issues[0]?.message ?? 'Invalid registration body',
+            requestId: request.id,
+          },
+        });
+      }
 
-    try {
-      const result = await service.register({
-        email: parseResult.data.email,
-        password: parseResult.data.password,
-        displayName: parseResult.data.displayName,
-        deviceMetadata: {
-          userAgent: request.headers['user-agent'] ?? null,
-          ip: request.ip,
-        },
-      });
+      try {
+        const result = await concurrencyRegistry.runWithPermit(
+          'auth_argon2',
+          { request, reply },
+          () =>
+            service.register({
+              email: parseResult.data.email,
+              password: parseResult.data.password,
+              displayName: parseResult.data.displayName,
+              deviceMetadata: {
+                userAgent: request.headers['user-agent'] ?? null,
+                ip: request.ip,
+              },
+            }),
+        );
 
       // Set HttpOnly session cookie without signing secret
       reply.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
@@ -185,28 +219,36 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
    * Validates credentials with Argon2id, checks deleted_at IS NULL & status = ACTIVE.
    * Returns generic 401 INVALID_CREDENTIALS on any failure.
    */
-  fastify.post('/auth/login', async (request, reply) => {
-    const parseResult = LoginBodySchema.safeParse(request.body);
-    if (!parseResult.success) {
-      return reply.status(400).send({
-        error: {
-          code: 'INVALID_REQUEST_BODY',
-          message:
-            parseResult.error.issues[0]?.message ?? 'Invalid login body',
-          requestId: request.id,
-        },
-      });
-    }
+  fastify.post(
+    '/auth/login',
+    { bodyLimit: AUTH_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parseResult = LoginBodySchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_REQUEST_BODY',
+            message:
+              parseResult.error.issues[0]?.message ?? 'Invalid login body',
+            requestId: request.id,
+          },
+        });
+      }
 
-    try {
-      const result = await service.login({
-        email: parseResult.data.email,
-        password: parseResult.data.password,
-        deviceMetadata: {
-          userAgent: request.headers['user-agent'] ?? null,
-          ip: request.ip,
-        },
-      });
+      try {
+        const result = await concurrencyRegistry.runWithPermit(
+          'auth_argon2',
+          { request, reply },
+          () =>
+            service.login({
+              email: parseResult.data.email,
+              password: parseResult.data.password,
+              deviceMetadata: {
+                userAgent: request.headers['user-agent'] ?? null,
+                ip: request.ip,
+              },
+            }),
+        );
 
       // Set fresh HttpOnly session cookie (session fixation protection)
       reply.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
@@ -249,26 +291,30 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
    * POST /api/v1/auth/logout
    * Revokes server-side session and clears the session cookie.
    */
-  fastify.post('/auth/logout', async (request, reply) => {
-    const rawToken = extractSessionToken(request);
-    if (rawToken) {
-      await service.logout(rawToken);
-    }
+  fastify.post(
+    '/auth/logout',
+    { bodyLimit: AUTH_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const rawToken = extractSessionToken(request);
+      if (rawToken) {
+        await service.logout(rawToken);
+      }
 
-    reply.clearCookie(SESSION_COOKIE_NAME, {
-      path: '/',
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
+      reply.clearCookie(SESSION_COOKIE_NAME, {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+      });
 
-    return reply.status(200).send({
-      data: {
-        success: true,
-        message: 'Logged out successfully',
-      },
-    });
-  });
+      return reply.status(200).send({
+        data: {
+          success: true,
+          message: 'Logged out successfully',
+        },
+      });
+    },
+  );
 
   /**
    * GET /api/v1/auth/me
@@ -299,7 +345,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
    */
   fastify.post(
     '/auth/change-password',
-    { preHandler: [requireAuth] },
+    { bodyLimit: AUTH_BODY_LIMIT_BYTES, preHandler: [requireAuth] },
     async (request, reply) => {
       const parseResult = ChangePasswordBodySchema.safeParse(request.body);
       if (!parseResult.success) {
@@ -324,15 +370,20 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
       }
 
       try {
-        const result = await service.changePassword({
-          userId: request.user!.id,
-          currentPassword: parseResult.data.currentPassword,
-          newPassword: parseResult.data.newPassword,
-          deviceMetadata: {
-            userAgent: request.headers['user-agent'] ?? null,
-            ip: request.ip,
-          },
-        });
+        const result = await concurrencyRegistry.runWithPermit(
+          'auth_argon2',
+          { actorKey: request.user!.id, request, reply },
+          () =>
+            service.changePassword!({
+              userId: request.user!.id,
+              currentPassword: parseResult.data.currentPassword,
+              newPassword: parseResult.data.newPassword,
+              deviceMetadata: {
+                userAgent: request.headers['user-agent'] ?? null,
+                ip: request.ip,
+              },
+            }),
+        );
 
         reply.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
           path: '/',

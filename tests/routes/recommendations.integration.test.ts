@@ -976,7 +976,7 @@ describe.skipIf(!isDbAvailable)(
         const sqlSamples: number[] = [];
         for (let batch = 0; batch < 3; batch++) {
           await Promise.all(
-            Array.from({ length: 10 }, async () => {
+            Array.from({ length: 10 }, async (_unused, vuIdx) => {
               const svcRes = await recService.getResourceRecommendations({
                 sourceResourceId: srcResId,
                 surface: 'related-resources',
@@ -990,6 +990,7 @@ describe.skipIf(!isDbAvailable)(
               const httpRes = await app.inject({
                 method: 'GET',
                 url: `/api/v1/resources/${srcResId}/recommendations?surface=related-resources`,
+                remoteAddress: `198.51.100.${vuIdx + 1}`,
                 headers: { 'x-benchmark-cache-bypass': 'true' },
               });
               expect(httpRes.statusCode).toBe(200);

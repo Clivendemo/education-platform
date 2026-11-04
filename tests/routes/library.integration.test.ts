@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { inArray, eq } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db } from '../../src/db/index.js';
 import {
   users,
@@ -16,7 +17,7 @@ import {
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('User Library HTTP Route Integration Tests', () => {
-  const app = buildApp();
+  const app = enableTestCsrfAutoInject(buildApp());
   const authService = defaultAuthService;
 
   let testCountryId: string;

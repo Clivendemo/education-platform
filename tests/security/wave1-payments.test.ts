@@ -14,6 +14,7 @@ import {
   users,
 } from '../../src/db/schemas.js';
 import { buildApp, resolveEffectiveTrustProxy } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { DefaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
 import { DefaultRbacService } from '../../src/services/rbac.service.js';
 import { CommerceService } from '../../src/services/commerce/commerce.service.js';
@@ -182,9 +183,11 @@ describe('Wave 1 WP1: Payment Integrity, Daraja Allowlist, Reconciliation & Webh
       ).toThrow(SimulationDisabledError);
 
       const prodLikeSvc = new CommerceService({ db, allowSimulation: false });
-      const app = buildApp({
-        services: { commerceService: prodLikeSvc, authService, rbacService },
-      });
+      const app = enableTestCsrfAutoInject(
+        buildApp({
+          services: { commerceService: prodLikeSvc, authService, rbacService },
+        }),
+      );
       await app.ready();
 
       try {
@@ -766,9 +769,11 @@ describe('Wave 1 WP1: Payment Integrity, Daraja Allowlist, Reconciliation & Webh
         },
       });
 
-      const app = buildApp({
-        services: { commerceService: svc, authService, rbacService },
-      });
+      const app = enableTestCsrfAutoInject(
+        buildApp({
+          services: { commerceService: svc, authService, rbacService },
+        }),
+      );
       await app.ready();
 
       try {

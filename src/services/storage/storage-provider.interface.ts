@@ -18,6 +18,10 @@ export interface PutObjectResult {
   eTag?: string;
 }
 
+export interface HeadObjectOptions {
+  signal?: AbortSignal;
+}
+
 export interface HeadObjectResult {
   key: string;
   contentLength: number;
@@ -71,7 +75,10 @@ export interface StorageProvider {
    * Retrieve object metadata and verify existence without fetching bytes.
    * Returns null if object does not exist.
    */
-  headObject(key: string): Promise<HeadObjectResult | null>;
+  headObject(
+    key: string,
+    options?: HeadObjectOptions,
+  ): Promise<HeadObjectResult | null>;
 
   /**
    * Fetch object binary contents and metadata.

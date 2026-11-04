@@ -12,6 +12,7 @@ import type {
   StorageProvider,
   PutObjectParams,
   PutObjectResult,
+  HeadObjectOptions,
   HeadObjectResult,
   GetObjectResult,
   GetObjectStreamOptions,
@@ -118,14 +119,20 @@ export class CloudflareR2StorageProvider implements StorageProvider {
     };
   }
 
-  async headObject(key: string): Promise<HeadObjectResult | null> {
+  async headObject(
+    key: string,
+    options?: HeadObjectOptions,
+  ): Promise<HeadObjectResult | null> {
     try {
       const command = new HeadObjectCommand({
         Bucket: this.bucketName,
         Key: key,
       });
 
-      const response = await this.client.send(command);
+      const response = await this.client.send(
+        command,
+        options?.signal ? { abortSignal: options.signal } : undefined,
+      );
 
       return {
         key,

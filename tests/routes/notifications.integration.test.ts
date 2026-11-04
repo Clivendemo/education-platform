@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { eq, sql } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db, closeDatabase } from '../../src/db/index.js';
 import {
   users,
@@ -90,12 +91,14 @@ describe('Notifications Route & Worker Integration Tests', () => {
       customMockSmsProvider,
     );
 
-    app = buildApp({
-      logger: false,
-      services: {
-        notificationService,
-      },
-    });
+    app = enableTestCsrfAutoInject(
+      buildApp({
+        logger: false,
+        services: {
+          notificationService,
+        },
+      }),
+    );
     await app.ready();
 
     // Create users

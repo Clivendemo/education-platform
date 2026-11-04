@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { inArray } from 'drizzle-orm';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { db, closeDatabase } from '../../src/db/index.js';
 import { users } from '../../src/db/schemas.js';
 import { DefaultAuthService, SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
@@ -13,12 +14,14 @@ const isDbAvailable = Boolean(process.env.DATABASE_TEST_URL || process.env.DATAB
 describe.skipIf(!isDbAvailable)('RBAC HTTP Route Authorization Integration Tests', () => {
   const authService = new DefaultAuthService(db);
   const rbacService = new DefaultRbacService(db);
-  const app = buildApp({
-    services: {
-      authService,
-      rbacService,
-    },
-  });
+  const app = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        authService,
+        rbacService,
+      },
+    }),
+  );
 
   const createdUserIds: string[] = [];
 

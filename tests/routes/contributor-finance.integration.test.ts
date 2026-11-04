@@ -24,6 +24,7 @@ import { defaultContributorFinanceService } from '../../src/services/contributor
 import { CommerceService } from '../../src/services/commerce/commerce.service.js';
 import { seedRolesAndPermissions } from '../../src/db/seeds/roles-permissions.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { withDbRetry } from '../helpers/db-retry.js';
 
 describe('Contributor Finance HTTP Route & Commerce Integration Tests', () => {
@@ -33,15 +34,17 @@ describe('Contributor Finance HTTP Route & Commerce Integration Tests', () => {
     db,
     allowSimulation: true,
   });
-  const app: FastifyInstance = buildApp({
-    services: {
-      authService,
-      rbacService,
-      contributorService,
-      contributorFinanceService: defaultContributorFinanceService,
-      commerceService: testCommerceService,
-    },
-  });
+  const app: FastifyInstance = enableTestCsrfAutoInject(
+    buildApp({
+      services: {
+        authService,
+        rbacService,
+        contributorService,
+        contributorFinanceService: defaultContributorFinanceService,
+        commerceService: testCommerceService,
+      },
+    }),
+  );
 
   let adminCookie = '';
   let adminUserId = '';

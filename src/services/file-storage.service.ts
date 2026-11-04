@@ -442,13 +442,16 @@ export class FileStorageService {
   /**
    * Verifies the integrity of a stored file against storage provider.
    */
-  async verifyFileIntegrity(fileId: string) {
+  async verifyFileIntegrity(
+    fileId: string,
+    options?: { signal?: AbortSignal },
+  ) {
     const file = await this.getFileById(fileId);
     if (!file) {
       throw new FileStorageError(`File "${fileId}" not found.`, 'FILE_NOT_FOUND', 404);
     }
 
-    const headResult = await this.storageProvider.headObject(file.objectKey);
+    const headResult = await this.storageProvider.headObject(file.objectKey, options);
     if (!headResult) {
       return {
         fileId,

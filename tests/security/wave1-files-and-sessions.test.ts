@@ -16,6 +16,7 @@ import {
   users,
 } from '../../src/db/schemas.js';
 import { buildApp } from '../../src/app.js';
+import { enableTestCsrfAutoInject } from '../helpers/build-test-app.js';
 import { FileStorageService } from '../../src/services/file-storage.service.js';
 import { FileProcessingWorker } from '../../src/services/file-processing.worker.js';
 import {
@@ -658,9 +659,11 @@ describe('Wave 1 WP6: Upload Quarantine, Magic-Byte/ZIP Validation, Clamd Lease 
       expect(published.resource.status).toBe('PUBLISHED');
 
       // Verify HTTP download response sets Cache-Control: private, no-store and presigned URL carries response-cache-control
-      const app = buildApp({
-        services: { downloadService, authService },
-      });
+      const app = enableTestCsrfAutoInject(
+        buildApp({
+          services: { downloadService, authService },
+        }),
+      );
       await app.ready();
 
       try {
@@ -681,7 +684,7 @@ describe('Wave 1 WP6: Upload Quarantine, Magic-Byte/ZIP Validation, Clamd Lease 
 
   describe('W1-AC-10: Password Change Session Revocation Across All Active Devices', () => {
     it('revokes all existing sessions across devices on POST /api/v1/auth/change-password and issues one fresh rotated session', async () => {
-      const app = buildApp({ services: { authService } });
+      const app = enableTestCsrfAutoInject(buildApp({ services: { authService } }));
       await app.ready();
 
       try {

@@ -463,11 +463,34 @@ export class CalendarService {
 
   /**
    * Generates a snapshot export of the authorized calendar view as PDF.
+   * Supports cooperative AbortSignal cancellation prior to `storageProvider.putObject`;
+   * once object upload begins, execution runs to completion so no orphaned storage object is left unrecorded.
    */
   async exportCalendar(
     context: CalendarOwnershipContext,
     options: ExportCalendarOptions = {},
+    execOptions?: { signal?: AbortSignal },
   ): Promise<ExportCalendarResult> {
+    const signal = execOptions?.signal;
+    const checkAbortedPreUpload = () => {
+      if (signal?.aborted) {
+        const reason = signal.reason;
+        const msg =
+          reason instanceof Error ? reason.message : String(reason || 'ABORTED');
+        const err = new Error(
+          msg === 'CLIENT_DISCONNECTED'
+            ? 'Client disconnected before PDF export upload.'
+            : 'Calendar PDF export timed out before completion.',
+        ) as Error & { statusCode?: number; code?: string };
+        err.statusCode = msg === 'CLIENT_DISCONNECTED' ? 499 : 503;
+        err.code =
+          msg === 'CLIENT_DISCONNECTED' ? 'CLIENT_CLOSED_REQUEST' : 'SERVER_BUSY';
+        throw err;
+      }
+    };
+
+    checkAbortedPreUpload();
+
     // 1. Snapshot authorized combined calendar view
     const view = await this.getCombinedCalendar(context, {
       startDate: options.startDate,
@@ -475,6 +498,8 @@ export class CalendarService {
       academicYear: options.academicYear,
       countryId: options.countryId,
     });
+
+    checkAbortedPreUpload();
 
     // Resolve country name if countryId is present
     let countryName: string | null = null;
@@ -488,6 +513,8 @@ export class CalendarService {
       if (c) countryName = c.name;
     }
 
+    checkAbortedPreUpload();
+
     // 2. Generate PDF document using provider
     const exportResult = await this.pdfExportProvider.exportCalendar({
       calendar: view.calendar,
@@ -497,6 +524,9 @@ export class CalendarService {
       countryName,
       requesterContext: context,
     });
+
+    // Final safe cancellation checkpoint strictly BEFORE `storageProvider.putObject`
+    checkAbortedPreUpload();
 
     // 3. Save export binary to StorageProvider
     const now = new Date();

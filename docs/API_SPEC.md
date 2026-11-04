@@ -3278,3 +3278,44 @@ The frontend is a consumer of the platform.
 The API and database together form the authoritative application foundation.
 
 The coding agent must preserve this principle throughout implementation.
+
+---
+
+# 100. Wave 3 HTTP Security, CSRF, Idempotency & Rate-Limit API Contract
+
+## 100.1 New & Updated Security Endpoints
+
+* **`GET /api/v1/auth/csrf`**
+  * Public bootstrap endpoint issuing or refreshing a stateless HMAC-SHA256 `X-CSRF-Token`.
+  * When no principal cookie (`session_token`, `calendar_session`, `rf_sid`, `elimu_anon_sid`) is present, sets an `HttpOnly`, `SameSite=Lax` (`Secure` in `production`) `csrf_ctx` cookie.
+  * Response (`200 OK`, `Cache-Control: private, no-store, max-age=0`): `{ "data": { "csrfToken": "v1.<ts>.<nonce>.<hmac>", "expiresInSeconds": 7200 } }` plus `X-CSRF-Token` response header.
+* **`DELETE /api/v1/calendar/session`**
+  * Clears the anonymous `calendar_session` cookie with matching `path: '/'`, `httpOnly: true`, `sameSite: 'lax'`, `secure: NODE_ENV === 'production'` attributes and rotates `X-CSRF-Token`.
+* **Search Admin Analytics Auth Standardization (`GET /api/v1/admin/search/demand`, `GET /api/v1/search/analytics`)**
+  * Authenticates exclusively via the canonical `SESSION_COOKIE_NAME` (`session_token`) cookie (`401 UNAUTHENTICATED` when missing/invalid; `403 FORBIDDEN` with generic message when lacking `analytics.read`). Legacy `elimu_session` cookies and `Authorization: Bearer` headers are not accepted.
+
+## 100.2 State-Changing Request Requirements (`POST`, `PUT`, `PATCH`, `DELETE`)
+
+Except for verified Safaricom Daraja M-Pesa S2S callbacks (`/api/v1/commerce/webhooks/mpesa`, `/api/v1/payments/mpesa/callback`, `/api/v1/mpesa/callback`), every unsafe request must include:
+* `Origin` (or `Referer`) matching `CORS_ALLOWED_ORIGINS` (`403 CSRF_ORIGIN_DENIED` otherwise).
+* `X-CSRF-Token` bound to the active `HttpOnly` cookie (`403 CSRF_TOKEN_MISSING` / `CSRF_TOKEN_INVALID` / `CSRF_TOKEN_EXPIRED`).
+* `Content-Type: application/json` whenever a request body is present (`415 UNSUPPORTED_MEDIA_TYPE` otherwise).
+* Optional `Idempotency-Key` (`1..128` printable ASCII characters, `^[\x21-\x7E]{1,128}$`) for Tier 2 single-winner execution protection.
+
+## 100.3 Body Size Limits
+
+* **Global Default:** `1 MiB` (`1,048,576` bytes) -> `413 PAYLOAD_TOO_LARGE` when exceeded (including streamed payloads without `Content-Length`).
+* **Authentication Routes (`/api/v1/auth/*`):** `16 KiB` (`16,384` bytes).
+* **M-Pesa Webhook Routes:** `32 KiB` (`32,768` bytes).
+
+## 100.4 Rate-Limit, Idempotency & Concurrency Status Codes & Headers
+
+* Standard rate-limit headers on governed responses: `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`.
+* `409 Conflict`:
+  * `IDEMPOTENCY_KEY_CONFLICT` — Same scoped `Idempotency-Key` reused with a different Fastify-visible request target or payload body (`0` additional rate-limit tokens deducted).
+  * `IDEMPOTENCY_ALREADY_CLAIMED` — Duplicate or concurrent replay of an already-claimed `Idempotency-Key`.
+* `429 Too Many Requests` (`RATE_LIMITED`) — Includes `Retry-After` (seconds).
+* `503 Service Unavailable`:
+  * `SERVER_BUSY` — Heavy-endpoint concurrency semaphore queue full or wait budget exceeded (`Retry-After` included).
+  * `SERVICE_UNAVAILABLE` — Fail-closed Tier 2 rate-limit store unavailability or ambiguous commit acknowledgement (`Retry-After: 2`).
+

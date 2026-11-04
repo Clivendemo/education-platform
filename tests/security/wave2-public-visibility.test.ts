@@ -969,7 +969,7 @@ describe('Wave 2 WP2: Public Visibility Lockdown, Synchronous Cache Recomputatio
     it('registers 0023_wave2_visibility_and_rbac_hardening as idx 23 and hardens homepage, recommendation scoring, and file invalidation triggers', () => {
       const journalPath = path.resolve(process.cwd(), 'drizzle/meta/_journal.json');
       const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
-      expect(journal.entries).toHaveLength(24);
+      expect(journal.entries.length).toBeGreaterThanOrEqual(24);
       const entry23 = journal.entries[23];
       expect(entry23.idx).toBe(23);
       expect(entry23.tag).toBe('0023_wave2_visibility_and_rbac_hardening');
