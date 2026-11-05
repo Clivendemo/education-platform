@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { describe, it, expect, vi } from 'vitest';
+import pg from 'pg';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { SESSION_COOKIE_NAME } from '../../src/services/auth.service.js';
 import {
@@ -437,7 +438,7 @@ describe('Wave 3 WP4 — Hybrid Rate Limiting, Two-Phase Single-Winner Admission
         admissionKey: deriveScopedAdmissionKey('scope', 'u1', 'k-cost-1'),
         claimToken: crypto.randomUUID(),
         admissionTtlSecs: 300,
-        payloadFingerprint: 'v1:' + 'a'.repeat(64),
+        payloadFingerprint: 'a'.repeat(64),
       });
 
       expect(tx1.allowed).toBe(true);
@@ -929,26 +930,923 @@ describe('Wave 3 WP4 — Hybrid Rate Limiting, Two-Phase Single-Winner Admission
   });
 
   describe('Migration 0024 Static DDL & PL/pgSQL Security Contract Verification', () => {
-    it('verifies UNLOGGED buckets, LOGGED admissions, 10-param consume_rate_limit_buckets with p_costs_mt, ORDER BY bucket_key ASC, and terminal claim_rate_limit_admission', () => {
+    it('verifies UNLOGGED buckets, LOGGED admissions, 10-param VARCHAR(64) consume_rate_limit_buckets with p_costs_mt, pg_catalog/pg_temp search_path, ORDER BY bucket_key ASC, and terminal claim_rate_limit_admission', () => {
       const sqlPath = path.resolve(process.cwd(), 'drizzle/0024_wave3_rate_limits.sql');
       const ddl = fs.readFileSync(sqlPath, 'utf8');
 
       expect(ddl).toContain('CREATE UNLOGGED TABLE IF NOT EXISTS "system"."rate_limit_buckets"');
       expect(ddl).toContain('CREATE TABLE IF NOT EXISTS "system"."rate_limit_admissions"');
       expect(ddl).not.toContain('CREATE UNLOGGED TABLE IF NOT EXISTS "system"."rate_limit_admissions"');
+      expect(ddl).toContain('"payload_fingerprint" VARCHAR(64) NOT NULL');
       expect(ddl).toContain('p_costs_mt BIGINT[]');
-      expect(ddl).toContain('p_secondary_payload_fingerprint TEXT DEFAULT NULL');
+      expect(ddl).toContain('p_payload_fingerprint VARCHAR(64)');
+      expect(ddl).toContain('p_secondary_payload_fingerprint VARCHAR(64) DEFAULT NULL');
+      expect(ddl).toContain(
+        'TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, VARCHAR(64), VARCHAR(64)',
+      );
       expect(ddl).toContain('ORDER BY c.bucket_key ASC');
       expect(ddl).toContain('SECURITY INVOKER');
-      expect(ddl).toContain('SET search_path = system, pg_catalog');
+      expect(ddl).not.toContain('SET search_path = system');
+      expect(ddl.match(/SET search_path = pg_catalog, pg_temp/g)).toHaveLength(2);
       expect(ddl).toContain("IF v_row.status = 'CLAIMED' THEN");
       expect(ddl).toContain("RETURN QUERY SELECT FALSE, 'ALREADY_CLAIMED'::TEXT;");
+
+      const sampleFp = computePayloadFingerprints(
+        { method: 'POST', rawUrl: '/api/v1/checkout', bodySha256Hex: EMPTY_BODY_SHA256_HEX },
+        {
+          activeSecret: 'secret-v1-old-32bytes-minimum-key-material-0001',
+          secondarySecret: 'secret-v2-new-32bytes-minimum-key-material-0002',
+        },
+      );
+      expect(sampleFp.primary).toMatch(/^[0-9a-f]{64}$/);
+      expect(sampleFp.secondary).toMatch(/^[0-9a-f]{64}$/);
     });
   });
 
   describe.skipIf(!isDbAvailable)('Live PostgreSQL Migration 0024 Tx1/Tx2 Concurrency Suite', () => {
-    it('executes concurrent system.consume_rate_limit_buckets and system.claim_rate_limit_admission against live PostgreSQL', async () => {
-      expect(isDbAvailable).toBe(true);
+    let livePool: pg.Pool;
+    const trackedBucketKeys = new Set<string>();
+    const trackedAdmissionKeys = new Set<string>();
+    const runPrefix = crypto.randomUUID().slice(0, 8);
+
+    function trackBucketKey(
+      policyId: string,
+      dimension: string,
+      rawIdentifier: string,
+      secret: string,
+    ): string {
+      const key = derivePrivacyBucketKey(
+        policyId,
+        dimension,
+        `${runPrefix}:${rawIdentifier}`,
+        secret,
+      );
+      trackedBucketKeys.add(key);
+      return key;
+    }
+
+    function trackAdmissionKey(
+      scope: string,
+      principal: string,
+      rawIdempotencyKey: string,
+    ): string {
+      const key = deriveScopedAdmissionKey(
+        scope,
+        `${runPrefix}:${principal}`,
+        rawIdempotencyKey,
+      );
+      trackedAdmissionKeys.add(key);
+      return key;
+    }
+
+    async function cleanupTrackedRows(): Promise<void> {
+      if (!livePool) return;
+      if (trackedAdmissionKeys.size > 0) {
+        const admList = Array.from(trackedAdmissionKeys);
+        trackedAdmissionKeys.clear();
+        await livePool.query(
+          `DELETE FROM "system"."rate_limit_admissions" WHERE "admission_key" = ANY($1::text[])`,
+          [admList],
+        );
+      }
+      if (trackedBucketKeys.size > 0) {
+        const bktList = Array.from(trackedBucketKeys);
+        trackedBucketKeys.clear();
+        await livePool.query(
+          `DELETE FROM "system"."rate_limit_buckets" WHERE "bucket_key" = ANY($1::text[])`,
+          [bktList],
+        );
+      }
+    }
+
+    beforeAll(async () => {
+      const connectionString = process.env.DATABASE_TEST_URL || process.env.DATABASE_URL;
+      if (!connectionString) {
+        throw new Error('DATABASE_TEST_URL or DATABASE_URL is required for live PostgreSQL WP4 tests.');
+      }
+
+      livePool = new pg.Pool({
+        connectionString,
+        max: 14,
+        idleTimeoutMillis: 15_000,
+        connectionTimeoutMillis: 15_000,
+      });
+
+      // Read-only precondition check: Migration 0024 must already be applied on target test database
+      const checkRes = await livePool.query<{
+        has_buckets: boolean;
+        has_admissions: boolean;
+        has_consume_fn: boolean;
+        has_claim_fn: boolean;
+      }>(`
+        SELECT
+          to_regclass('system.rate_limit_buckets') IS NOT NULL AS has_buckets,
+          to_regclass('system.rate_limit_admissions') IS NOT NULL AS has_admissions,
+          to_regprocedure('system.consume_rate_limit_buckets(text[],bigint[],bigint[],bigint[],bigint[],text,uuid,integer,character varying,character varying)') IS NOT NULL AS has_consume_fn,
+          to_regprocedure('system.claim_rate_limit_admission(text,uuid)') IS NOT NULL AS has_claim_fn
+      `);
+      const meta = checkRes.rows[0];
+      if (!meta?.has_buckets || !meta?.has_admissions || !meta?.has_consume_fn || !meta?.has_claim_fn) {
+        throw new Error(
+          'Precondition failed: Migration 0024 objects are missing in target PostgreSQL database. Apply migrations before running live WP4 suite.',
+        );
+      }
+    });
+
+    afterEach(async () => {
+      await cleanupTrackedRows();
+    });
+
+    afterAll(async () => {
+      if (livePool) {
+        await cleanupTrackedRows().catch(() => {});
+        await livePool.end();
+      }
+    });
+
+    it('verifies live PostgreSQL catalog metadata: UNLOGGED buckets, LOGGED admissions, SECURITY INVOKER, search_path, and PUBLIC privilege revocation', async () => {
+      const relRes = await livePool.query<{ relname: string; relpersistence: string }>(`
+        SELECT c.relname, c.relpersistence
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'system'
+          AND c.relname IN ('rate_limit_buckets', 'rate_limit_admissions')
+      `);
+      const byName = new Map(relRes.rows.map((r) => [r.relname, r.relpersistence]));
+      expect(byName.get('rate_limit_buckets')).toBe('u'); // UNLOGGED
+      expect(byName.get('rate_limit_admissions')).toBe('p'); // LOGGED (permanent)
+
+      const fnRes = await livePool.query<{
+        proname: string;
+        identity_args: string;
+        prosecdef: boolean;
+        proconfig: string[] | null;
+        public_can_exec: boolean;
+        current_can_exec: boolean;
+      }>(`
+        SELECT
+          p.proname,
+          pg_catalog.pg_get_function_identity_arguments(p.oid) AS identity_args,
+          p.prosecdef,
+          p.proconfig,
+          pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_can_exec,
+          pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE') AS current_can_exec
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'system'
+          AND p.proname IN ('consume_rate_limit_buckets', 'claim_rate_limit_admission')
+      `);
+      expect(fnRes.rows).toHaveLength(2);
+
+      for (const fnRow of fnRes.rows) {
+        expect(fnRow.prosecdef).toBe(false); // SECURITY INVOKER
+        expect(fnRow.proconfig).toContain('search_path=pg_catalog, pg_temp');
+        expect(fnRow.public_can_exec).toBe(false); // REVOKE ALL FROM PUBLIC enforced
+        expect(fnRow.current_can_exec).toBe(true);
+      }
+
+      const consumeFn = fnRes.rows.find((r) => r.proname === 'consume_rate_limit_buckets')!;
+      expect(consumeFn.identity_args).toContain('character varying, character varying');
+    });
+
+    it('enforces per-bucket p_costs_mt atomicity, SQLSTATE 22023 input validation, and deadlock-free reversed-order multi-bucket updates', async () => {
+      const secret = 'live-pg-costs-hmac-secret-32bytes-minimum-01';
+
+      // 1. Direct PL/pgSQL SQLSTATE 22023 parameter validation inside rolled-back transaction
+      const client = await livePool.connect();
+      try {
+        await client.query('BEGIN');
+        const validBucket = derivePrivacyBucketKey('pol_val', 'actor', 'u-val', secret);
+        const validAdm = deriveScopedAdmissionKey('val_scope', 'u-val', 'idem-val');
+
+        // Non-64-hex fingerprint rejected by PL/pgSQL with ERRCODE 22023
+        await client.query('SAVEPOINT sp_bad_fp');
+        await expect(
+          client.query(
+            `SELECT * FROM "system"."consume_rate_limit_buckets"(
+               ARRAY[$1]::text[], ARRAY[10000]::bigint[], ARRAY[10000]::bigint[], ARRAY[60000]::bigint[], ARRAY[1000]::bigint[],
+               $2::text, $3::uuid, 60, 'not-64-hex'::varchar(64), NULL::varchar(64)
+             )`,
+            [validBucket, validAdm, crypto.randomUUID()],
+          ),
+        ).rejects.toMatchObject({ code: '22023' });
+        await client.query('ROLLBACK TO SAVEPOINT sp_bad_fp');
+
+        // p_costs_mt[1] > p_capacities_mt[1] rejected by PL/pgSQL with ERRCODE 22023
+        await client.query('SAVEPOINT sp_bad_cost');
+        await expect(
+          client.query(
+            `SELECT * FROM "system"."consume_rate_limit_buckets"(
+               ARRAY[$1]::text[], ARRAY[5000]::bigint[], ARRAY[5000]::bigint[], ARRAY[60000]::bigint[], ARRAY[6000]::bigint[],
+               $2::text, $3::uuid, 60, $4::varchar(64), NULL::varchar(64)
+             )`,
+            [validBucket, validAdm, crypto.randomUUID(), 'a'.repeat(64)],
+          ),
+        ).rejects.toMatchObject({ code: '22023' });
+        await client.query('ROLLBACK TO SAVEPOINT sp_bad_cost');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+
+      // 2. Heterogeneous per-bucket costs & atomic all-or-nothing rejection when one dimension is exhausted
+      const store = new PostgresRateLimitStore({ pool: livePool, admissionBudgetMs: 2_000 });
+      const bA = trackBucketKey('pol_a', 'actor', 'u-cost', secret);
+      const bB = trackBucketKey('pol_b', 'ip', '10.10.0.1', secret);
+      const adm1 = trackAdmissionKey('cost_scope', 'u-cost', 'idem-cost-1');
+      const adm2 = trackAdmissionKey('cost_scope', 'u-cost', 'idem-cost-2');
+
+      const firstTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bA,
+            policyId: 'pol_a',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n, // slow refill so balances stay deterministic
+            costMt: 2_500n,
+          },
+          {
+            bucketKey: bB,
+            policyId: 'pol_b',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 4_000n,
+          },
+        ],
+        admissionKey: adm1,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 300,
+        payloadFingerprint: 'b'.repeat(64),
+      });
+      expect(firstTx1.allowed).toBe(true);
+      expect(firstTx1.admissionStatus).toBe('NEW_UNCLAIMED');
+      expect(firstTx1.minRemainingMt).toBe(6_000n);
+
+      const dbBucketsAfterFirst = await livePool.query<{ bucket_key: string; millitokens: string }>(
+        `SELECT "bucket_key", "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = ANY($1::text[])`,
+        [[bA, bB]],
+      );
+      const mtMap1 = new Map(dbBucketsAfterFirst.rows.map((r) => [r.bucket_key, BigInt(r.millitokens)]));
+      expect(mtMap1.get(bA)).toBe(7_500n);
+      expect(mtMap1.get(bB)).toBe(6_000n);
+
+      // Second distinct admission requests 2,500 from bA (ok: 7,500 >= 2,500) and 7,000 from bB (exceeds 6,000) -> atomic rejection!
+      const deniedTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bA,
+            policyId: 'pol_a',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 2_500n,
+          },
+          {
+            bucketKey: bB,
+            policyId: 'pol_b',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 7_000n,
+          },
+        ],
+        admissionKey: adm2,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 300,
+        payloadFingerprint: 'c'.repeat(64),
+      });
+      expect(deniedTx1.allowed).toBe(false);
+      expect(deniedTx1.admissionStatus).toBe('RATE_LIMITED');
+      expect(deniedTx1.limitingPolicyId).toBe('pol_b');
+      expect(deniedTx1.retryAfterMs).toBeGreaterThan(0n);
+
+      // Verify bA did NOT lose 2,500 millitokens and adm2 was NOT inserted into rate_limit_admissions
+      const dbBucketsAfterDenied = await livePool.query<{ bucket_key: string; millitokens: string }>(
+        `SELECT "bucket_key", "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bA],
+      );
+      expect(BigInt(dbBucketsAfterDenied.rows[0]!.millitokens)).toBe(7_500n);
+
+      const deniedAdmRow = await livePool.query(
+        `SELECT 1 FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [adm2],
+      );
+      expect(deniedAdmRow.rowCount).toBe(0);
+
+      // 3. Reversed bucket-key ordering across 8 concurrent Tx1 transactions -> zero deadlocks (40P01)
+      const bX = trackBucketKey('pol_x', 'actor', 'u-deadlock', secret);
+      const bY = trackBucketKey('pol_y', 'ip', '10.10.0.2', secret);
+      const parallelAdms = Array.from({ length: 8 }, (_, idx) =>
+        trackAdmissionKey('dl_scope', 'u-deadlock', `idem-dl-${idx}`),
+      );
+
+      const parallelOutcomes = await Promise.all(
+        parallelAdms.map((admKey, idx) => {
+          const orderedSpecs =
+            idx % 2 === 0
+              ? [
+                  { bucketKey: bX, policyId: 'pol_x', capacityMt: 20_000n, refillTokensMt: 1_000n, refillPeriodMs: 3_600_000n, costMt: 1_000n },
+                  { bucketKey: bY, policyId: 'pol_y', capacityMt: 20_000n, refillTokensMt: 1_000n, refillPeriodMs: 3_600_000n, costMt: 1_000n },
+                ]
+              : [
+                  { bucketKey: bY, policyId: 'pol_y', capacityMt: 20_000n, refillTokensMt: 1_000n, refillPeriodMs: 3_600_000n, costMt: 1_000n },
+                  { bucketKey: bX, policyId: 'pol_x', capacityMt: 20_000n, refillTokensMt: 1_000n, refillPeriodMs: 3_600_000n, costMt: 1_000n },
+                ];
+          return store.consumeAndPrepareAdmission({
+            buckets: orderedSpecs,
+            admissionKey: admKey,
+            claimToken: crypto.randomUUID(),
+            admissionTtlSecs: 300,
+            payloadFingerprint: 'd'.repeat(64),
+          });
+        }),
+      );
+      expect(parallelOutcomes.every((o) => o.allowed)).toBe(true);
+
+      const dlBucketRes = await livePool.query<{ bucket_key: string; millitokens: string }>(
+        `SELECT "bucket_key", "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = ANY($1::text[])`,
+        [[bX, bY]],
+      );
+      for (const row of dlBucketRes.rows) {
+        expect(BigInt(row.millitokens)).toBe(12_000n); // 20,000 - (8 * 1,000)
+      }
+    });
+
+    it('enforces single-winner terminal claim under 10-way concurrent Tx1/Tx2 contention, cross-session lock serialization, and payload-conflict 0-burn invariant', async () => {
+      const secret = 'live-pg-race-hmac-secret-32bytes-minimum-key!';
+      const store = new PostgresRateLimitStore({ pool: livePool, admissionBudgetMs: 2_000 });
+      const admissionKey = trackAdmissionKey('commerce_order:/checkout', 'uid:live-racer', 'idem-live-race-1');
+      const bucketKey = trackBucketKey('t2_commerce_order', 'actor', 'uid:live-racer', secret);
+
+      const fpSame = computePayloadFingerprints(
+        { method: 'POST', rawUrl: '/api/v1/checkout', bodySha256Hex: EMPTY_BODY_SHA256_HEX },
+        { activeSecret: secret },
+      ).primary;
+      const fpMutated = computePayloadFingerprints(
+        { method: 'POST', rawUrl: '/api/v1/checkout?', bodySha256Hex: EMPTY_BODY_SHA256_HEX },
+        { activeSecret: secret },
+      ).primary;
+
+      // 1. 10 concurrent PostgreSQL contenders race Tx1 + Tx2 on the identical admissionKey
+      const raceResults = await Promise.all(
+        Array.from({ length: 10 }, async () => {
+          const candidateToken = crypto.randomUUID();
+          const tx1 = await store.consumeAndPrepareAdmission({
+            buckets: [
+              {
+                bucketKey,
+                policyId: 't2_commerce_order',
+                capacityMt: 10_000n,
+                refillTokensMt: 1_000n,
+                refillPeriodMs: 3_600_000n,
+                costMt: 1_000n,
+              },
+            ],
+            admissionKey,
+            claimToken: candidateToken,
+            admissionTtlSecs: 3_600,
+            payloadFingerprint: fpSame,
+          });
+          if (!tx1.allowed || !tx1.claimToken) {
+            return { won: false, status: tx1.admissionStatus, token: null };
+          }
+          const tx2 = await store.claimAdmission(admissionKey, tx1.claimToken);
+          return { won: tx2.claimed, status: tx2.claimStatus, token: tx1.claimToken };
+        }),
+      );
+
+      const winners = raceResults.filter((r) => r.won);
+      expect(winners).toHaveLength(1);
+      expect(winners[0]!.status).toBe('CLAIMED_WINNER');
+      const winningToken = winners[0]!.token!;
+
+      // Losers must all have been rejected as ALREADY_CLAIMED or TOKEN_MISMATCH
+      for (const loser of raceResults.filter((r) => !r.won)) {
+        expect(['ALREADY_CLAIMED', 'TOKEN_MISMATCH']).toContain(loser.status);
+      }
+
+      // Verify observable DB state: exactly 1,000 millitokens deducted (9,000 remaining) and status='CLAIMED'
+      const bktCheck = await livePool.query<{ millitokens: string }>(
+        `SELECT "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketKey],
+      );
+      expect(BigInt(bktCheck.rows[0]!.millitokens)).toBe(9_000n);
+
+      const admCheck = await livePool.query<{
+        status: string;
+        claim_token: string;
+        claimed_at: Date | null;
+      }>(
+        `SELECT "status", "claim_token", "claimed_at" FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admissionKey],
+      );
+      expect(admCheck.rows[0]!.status).toBe('CLAIMED');
+      expect(admCheck.rows[0]!.claim_token).toBe(winningToken);
+      expect(admCheck.rows[0]!.claimed_at).not.toBeNull();
+
+      // 2. Terminal claim invariant (Correction D): re-presenting the exact winning claim_token to Tx2 MUST fail
+      const duplicateWinnerClaim = await store.claimAdmission(admissionKey, winningToken);
+      expect(duplicateWinnerClaim).toEqual({
+        claimed: false,
+        claimStatus: 'ALREADY_CLAIMED',
+      });
+
+      // 3. Replaying Tx1 with same payload -> ALREADY_CLAIMED & zero additional token burn; mutated payload -> CONFLICT_PAYLOAD & zero burn
+      const replaySameTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey,
+            policyId: 't2_commerce_order',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: fpSame,
+      });
+      expect(replaySameTx1.allowed).toBe(false);
+      expect(replaySameTx1.admissionStatus).toBe('ALREADY_CLAIMED');
+
+      const replayConflictTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey,
+            policyId: 't2_commerce_order',
+            capacityMt: 10_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: fpMutated,
+      });
+      expect(replayConflictTx1.allowed).toBe(false);
+      expect(replayConflictTx1.admissionStatus).toBe('CONFLICT_PAYLOAD');
+
+      const bktAfterReplays = await livePool.query<{ millitokens: string }>(
+        `SELECT "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketKey],
+      );
+      expect(BigInt(bktAfterReplays.rows[0]!.millitokens)).toBe(9_000n);
+
+      // 4. Cross-session advisory lock (839200) & transaction isolation verification
+      const isolatedAdmKey = trackAdmissionKey('iso_scope', 'uid:iso-user', 'idem-iso-lock');
+      const isolatedBucketKey = trackBucketKey('pol_iso', 'actor', 'uid:iso-user', secret);
+      const holdingClient = await livePool.connect();
+      try {
+        await holdingClient.query('BEGIN');
+        const holdToken = crypto.randomUUID();
+        await holdingClient.query(
+          `SELECT * FROM "system"."consume_rate_limit_buckets"(
+             ARRAY[$1]::text[], ARRAY[5000]::bigint[], ARRAY[1000]::bigint[], ARRAY[3600000]::bigint[], ARRAY[1000]::bigint[],
+             $2::text, $3::uuid, 300, $4::varchar(64), NULL::varchar(64)
+           )`,
+          [isolatedBucketKey, isolatedAdmKey, holdToken, fpSame],
+        );
+
+        // Uncommitted Tx1 holds pg_advisory_xact_lock(839200, hashtext(isolatedAdmKey));
+        // concurrent Tx2 on another session must block and fail closed on 100ms lock_timeout!
+        await expect(store.claimAdmission(isolatedAdmKey, holdToken)).rejects.toBeInstanceOf(
+          RateLimitStoreUnavailableError,
+        );
+
+        await holdingClient.query('ROLLBACK');
+      } finally {
+        holdingClient.release();
+      }
+
+      // Rolled-back Tx1 left zero uncommitted rows in PostgreSQL
+      const rolledBackAdm = await livePool.query(
+        `SELECT 1 FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [isolatedAdmKey],
+      );
+      expect(rolledBackAdm.rowCount).toBe(0);
+    });
+
+    it('rejects stale claim tokens and recovers safely after an ambiguous Tx1 COMMIT without burning a second token', async () => {
+      const secret = 'live-pg-ambig-hmac-secret-32bytes-minimum-01';
+      const admissionKey = trackAdmissionKey('commerce_order:/checkout', 'uid:ambig-u1', 'idem-ambig-live-1');
+      const bucketKey = trackBucketKey('t2_commerce_order', 'actor', 'uid:ambig-u1', secret);
+      const fp = computePayloadFingerprints(
+        { method: 'POST', rawUrl: '/api/v1/checkout', bodySha256Hex: EMPTY_BODY_SHA256_HEX },
+        { activeSecret: secret },
+      ).primary;
+
+      // Proxy pool that commits Tx1 in PostgreSQL for real, then simulates a dropped COMMIT acknowledgement
+      const commitAckDropPool = {
+        waitingCount: 0,
+        connect: async () => {
+          const realClient = await livePool.connect();
+          return new Proxy(realClient, {
+            get(target, prop, receiver) {
+              if (prop === 'query') {
+                return async (sqlText: unknown, values?: unknown) => {
+                  const res = await (target.query as any)(sqlText, values);
+                  if (typeof sqlText === 'string' && sqlText.trim().toUpperCase() === 'COMMIT') {
+                    throw new Error('simulated TCP reset after PostgreSQL committed Tx1');
+                  }
+                  return res;
+                };
+              }
+              return Reflect.get(target, prop, receiver);
+            },
+          });
+        },
+      };
+
+      const ambiguousStore = new PostgresRateLimitStore({
+        pool: commitAckDropPool as unknown as pg.Pool,
+        admissionBudgetMs: 2_000,
+      });
+      const realStore = new PostgresRateLimitStore({
+        pool: livePool,
+        admissionBudgetMs: 2_000,
+      });
+
+      const staleToken = crypto.randomUUID();
+      await expect(
+        ambiguousStore.consumeAndPrepareAdmission({
+          buckets: [
+            {
+              bucketKey,
+              policyId: 't2_commerce_order',
+              capacityMt: 5_000n,
+              refillTokensMt: 1_000n,
+              refillPeriodMs: 3_600_000n,
+              costMt: 1_000n,
+            },
+          ],
+          admissionKey,
+          claimToken: staleToken,
+          admissionTtlSecs: 3_600,
+          payloadFingerprint: fp,
+        }),
+      ).rejects.toMatchObject({
+        reason: 'TX1_AMBIGUOUS_COMMIT',
+        isAmbiguousCommit: true,
+      });
+
+      // Verify PostgreSQL actually committed the UNCLAIMED row and deducted 1,000 millitokens (4,000 remaining)
+      const afterAmbigAdm = await livePool.query<{ status: string; claim_token: string }>(
+        `SELECT "status", "claim_token" FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admissionKey],
+      );
+      expect(afterAmbigAdm.rows[0]).toEqual({
+        status: 'UNCLAIMED',
+        claim_token: staleToken,
+      });
+
+      const afterAmbigBkt = await livePool.query<{ millitokens: string }>(
+        `SELECT "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketKey],
+      );
+      expect(BigInt(afterAmbigBkt.rows[0]!.millitokens)).toBe(4_000n);
+
+      // Client retries safely with the SAME Idempotency-Key and fresh claim_token -> EXISTING_UNCLAIMED & ZERO extra token burn!
+      const freshToken = crypto.randomUUID();
+      const retryTx1 = await realStore.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey,
+            policyId: 't2_commerce_order',
+            capacityMt: 5_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: freshToken,
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: fp,
+      });
+      expect(retryTx1.allowed).toBe(true);
+      expect(retryTx1.admissionStatus).toBe('EXISTING_UNCLAIMED');
+      expect(retryTx1.claimToken).toBe(freshToken);
+
+      const afterRetryBkt = await livePool.query<{ millitokens: string }>(
+        `SELECT "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketKey],
+      );
+      expect(BigInt(afterRetryBkt.rows[0]!.millitokens)).toBe(4_000n);
+
+      // Stale token MUST be rejected by Tx2 with TOKEN_MISMATCH, leaving row UNCLAIMED for freshToken
+      const staleClaim = await realStore.claimAdmission(admissionKey, staleToken);
+      expect(staleClaim).toEqual({
+        claimed: false,
+        claimStatus: 'TOKEN_MISMATCH',
+      });
+
+      // Fresh rotated token succeeds cleanly
+      const winnerClaim = await realStore.claimAdmission(admissionKey, freshToken);
+      expect(winnerClaim).toEqual({
+        claimed: true,
+        claimStatus: 'CLAIMED_WINNER',
+      });
+    });
+
+    it('executes RL-21 mixed-fleet HMAC rotation (V1 -> V2 -> V1 -> V2) on live PostgreSQL with bidirectional UNCLAIMED re-tagging, stable expires_at, and zero extra token burn', async () => {
+      const V1 = 'live-pg-rl21-v1-secret-32bytes-minimum-key-0001';
+      const V2 = 'live-pg-rl21-v2-secret-32bytes-minimum-key-0002';
+      const store = new PostgresRateLimitStore({ pool: livePool, admissionBudgetMs: 2_000 });
+
+      const admissionKey = trackAdmissionKey('commerce_order:/checkout', 'uid:rl21-live', 'idem-rl21-live-1');
+      const bucketV1 = trackBucketKey('t2_commerce_order', 'actor', 'uid:rl21-live', V1);
+      const bucketV2 = trackBucketKey('t2_commerce_order', 'actor', 'uid:rl21-live', V2);
+
+      const reqTarget = {
+        method: 'POST',
+        rawUrl: '/api/v1/checkout?currency=KES',
+        bodySha256Hex: crypto.createHash('sha256').update('{"offerId":"1"}').digest('hex'),
+      };
+
+      // Stage 1: Fleet signs with V1, verifies secondary V2
+      const stage1Fp = computePayloadFingerprints(reqTarget, {
+        activeSecret: V1,
+        secondarySecret: V2,
+      });
+      const tx1Stage1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bucketV1,
+            policyId: 't2_commerce_order',
+            capacityMt: 5_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: stage1Fp.primary,
+        secondaryPayloadFingerprint: stage1Fp.secondary,
+      });
+      expect(tx1Stage1.admissionStatus).toBe('NEW_UNCLAIMED');
+
+      const rowStage1 = await livePool.query<{
+        payload_fingerprint: string;
+        expires_epoch_us: string;
+      }>(
+        `SELECT "payload_fingerprint", (EXTRACT(EPOCH FROM "expires_at") * 1000000)::bigint::text AS expires_epoch_us
+         FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admissionKey],
+      );
+      expect(rowStage1.rows[0]!.payload_fingerprint).toBe(stage1Fp.primary);
+      const initialExpiresUs = rowStage1.rows[0]!.expires_epoch_us;
+
+      // Stage 2: Fleet promotes V2 to active, retains V1 as secondary -> re-tags UNCLAIMED row to V2 without extending expires_at or deducting bucketV2!
+      const stage2Fp = computePayloadFingerprints(reqTarget, {
+        activeSecret: V2,
+        secondarySecret: V1,
+      });
+      const tx1Stage2 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bucketV2,
+            policyId: 't2_commerce_order',
+            capacityMt: 5_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 7_200, // Even if caller passes larger TTL, EXISTING_UNCLAIMED must NOT extend expires_at!
+        payloadFingerprint: stage2Fp.primary,
+        secondaryPayloadFingerprint: stage2Fp.secondary,
+      });
+      expect(tx1Stage2.allowed).toBe(true);
+      expect(tx1Stage2.admissionStatus).toBe('EXISTING_UNCLAIMED');
+
+      const rowStage2 = await livePool.query<{
+        payload_fingerprint: string;
+        expires_epoch_us: string;
+      }>(
+        `SELECT "payload_fingerprint", (EXTRACT(EPOCH FROM "expires_at") * 1000000)::bigint::text AS expires_epoch_us
+         FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admissionKey],
+      );
+      expect(rowStage2.rows[0]!.payload_fingerprint).toBe(stage2Fp.primary);
+      expect(rowStage2.rows[0]!.expires_epoch_us).toBe(initialExpiresUs);
+
+      // Verify bucketV2 was NOT touched at all during EXISTING_UNCLAIMED recovery
+      const bktV2Check = await livePool.query(
+        `SELECT 1 FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketV2],
+      );
+      expect(bktV2Check.rowCount).toBe(0);
+
+      // Rollback to Stage 1 (active=V1, secondary=V2) -> bidirectionally re-tags back to V1 with stable expires_at
+      const tx1Rollback = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bucketV1,
+            policyId: 't2_commerce_order',
+            capacityMt: 5_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: stage1Fp.primary,
+        secondaryPayloadFingerprint: stage1Fp.secondary,
+      });
+      expect(tx1Rollback.allowed).toBe(true);
+      expect(tx1Rollback.admissionStatus).toBe('EXISTING_UNCLAIMED');
+
+      const rowRollback = await livePool.query<{
+        payload_fingerprint: string;
+        expires_epoch_us: string;
+      }>(
+        `SELECT "payload_fingerprint", (EXTRACT(EPOCH FROM "expires_at") * 1000000)::bigint::text AS expires_epoch_us
+         FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admissionKey],
+      );
+      expect(rowRollback.rows[0]!.payload_fingerprint).toBe(stage1Fp.primary);
+      expect(rowRollback.rows[0]!.expires_epoch_us).toBe(initialExpiresUs);
+
+      // Re-promote to Stage 2 (active=V2, secondary=V1) and complete Tx2 single-winner claim
+      const tx1RePromote = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: bucketV2,
+            policyId: 't2_commerce_order',
+            capacityMt: 5_000n,
+            refillTokensMt: 1_000n,
+            refillPeriodMs: 3_600_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 3_600,
+        payloadFingerprint: stage2Fp.primary,
+        secondaryPayloadFingerprint: stage2Fp.secondary,
+      });
+      const claimWin = await store.claimAdmission(admissionKey, tx1RePromote.claimToken!);
+      expect(claimWin).toEqual({ claimed: true, claimStatus: 'CLAIMED_WINNER' });
+
+      // Total token burn across the entire V1 -> V2 -> V1 -> V2 sequence is strictly 1,000 millitokens on bucketV1
+      const bktV1Final = await livePool.query<{ millitokens: string }>(
+        `SELECT "millitokens"::text FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [bucketV1],
+      );
+      expect(BigInt(bktV1Final.rows[0]!.millitokens)).toBe(4_000n);
+    });
+
+    it('enforces TTL expiry, post-Barrier-2 V1 retirement behavior, and reapExpiredRowsOnce() cleanup on live PostgreSQL', async () => {
+      const V1 = 'live-pg-ttl-v1-secret-32bytes-minimum-key-0001!';
+      const V2 = 'live-pg-ttl-v2-secret-32bytes-minimum-key-0002!';
+      const store = new PostgresRateLimitStore({ pool: livePool, admissionBudgetMs: 2_000 });
+
+      const admUnclaimedExp = trackAdmissionKey('ttl_scope', 'uid:ttl-1', 'idem-ttl-unclaimed');
+      const admClaimedV1Exp = trackAdmissionKey('ttl_scope', 'uid:ttl-1', 'idem-ttl-v1-claimed');
+      const activeBucket = trackBucketKey('pol_ttl', 'actor', 'uid:ttl-1', V1);
+      const expiredBucket = trackBucketKey('pol_ttl_reap', 'actor', 'uid:ttl-reap', V1);
+
+      const reqParams = {
+        method: 'POST',
+        rawUrl: '/api/v1/checkout',
+        bodySha256Hex: EMPTY_BODY_SHA256_HEX,
+      };
+      const fpV1Only = computePayloadFingerprints(reqParams, { activeSecret: V1 });
+      const fpV2Only = computePayloadFingerprints(reqParams, { activeSecret: V2 });
+
+      // Create 1-second TTL UNCLAIMED row
+      const unclaimedTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: activeBucket,
+            policyId: 'pol_ttl',
+            capacityMt: 10_000n,
+            refillTokensMt: 10_000n,
+            refillPeriodMs: 60_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey: admUnclaimedExp,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 1,
+        payloadFingerprint: fpV1Only.primary,
+      });
+      expect(unclaimedTx1.allowed).toBe(true);
+
+      // Create 1-second TTL V1-signed CLAIMED row
+      const claimedTx1 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: activeBucket,
+            policyId: 'pol_ttl',
+            capacityMt: 10_000n,
+            refillTokensMt: 10_000n,
+            refillPeriodMs: 60_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey: admClaimedV1Exp,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 1,
+        payloadFingerprint: fpV1Only.primary,
+      });
+      const claimRes = await store.claimAdmission(admClaimedV1Exp, claimedTx1.claimToken!);
+      expect(claimRes.claimed).toBe(true);
+
+      // Before TTL expires, retiring V1 prematurely (V2-only without secondary=V1) treats V1 CLAIMED row as CONFLICT_PAYLOAD
+      const prematureStage3 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: activeBucket,
+            policyId: 'pol_ttl',
+            capacityMt: 10_000n,
+            refillTokensMt: 10_000n,
+            refillPeriodMs: 60_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey: admClaimedV1Exp,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 300,
+        payloadFingerprint: fpV2Only.primary,
+      });
+      expect(prematureStage3.admissionStatus).toBe('CONFLICT_PAYLOAD');
+
+      // Wait for 1s PostgreSQL TTL window to expire naturally (simulating completion of post-Barrier-2 TTL hold)
+      await new Promise((r) => setTimeout(r, 1_150));
+
+      // Expired UNCLAIMED row cannot be claimed in Tx2 -> EXPIRED_OR_MISSING
+      const expiredClaimAttempt = await store.claimAdmission(
+        admUnclaimedExp,
+        unclaimedTx1.claimToken!,
+      );
+      expect(expiredClaimAttempt).toEqual({
+        claimed: false,
+        claimStatus: 'EXPIRED_OR_MISSING',
+      });
+
+      // After TTL hold elapses, Stage 3 (V2-only, secondary=undefined) cleanly overwrites expired V1 row as NEW_UNCLAIMED!
+      const postHoldStage3 = await store.consumeAndPrepareAdmission({
+        buckets: [
+          {
+            bucketKey: activeBucket,
+            policyId: 'pol_ttl',
+            capacityMt: 10_000n,
+            refillTokensMt: 10_000n,
+            refillPeriodMs: 60_000n,
+            costMt: 1_000n,
+          },
+        ],
+        admissionKey: admClaimedV1Exp,
+        claimToken: crypto.randomUUID(),
+        admissionTtlSecs: 300,
+        payloadFingerprint: fpV2Only.primary,
+      });
+      expect(postHoldStage3.allowed).toBe(true);
+      expect(postHoldStage3.admissionStatus).toBe('NEW_UNCLAIMED');
+
+      // Seed an expired test bucket row (satisfying chk_rlb_expires_after_updated) and verify reapExpiredRowsOnce() purges expired bucket + expired admission rows
+      await livePool.query(
+        `INSERT INTO "system"."rate_limit_buckets" ("bucket_key", "policy_id", "millitokens", "updated_at", "expires_at")
+         VALUES ($1, 'pol_ttl_reap', 5000, clock_timestamp() - interval '120 seconds', clock_timestamp() - interval '5 seconds')`,
+        [expiredBucket],
+      );
+
+      await store.reapExpiredRowsOnce();
+
+      const reapedAdmCheck = await livePool.query(
+        `SELECT 1 FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admUnclaimedExp],
+      );
+      expect(reapedAdmCheck.rowCount).toBe(0);
+
+      const reapedBktCheck = await livePool.query(
+        `SELECT 1 FROM "system"."rate_limit_buckets" WHERE "bucket_key" = $1`,
+        [expiredBucket],
+      );
+      expect(reapedBktCheck.rowCount).toBe(0);
+
+      // Unexpired refreshed admission row and active bucket row MUST remain intact
+      const survivingAdmCheck = await livePool.query<{ payload_fingerprint: string; status: string }>(
+        `SELECT "payload_fingerprint", "status" FROM "system"."rate_limit_admissions" WHERE "admission_key" = $1`,
+        [admClaimedV1Exp],
+      );
+      expect(survivingAdmCheck.rows[0]).toEqual({
+        payload_fingerprint: fpV2Only.primary,
+        status: 'UNCLAIMED',
+      });
     });
   });
 });

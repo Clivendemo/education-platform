@@ -6,12 +6,11 @@ import { defaultRecommendationCacheService } from './services/recommendations/re
 import { defaultMpesaReconciliationWorker } from './services/commerce/mpesa/mpesa-reconciliation.worker.js';
 import { defaultFileProcessingWorker } from './services/file-processing.worker.js';
 import { RateLimitService } from './services/rate-limit.service.js';
-import { createRedactedLoggerOptions } from './utils/log-redactor.js';
 
 const serverRateLimitService = new RateLimitService();
 
 const app = buildApp({
-  logger: createRedactedLoggerOptions(env.LOG_LEVEL),
+  logger: { level: env.LOG_LEVEL },
   services: {
     rateLimitService: serverRateLimitService,
   },

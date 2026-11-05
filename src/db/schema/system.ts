@@ -57,7 +57,7 @@ export const rateLimitAdmissions = systemSchema.table(
     admissionKey: varchar('admission_key', { length: 200 }).notNull(),
     status: varchar('status', { length: 20 }).notNull(),
     claimToken: uuid('claim_token').notNull(),
-    payloadFingerprint: varchar('payload_fingerprint', { length: 128 }).notNull(),
+    payloadFingerprint: varchar('payload_fingerprint', { length: 64 }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
@@ -76,7 +76,7 @@ export const rateLimitAdmissions = systemSchema.table(
     ),
     check(
       'chk_rla_fingerprint_bounds',
-      sql`length(btrim(${table.payloadFingerprint})) >= 32 AND length(${table.payloadFingerprint}) <= 128`,
+      sql`${table.payloadFingerprint} ~ '^[0-9a-f]{64}$'`,
     ),
     check(
       'chk_rla_claimed_at_consistency',

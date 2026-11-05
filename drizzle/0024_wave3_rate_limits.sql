@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS "system"."rate_limit_admissions" (
   "admission_key" VARCHAR(200) NOT NULL,
   "status" VARCHAR(20) NOT NULL,
   "claim_token" UUID NOT NULL,
-  "payload_fingerprint" VARCHAR(128) NOT NULL,
+  "payload_fingerprint" VARCHAR(64) NOT NULL,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   "claimed_at" TIMESTAMPTZ,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS "system"."rate_limit_admissions" (
     "status" IN ('UNCLAIMED', 'CLAIMED')
   ),
   CONSTRAINT "chk_rla_fingerprint_bounds" CHECK (
-    length(btrim("payload_fingerprint")) >= 32 AND length("payload_fingerprint") <= 128
+    "payload_fingerprint" ~ '^[0-9a-f]{64}$'
   ),
   CONSTRAINT "chk_rla_claimed_at_consistency" CHECK (
     ("status" = 'UNCLAIMED' AND "claimed_at" IS NULL)
@@ -72,8 +72,8 @@ CREATE OR REPLACE FUNCTION "system"."consume_rate_limit_buckets"(
   p_admission_key TEXT,
   p_claim_token UUID,
   p_admission_ttl_secs INTEGER,
-  p_payload_fingerprint TEXT,
-  p_secondary_payload_fingerprint TEXT DEFAULT NULL
+  p_payload_fingerprint VARCHAR(64),
+  p_secondary_payload_fingerprint VARCHAR(64) DEFAULT NULL
 )
 RETURNS TABLE (
   allowed BOOLEAN,
@@ -86,7 +86,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 VOLATILE
 SECURITY INVOKER
-SET search_path = system, pg_catalog
+SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   v_count INTEGER;
@@ -128,15 +128,15 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  IF p_payload_fingerprint IS NULL OR length(btrim(p_payload_fingerprint)) < 32 OR length(p_payload_fingerprint) > 128 THEN
-    RAISE EXCEPTION 'Invalid p_payload_fingerprint bounds'
+  IF p_payload_fingerprint IS NULL OR p_payload_fingerprint !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'Invalid p_payload_fingerprint format (expected 64-char lowercase hex)'
       USING ERRCODE = '22023';
   END IF;
 
   IF p_secondary_payload_fingerprint IS NOT NULL
-     AND (length(btrim(p_secondary_payload_fingerprint)) < 32 OR length(p_secondary_payload_fingerprint) > 128)
+     AND p_secondary_payload_fingerprint !~ '^[0-9a-f]{64}$'
   THEN
-    RAISE EXCEPTION 'Invalid p_secondary_payload_fingerprint bounds'
+    RAISE EXCEPTION 'Invalid p_secondary_payload_fingerprint format (expected 64-char lowercase hex)'
       USING ERRCODE = '22023';
   END IF;
 
@@ -419,7 +419,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 VOLATILE
 SECURITY INVOKER
-SET search_path = system, pg_catalog
+SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   v_now TIMESTAMPTZ;
@@ -480,7 +480,7 @@ $$;
 --> statement-breakpoint
 
 REVOKE ALL ON FUNCTION "system"."consume_rate_limit_buckets"(
-  TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, TEXT, TEXT
+  TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, VARCHAR(64), VARCHAR(64)
 ) FROM PUBLIC;
 --> statement-breakpoint
 
@@ -490,7 +490,7 @@ REVOKE ALL ON FUNCTION "system"."claim_rate_limit_admission"(TEXT, UUID) FROM PU
 DO $$
 BEGIN
   EXECUTE format(
-    'GRANT EXECUTE ON FUNCTION "system"."consume_rate_limit_buckets"(TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, TEXT, TEXT) TO %I',
+    'GRANT EXECUTE ON FUNCTION "system"."consume_rate_limit_buckets"(TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, VARCHAR(64), VARCHAR(64)) TO %I',
     current_user
   );
   EXECUTE format(

@@ -1,15 +1,21 @@
 import { Writable } from 'node:stream';
-import { describe, it, expect, vi } from 'vitest';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import pino from 'pino';
 import { buildApp } from '../../src/app.js';
 import {
   DefaultAuditService,
   MAX_ACTOR_SNAPSHOT_BYTES,
   MAX_AUDIT_CONTEXT_BYTES,
+  validateAndSanitizeActorSnapshot,
+  validateAndSanitizeContext,
 } from '../../src/services/audit.service.js';
 import {
+  ACTOR_SNAPSHOT_HARD_MAX_BYTES,
   ACTOR_SNAPSHOT_SOFT_TARGET_BYTES,
+  AUDIT_CONTEXT_HARD_MAX_BYTES,
   AUDIT_CONTEXT_SOFT_TARGET_BYTES,
+  AUDIT_STATE_SOFT_TARGET_BYTES,
   MAX_REDACTION_DEPTH,
   REDACTED_LITERAL,
   REDACTED_PHONE_LITERAL,
@@ -17,6 +23,7 @@ import {
   estimatePgJsonbTextBytesUpperBound,
   normalizeAndRedactAuditValue,
   normalizePgJsonbString,
+  sanitizeAndBoundAuditState,
 } from '../../src/utils/log-redactor.js';
 import {
   InMemoryTwoPhaseRateLimitStore,
@@ -363,8 +370,335 @@ describe('Wave 3 WP7 — Audit & Structured Pino Log Redaction, UTF-8/JSONB Hygi
   });
 
   describe.skipIf(!isDbAvailable)('Live PostgreSQL octet_length(col::text) Corpus Verification', () => {
-    it('verifies estimatePgJsonbTextBytesUpperBound against live PostgreSQL SELECT octet_length($1::jsonb::text)', async () => {
-      expect(isDbAvailable).toBe(true);
+    const RETENTION_DIAGNOSTIC_DATA_HARD_MAX_BYTES = 8192;
+    let roPool: pg.Pool;
+
+    async function withReadOnlyPg<T>(
+      fn: (client: pg.PoolClient) => Promise<T>,
+    ): Promise<T> {
+      const client = await roPool.connect();
+      try {
+        await client.query('BEGIN TRANSACTION READ ONLY');
+        return await fn(client);
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    }
+
+    async function measureLivePgJsonbBytes(
+      client: pg.PoolClient,
+      value: unknown,
+    ): Promise<{ pgBytes: number; pgText: string }> {
+      const res = await client.query<{ pg_bytes: number; pg_text: string }>(
+        `SELECT octet_length(($1::text)::jsonb::text) AS pg_bytes, (($1::text)::jsonb)::text AS pg_text`,
+        [JSON.stringify(value)],
+      );
+      return {
+        pgBytes: Number(res.rows[0]!.pg_bytes),
+        pgText: res.rows[0]!.pg_text,
+      };
+    }
+
+    beforeAll(async () => {
+      const connectionString = process.env.DATABASE_TEST_URL || process.env.DATABASE_URL;
+      if (!connectionString) {
+        throw new Error('DATABASE_TEST_URL or DATABASE_URL is required for live PostgreSQL WP7 tests.');
+      }
+      roPool = new pg.Pool({
+        connectionString,
+        max: 4,
+        idleTimeoutMillis: 15_000,
+        connectionTimeoutMillis: 15_000,
+      });
+    });
+
+    afterAll(async () => {
+      if (roPool) {
+        await roPool.end();
+      }
+    });
+
+    it('verifies live PostgreSQL CHECK constraints for audit_logs (4096, 2048) and data_retention_actions.diagnostic_data (8192) via read-only catalog inspection', async () => {
+      await withReadOnlyPg(async (client) => {
+        const res = await client.query<{
+          relname: string;
+          conname: string;
+          condef: string;
+        }>(`
+          SELECT
+            cl.relname,
+            co.conname,
+            pg_catalog.pg_get_constraintdef(co.oid) AS condef
+          FROM pg_catalog.pg_constraint co
+          JOIN pg_catalog.pg_class cl ON cl.oid = co.conrelid
+          JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
+          WHERE ns.nspname = 'governance'
+            AND co.conname IN (
+              'chk_audit_logs_context_bytes',
+              'chk_audit_logs_actor_snapshot_bytes',
+              'chk_retention_actions_diagnostic_bytes'
+            )
+        `);
+
+        const defs = new Map(res.rows.map((r) => [r.conname, r]));
+        expect(defs.size).toBe(3);
+
+        expect(defs.get('chk_audit_logs_context_bytes')?.relname).toBe('audit_logs');
+        expect(defs.get('chk_audit_logs_context_bytes')?.condef).toContain('octet_length');
+        expect(defs.get('chk_audit_logs_context_bytes')?.condef).toContain(
+          String(AUDIT_CONTEXT_HARD_MAX_BYTES),
+        );
+        expect(AUDIT_CONTEXT_HARD_MAX_BYTES).toBe(MAX_AUDIT_CONTEXT_BYTES);
+        expect(MAX_AUDIT_CONTEXT_BYTES).toBe(4096);
+
+        expect(defs.get('chk_audit_logs_actor_snapshot_bytes')?.relname).toBe('audit_logs');
+        expect(defs.get('chk_audit_logs_actor_snapshot_bytes')?.condef).toContain('octet_length');
+        expect(defs.get('chk_audit_logs_actor_snapshot_bytes')?.condef).toContain(
+          String(ACTOR_SNAPSHOT_HARD_MAX_BYTES),
+        );
+        expect(ACTOR_SNAPSHOT_HARD_MAX_BYTES).toBe(MAX_ACTOR_SNAPSHOT_BYTES);
+        expect(MAX_ACTOR_SNAPSHOT_BYTES).toBe(2048);
+
+        expect(defs.get('chk_retention_actions_diagnostic_bytes')?.relname).toBe(
+          'data_retention_actions',
+        );
+        expect(defs.get('chk_retention_actions_diagnostic_bytes')?.condef).toContain('octet_length');
+        expect(defs.get('chk_retention_actions_diagnostic_bytes')?.condef).toContain(
+          String(RETENTION_DIAGNOSTIC_DATA_HARD_MAX_BYTES),
+        );
+      });
+    });
+
+    it('proves estimatePgJsonbTextBytesUpperBound(v) >= live PostgreSQL SELECT octet_length($1::jsonb::text) across the adversarial JSONB corpus', async () => {
+      await withReadOnlyPg(async (client) => {
+        // 1. Direct verification of IEEE-754 subnormal expansion in PostgreSQL jsonb::text (`5e-324` -> >= 326 bytes)
+        const subnormalLive = await measureLivePgJsonbBytes(client, 5e-324);
+        expect(JSON.stringify(5e-324).length).toBe(6);
+        expect(subnormalLive.pgBytes).toBeGreaterThanOrEqual(326);
+        expect(estimatePgJsonbTextBytesUpperBound(5e-324)).toBeGreaterThanOrEqual(
+          subnormalLive.pgBytes,
+        );
+
+        // 2. Full adversarial corpus: scientific floats, 120 1-char keys, UTF-8 emojis, control escapes, repaired surrogates/NULs, and redacted objects
+        const manyShortKeys: Record<string, number> = {};
+        for (let i = 0; i < 120; i++) {
+          manyShortKeys[`k${i}`] = i;
+        }
+
+        const corpus: unknown[] = [
+          null,
+          true,
+          false,
+          0,
+          -0,
+          5e-324,
+          -5e-324,
+          1e-7,
+          1.23456789e-50,
+          1e-120,
+          9.999999e+25,
+          1.7976931348623157e+308,
+          '🇰🇪🎓📚 Kiswahili & Mathematics \n\r\t\b\f\u0007 "quoted" \\backslash\\',
+          normalizePgJsonbString('nul\u0000stripped_and_lone_surrogate_\uD800_repaired'),
+          Array.from({ length: 50 }, (_, idx) => (idx % 2 === 0 ? 1e-120 : `item-${idx}`)),
+          manyShortKeys,
+          {
+            resourceId: 'res-pg-ro-1',
+            tokenCount: 42,
+            millitokens: 15_000,
+            password: 'raw-secret-password',
+            nested: {
+              Authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig',
+              note: 'Phone +254712345678 on postgres://user:pw@host:5432/db',
+            },
+          },
+        ];
+
+        for (const rawSample of corpus) {
+          const normalized = normalizeAndRedactAuditValue(rawSample);
+          const upperBound = estimatePgJsonbTextBytesUpperBound(normalized);
+          const { pgBytes } = await measureLivePgJsonbBytes(client, normalized);
+          expect(upperBound).toBeGreaterThanOrEqual(pgBytes);
+        }
+      });
+    });
+
+    it('verifies audit_logs.context soft target (3800B) and hard limit (4096B) against live PostgreSQL SELECT octet_length($1::jsonb::text)', async () => {
+      await withReadOnlyPg(async (client) => {
+        // 1. Just below soft target (~3,720B): preserved uncompacted and strictly <= 3800B / <= 4096B
+        const underSoftInput = {
+          requestId: 'req-under-soft',
+          outcome: 'SUCCESS',
+          detail: 'a'.repeat(3_640),
+        };
+        const underSoftOut = validateAndSanitizeContext(underSoftInput);
+        expect(underSoftOut._truncated).toBeUndefined();
+        const underSoftPg = await measureLivePgJsonbBytes(client, underSoftOut);
+        expect(underSoftPg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_SOFT_TARGET_BYTES);
+        expect(underSoftPg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_HARD_MAX_BYTES);
+
+        // 2. Between soft target (3800B) and hard ceiling (4096B): compacted below 3800B with _truncated=true
+        const boundaryInput = {
+          requestId: 'req-boundary-3950',
+          reason: 'BOUNDARY_CHECK',
+          detail: 'b'.repeat(3_880),
+        };
+        const boundaryOut = validateAndSanitizeContext(boundaryInput);
+        expect(boundaryOut._truncated).toBe(true);
+        expect(boundaryOut.requestId).toBe('req-boundary-3950');
+        const boundaryEst = estimatePgJsonbTextBytesUpperBound(boundaryOut);
+        const boundaryPg = await measureLivePgJsonbBytes(client, boundaryOut);
+        expect(boundaryEst).toBeLessThanOrEqual(AUDIT_CONTEXT_SOFT_TARGET_BYTES);
+        expect(boundaryPg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_SOFT_TARGET_BYTES);
+        expect(boundaryPg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_HARD_MAX_BYTES);
+
+        // 3. Adversarial > 100 KiB payload with scientific-notation floats, emojis, and secrets
+        const hugeContext: Record<string, unknown> = {
+          reason: 'PAYMENT_RECONCILIATION_MISMATCH',
+          requestId: 'req-live-pg-compaction-01',
+          outcome: 'DENIED',
+          password: 'must-never-appear-in-pg-jsonb',
+          tinyScientificArray: Array.from({ length: 40 }, () => 5e-324),
+          giantBlob: '🇰🇪'.repeat(15_000),
+        };
+        for (let i = 0; i < 80; i++) {
+          hugeContext[`extraField_${i}`] = 'v'.repeat(800);
+        }
+
+        const compactedHuge = validateAndSanitizeContext(hugeContext);
+        expect(compactedHuge._truncated).toBe(true);
+        const compactedHugeEst = estimatePgJsonbTextBytesUpperBound(compactedHuge);
+        const compactedHugePg = await measureLivePgJsonbBytes(client, compactedHuge);
+
+        expect(compactedHugePg.pgText).not.toContain('must-never-appear-in-pg-jsonb');
+        expect(compactedHugeEst).toBeGreaterThanOrEqual(compactedHugePg.pgBytes);
+        expect(compactedHugeEst).toBeLessThanOrEqual(AUDIT_CONTEXT_SOFT_TARGET_BYTES);
+        expect(compactedHugePg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_SOFT_TARGET_BYTES);
+        expect(compactedHugePg.pgBytes).toBeLessThanOrEqual(AUDIT_CONTEXT_HARD_MAX_BYTES);
+
+        // Read-only predicate evaluation matching chk_audit_logs_context_bytes (<= 4096)
+        const rawOverHard = { uncompacted: 'z'.repeat(4_100) };
+        const checkEval = await client.query<{
+          compacted_passes: boolean;
+          oversized_passes: boolean;
+        }>(
+          `SELECT
+             (octet_length(($1::text)::jsonb::text) <= 4096) AS compacted_passes,
+             (octet_length(($2::text)::jsonb::text) <= 4096) AS oversized_passes`,
+          [JSON.stringify(compactedHuge), JSON.stringify(rawOverHard)],
+        );
+        expect(checkEval.rows[0]).toEqual({
+          compacted_passes: true,
+          oversized_passes: false,
+        });
+      });
+    });
+
+    it('verifies audit_logs.actor_snapshot soft target (1900B) and hard limit (2048B) against live PostgreSQL SELECT octet_length($1::jsonb::text)', async () => {
+      await withReadOnlyPg(async (client) => {
+        // 1. Just below 1,900B soft target
+        const underSoftSnap = validateAndSanitizeActorSnapshot({
+          actorId: 'u-snap-ok',
+          actorType: 'AUTHENTICATED',
+          actorRole: 'r'.repeat(1_760),
+          emailDomain: 'elimupin.co.ke',
+        });
+        expect(underSoftSnap._truncated).toBeUndefined();
+        const underSoftPg = await measureLivePgJsonbBytes(client, underSoftSnap);
+        expect(underSoftPg.pgBytes).toBeLessThanOrEqual(ACTOR_SNAPSHOT_SOFT_TARGET_BYTES);
+        expect(underSoftPg.pgBytes).toBeLessThanOrEqual(ACTOR_SNAPSHOT_HARD_MAX_BYTES);
+
+        // 2. Boundary (1,980B) and 20 KiB oversized snapshots -> compacted <= 1,900B (< 2,048B hard limit)
+        for (const roleLen of [1_920, 20_000]) {
+          const compactedSnap = validateAndSanitizeActorSnapshot({
+            actorId: 'u-snap-huge',
+            actorType: 'AUTHENTICATED',
+            actorRole: 'role_'.repeat(Math.ceil(roleLen / 5)),
+            emailDomain: 'sub.'.repeat(500) + 'elimupin.co.ke',
+          });
+          expect(compactedSnap._truncated).toBe(true);
+          const est = estimatePgJsonbTextBytesUpperBound(compactedSnap);
+          const live = await measureLivePgJsonbBytes(client, compactedSnap);
+          expect(est).toBeGreaterThanOrEqual(live.pgBytes);
+          expect(est).toBeLessThanOrEqual(ACTOR_SNAPSHOT_SOFT_TARGET_BYTES);
+          expect(live.pgBytes).toBeLessThanOrEqual(ACTOR_SNAPSHOT_SOFT_TARGET_BYTES);
+          expect(live.pgBytes).toBeLessThanOrEqual(ACTOR_SNAPSHOT_HARD_MAX_BYTES);
+        }
+      });
+    });
+
+    it('verifies audit state soft target (16384B) and retention_actions.diagnostic_data hard limit (8192B) via read-only PostgreSQL JSONB evaluation', async () => {
+      await withReadOnlyPg(async (client) => {
+        // 1. Audit beforeState / afterState soft target (<= 16,384B) across Stage 1 and Stage 3 compaction
+        const stage1StateInput: Record<string, unknown> = {
+          status: 'PUBLISHED',
+          token: 'secret-state-token-must-redact',
+          largeDescription: '📚'.repeat(8_000), // ~32 KiB UTF-8 -> Stage 1 truncates string to <= 256B
+        };
+        const stage1StateOut = sanitizeAndBoundAuditState(stage1StateInput)!;
+        expect(stage1StateOut._truncated).toBe(true);
+        expect(stage1StateOut.token).toBe(REDACTED_LITERAL);
+        const stage1Est = estimatePgJsonbTextBytesUpperBound(stage1StateOut);
+        const stage1Pg = await measureLivePgJsonbBytes(client, stage1StateOut);
+        expect(stage1Est).toBeGreaterThanOrEqual(stage1Pg.pgBytes);
+        expect(stage1Est).toBeLessThanOrEqual(AUDIT_STATE_SOFT_TARGET_BYTES);
+        expect(stage1Pg.pgBytes).toBeLessThanOrEqual(AUDIT_STATE_SOFT_TARGET_BYTES);
+
+        // Stage 3 fallback when > 16,384B even after Stage 1 per-field truncation (e.g. 120 keys * 200B)
+        const stage3StateInput: Record<string, unknown> = {};
+        for (let i = 0; i < 120; i++) {
+          stage3StateInput[`field_key_${String(i).padStart(3, '0')}`] = 'x'.repeat(220);
+        }
+        const stage3StateOut = sanitizeAndBoundAuditState(stage3StateInput)!;
+        expect(stage3StateOut._truncated).toBe(true);
+        expect(stage3StateOut._reason).toBe('STATE_COMPACTED');
+        const stage3Pg = await measureLivePgJsonbBytes(client, stage3StateOut);
+        expect(stage3Pg.pgBytes).toBeLessThanOrEqual(AUDIT_STATE_SOFT_TARGET_BYTES);
+
+        // 2. Read-only verification of governance.data_retention_actions.diagnostic_data (<= 8,192B hard CHECK)
+        //    Evaluates exact jsonb_set shapes emitted by DefaultRetentionService plus 8,192B boundary cases
+        const retentionShapesRes = await client.query<{
+          default_bytes: number;
+          finalized_bytes: number;
+          recovered_bytes: number;
+          at_limit_passes: boolean;
+          over_limit_passes: boolean;
+        }>(
+          `WITH shapes AS (
+             SELECT
+               '{}'::jsonb AS d_default,
+               jsonb_set('{}'::jsonb, '{unprocessedEligibleCount}', to_jsonb($1::bigint)) AS d_finalized,
+               jsonb_set(
+                 jsonb_set('{}'::jsonb, '{recovered_by_worker}', to_jsonb(true)),
+                 '{unprocessedEligibleCount}',
+                 to_jsonb($1::bigint)
+               ) AS d_recovered,
+               jsonb_build_object('pad', repeat('x', $2::int)) AS d_at_limit,
+               jsonb_build_object('pad', repeat('x', $3::int)) AS d_over_limit
+           )
+           SELECT
+             octet_length(d_default::text) AS default_bytes,
+             octet_length(d_finalized::text) AS finalized_bytes,
+             octet_length(d_recovered::text) AS recovered_bytes,
+             (octet_length(d_at_limit::text) <= 8192) AS at_limit_passes,
+             (octet_length(d_over_limit::text) <= 8192) AS over_limit_passes
+           FROM shapes`,
+          [
+            '9223372036854775807',
+            // `{"pad": "..."}` adds 10 wrapper bytes around the repeated string -> 8182 + 10 === 8192 exact boundary!
+            8182,
+            8183,
+          ],
+        );
+
+        const diagRow = retentionShapesRes.rows[0]!;
+        expect(diagRow.default_bytes).toBe(2);
+        expect(diagRow.finalized_bytes).toBeLessThanOrEqual(RETENTION_DIAGNOSTIC_DATA_HARD_MAX_BYTES);
+        expect(diagRow.recovered_bytes).toBeLessThanOrEqual(RETENTION_DIAGNOSTIC_DATA_HARD_MAX_BYTES);
+        expect(diagRow.at_limit_passes).toBe(true);
+        expect(diagRow.over_limit_passes).toBe(false);
+      });
     });
   });
 });

@@ -1,0 +1,83 @@
+:root {
+  --bg-canvas: #faf9f5;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f2efe9;
+  --bg-elevated: #ffffff;
+
+  --text-primary: #141715;
+  --text-secondary: #3f4842;
+  --text-muted: #5d6760;
+  --text-on-accent: #ffffff;
+
+  --border-hairline: #dce0d9;
+  --border-strong: #bcc4b9;
+
+  --accent-primary: #14532d;
+  --accent-primary-hover: #0f3f22;
+  --accent-secondary: #9a3412;
+  --focus-ring: #166534;
+
+  --status-ok-bg: #f0fdf4;
+  --status-ok-border: #bbf7d0;
+  --status-ok-text: #14532d;
+
+  --status-info-bg: #f8fafc;
+  --status-info-border: #cbd5e1;
+  --status-info-text: #1e293b;
+
+  --status-warn-bg: #fffbeb;
+  --status-warn-border: #fde68a;
+  --status-warn-text: #78350f;
+
+  --status-error-bg: #fef2f2;
+  --status-error-border: #fecaca;
+  --status-error-text: #7f1d1d;
+
+  --placeholder-surface: #f1efe8;
+  --placeholder-grid: #d7dcd3;
+  --placeholder-ink: #2b4c38;
+  --placeholder-warm: #9a3412;
+  --hero-scrim: linear-gradient(180deg, rgba(20, 23, 21, 0.04) 0%, rgba(20, 23, 21, 0.14) 100%);
+}
+
+.dark {
+  --bg-canvas: #0e1210;
+  --bg-surface: #151b18;
+  --bg-subtle: #1c2420;
+  --bg-elevated: #1c2420;
+
+  --text-primary: #f3f5f2;
+  --text-secondary: #c0cac2;
+  --text-muted: #93a096;
+  --text-on-accent: #ffffff;
+
+  --border-hairline: #27322c;
+  --border-strong: #3a4941;
+
+  --accent-primary: #15803d;
+  --accent-primary-hover: #166534;
+  --accent-secondary: #ea580c;
+  --focus-ring: #4ade80;
+
+  --status-ok-bg: #0f291a;
+  --status-ok-border: #1e4d31;
+  --status-ok-text: #bbf7d0;
+
+  --status-info-bg: #131c27;
+  --status-info-border: #29384c;
+  --status-info-text: #e2e8f0;
+
+  --status-warn-bg: #291d09;
+  --status-warn-border: #5c4012;
+  --status-warn-text: #fde68a;
+
+  --status-error-bg: #2c1212;
+  --status-error-border: #5f2121;
+  --status-error-text: #fecaca;
+
+  --placeholder-surface: #17201b;
+  --placeholder-grid: #27352d;
+  --placeholder-ink: #86efac;
+  --placeholder-warm: #fdba74;
+  --hero-scrim: linear-gradient(180deg, rgba(14, 18, 16, 0.12) 0%, rgba(14, 18, 16, 0.36) 100%);
+}

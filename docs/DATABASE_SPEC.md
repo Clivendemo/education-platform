@@ -3220,21 +3220,21 @@ It is the authoritative structured foundation of the entire education platform.
 ## 71.1 Migration `0024_wave3_rate_limits.sql` (`system` Schema)
 
 1. **`system.rate_limit_buckets` (`UNLOGGED TABLE`)**
-   * Columns: `bucket_key TEXT PRIMARY KEY` (`1..180` chars), `policy_id TEXT NOT NULL` (`1..64` chars), `millitokens BIGINT NOT NULL` (`>= 0`), `updated_at TIMESTAMPTZ NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL` (`expires_at > updated_at`).
+   * Columns: `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`, `bucket_key VARCHAR(160) NOT NULL UNIQUE` (`16..160` chars), `policy_id VARCHAR(64) NOT NULL` (`3..64` chars), `millitokens BIGINT NOT NULL` (`0..1,000,000,000`), `updated_at TIMESTAMPTZ NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL` (`expires_at > updated_at`).
    * Index: `idx_rate_limit_buckets_expires_at (expires_at)`.
    * Stores HMAC-SHA256 privacy-preserving bucket keys (never raw IP addresses or raw email addresses) using integer millitoken arithmetic (`1` request = `1,000` millitokens).
 
 2. **`system.rate_limit_admissions` (`LOGGED TABLE`)**
-   * Columns: `admission_key TEXT PRIMARY KEY` (`1..180` chars), `claim_token UUID NOT NULL`, `status TEXT NOT NULL` (`CHECK (status IN ('UNCLAIMED', 'CLAIMED'))`), `payload_fingerprint TEXT NOT NULL` (`^[0-9a-f]{64}$`), `created_at TIMESTAMPTZ NOT NULL`, `claimed_at TIMESTAMPTZ NULL`, `expires_at TIMESTAMPTZ NOT NULL` (`expires_at > created_at`, `(status = 'UNCLAIMED' AND claimed_at IS NULL) OR (status = 'CLAIMED' AND claimed_at IS NOT NULL)`).
+   * Columns: `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`, `admission_key VARCHAR(200) NOT NULL UNIQUE` (`16..200` chars), `status VARCHAR(20) NOT NULL` (`CHECK (status IN ('UNCLAIMED', 'CLAIMED'))`), `claim_token UUID NOT NULL`, `payload_fingerprint VARCHAR(64) NOT NULL` (`CHECK (payload_fingerprint ~ '^[0-9a-f]{64}$')`), `created_at TIMESTAMPTZ NOT NULL`, `updated_at TIMESTAMPTZ NOT NULL`, `claimed_at TIMESTAMPTZ NULL`, `expires_at TIMESTAMPTZ NOT NULL` (`expires_at > created_at`, `(status = 'UNCLAIMED' AND claimed_at IS NULL) OR (status = 'CLAIMED' AND claimed_at IS NOT NULL)`).
    * Index: `idx_rate_limit_admissions_expires_at (expires_at)`.
    * Logged durability preserves idempotency admission state across PostgreSQL crash recovery.
 
-3. **Two-Phase Atomic Functions (`SECURITY INVOKER`, explicit `SET search_path = pg_catalog, system`)**
-   * **`system.consume_rate_limit_buckets` (`Tx1`, 10 parameters including `p_costs_mt BIGINT[]` as 5th parameter and `p_secondary_payload_fingerprint TEXT DEFAULT NULL` as 10th parameter):**
-     * Validates parallel array lengths (`1..8`), distinct non-empty bucket keys, positive capacities/refills/periods/costs (`p_costs_mt[i] <= p_capacities_mt[i]`), and valid 64-hex HMAC fingerprints.
-     * Acquires `FOR UPDATE` lock on `system.rate_limit_admissions`, uses post-lock `clock_timestamp()` to prevent time-inversion, rejects payload mismatches (`CONFLICT_PAYLOAD`) and already-claimed keys (`ALREADY_CLAIMED`) **before** any bucket deduction, atomically re-tags `UNCLAIMED` rows matched via `p_secondary_payload_fingerprint` to `p_payload_fingerprint` without extending `expires_at`, locks `system.rate_limit_buckets` in deterministic `ORDER BY bucket_key ASC` order to eliminate deadlocks, and deducts per-bucket `p_costs_mt[i]`.
-   * **`system.claim_rate_limit_admission` (`Tx2`):**
-     * Acquires `FOR UPDATE` lock on `system.rate_limit_admissions` and performs a terminal single-winner `UNCLAIMED -> CLAIMED` transition only when `claim_token = p_claim_token` and `expires_at > clock_timestamp()`. Re-claims against an already-`CLAIMED` row return `ALREADY_CLAIMED` (`claimed = FALSE`) even when `p_claim_token` matches.
+3. **Two-Phase Atomic Functions (`SECURITY INVOKER`, explicit `SET search_path = pg_catalog, pg_temp`)**
+   * **`system.consume_rate_limit_buckets` (`Tx1`, 10 parameters: `(TEXT[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], TEXT, UUID, INTEGER, VARCHAR(64), VARCHAR(64) DEFAULT NULL)`, with `p_costs_mt BIGINT[]` as 5th parameter, `p_payload_fingerprint VARCHAR(64)` as 9th parameter, and `p_secondary_payload_fingerprint VARCHAR(64) DEFAULT NULL` as 10th parameter):**
+     * Validates parallel array lengths (`1..8`), non-empty bounded bucket keys, positive capacities/refills/periods/costs (`p_costs_mt[i] <= p_capacities_mt[i]`), and valid 64-char lowercase hex HMAC-SHA256 fingerprints (`^[0-9a-f]{64}$`).
+     * Acquires advisory locks + `FOR UPDATE` row lock on `system.rate_limit_admissions`, uses post-lock `clock_timestamp()` to prevent time-inversion, rejects payload mismatches (`CONFLICT_PAYLOAD`) and already-claimed keys (`ALREADY_CLAIMED`) **before** any bucket deduction, atomically re-tags `UNCLAIMED` rows matched via `p_secondary_payload_fingerprint` to `p_payload_fingerprint` without extending `expires_at`, upserts `system.rate_limit_buckets` in deterministic `ORDER BY bucket_key ASC` order to eliminate deadlocks, and deducts per-bucket `p_costs_mt[i]`.
+   * **`system.claim_rate_limit_admission` (`Tx2`, `(TEXT, UUID)`):**
+     * Acquires advisory lock + `FOR UPDATE` row lock on `system.rate_limit_admissions` and performs a terminal single-winner `UNCLAIMED -> CLAIMED` transition only when `claim_token = p_claim_token` and `expires_at > clock_timestamp()`. Re-claims against an already-`CLAIMED` row return `ALREADY_CLAIMED` (`claimed = FALSE`) even when `p_claim_token` matches.
 
 ## 71.2 Retention Integration (`RET_RATE_LIMIT_BUCKETS_7D`)
 

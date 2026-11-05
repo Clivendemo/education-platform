@@ -238,10 +238,16 @@ export function computePayloadFingerprints(
 ): { primary: string; secondary: string | null } {
   const canonTarget = canonicalizeRequestTarget(params.rawUrl);
   const message = `v1|${params.method.toUpperCase()}|${canonTarget}|${params.bodySha256Hex.toLowerCase()}`;
-  const primary = `v1:${crypto.createHmac('sha256', secrets.activeSecret).update(message, 'utf8').digest('hex')}`;
+  const primary = crypto
+    .createHmac('sha256', secrets.activeSecret)
+    .update(message, 'utf8')
+    .digest('hex');
   const secondary =
     secrets.secondarySecret && secrets.secondarySecret !== secrets.activeSecret
-      ? `v1:${crypto.createHmac('sha256', secrets.secondarySecret).update(message, 'utf8').digest('hex')}`
+      ? crypto
+          .createHmac('sha256', secrets.secondarySecret)
+          .update(message, 'utf8')
+          .digest('hex')
       : null;
   return { primary, secondary };
 }
@@ -495,22 +501,21 @@ function validateTx1Parameters(input: Tx1ConsumeInput): void {
     err.code = '22023';
     throw err;
   }
-  if (
-    !input.payloadFingerprint ||
-    input.payloadFingerprint.trim().length < 32 ||
-    input.payloadFingerprint.length > 128
-  ) {
-    const err = new Error('Invalid p_payload_fingerprint bounds') as Error & { code?: string };
+  if (!input.payloadFingerprint || !/^[0-9a-f]{64}$/.test(input.payloadFingerprint)) {
+    const err = new Error(
+      'Invalid p_payload_fingerprint format (expected 64-char lowercase hex)',
+    ) as Error & { code?: string };
     err.code = '22023';
     throw err;
   }
   if (
     input.secondaryPayloadFingerprint !== undefined &&
     input.secondaryPayloadFingerprint !== null &&
-    (input.secondaryPayloadFingerprint.trim().length < 32 ||
-      input.secondaryPayloadFingerprint.length > 128)
+    !/^[0-9a-f]{64}$/.test(input.secondaryPayloadFingerprint)
   ) {
-    const err = new Error('Invalid p_secondary_payload_fingerprint bounds') as Error & {
+    const err = new Error(
+      'Invalid p_secondary_payload_fingerprint format (expected 64-char lowercase hex)',
+    ) as Error & {
       code?: string;
     };
     err.code = '22023';
@@ -981,8 +986,8 @@ export class PostgresRateLimitStore implements RateLimitStore {
              $6::text,
              $7::uuid,
              $8::int,
-             $9::text,
-             $10::text
+             $9::varchar(64),
+             $10::varchar(64)
            )`,
           [
             input.buckets.map((b) => b.bucketKey),
