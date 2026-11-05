@@ -93,3 +93,245 @@ export interface PlatformReadinessSnapshot {
   checkedAtIso: string;
   countryCode: string;
 }
+
+// ============================================================================
+// Phase 2: Public Homepage, Resource Types & Search Autocomplete Contracts
+// ============================================================================
+
+export type HomepageSlotKey =
+  | 'trending_resources'
+  | 'most_downloaded_resources'
+  | 'curated_resources'
+  | 'education_updates'
+  | 'calendar_highlights'
+  | 'curriculum_shortcuts';
+
+export type HomepageEntityType = 'RESOURCE' | 'UPDATE' | 'CALENDAR_EVENT' | 'SUBJECT';
+
+export type HomepageSlotMode = 'AUTOMATED' | 'CURATED_HYBRID' | 'MANUAL_OVERRIDE';
+
+export interface HomepageCountrySummaryDto {
+  id: string;
+  name: string;
+  isoCode: string;
+  urlPrefix: string;
+  currencyCode: string;
+}
+
+export interface HomepageResourceCardDto {
+  id: string;
+  entityType: 'RESOURCE';
+  title: string;
+  slug: string;
+  description: string | null;
+  isPinned: boolean;
+  qualityLabel: string;
+  quality: {
+    effectiveTier: string;
+    label: string;
+    displayMark: string | null;
+    isVerified: boolean;
+    isPremium: boolean;
+    verifiedAt: string | null;
+  };
+  resourceType: {
+    id: string;
+    code: string;
+    name: string;
+    slug: string;
+    pillar: string;
+  };
+  curriculum: {
+    id: string;
+    code: string | null;
+    name: string;
+    slug: string;
+  } | null;
+  educationLevel: {
+    id: string;
+    code: string | null;
+    name: string;
+    slug: string;
+  } | null;
+  grade: {
+    id: string;
+    code: string | null;
+    name: string;
+    slug: string;
+  } | null;
+  subject: {
+    id: string;
+    code: string | null;
+    name: string;
+    slug: string;
+  } | null;
+  topic: {
+    id: string;
+    code: string | null;
+    name: string;
+    slug: string;
+  } | null;
+  publishedVersion: {
+    id: string;
+    versionNumber: number;
+    versionLabel: string;
+    publishedAt: string;
+  };
+}
+
+export interface HomepageUpdateCardDto {
+  id: string;
+  entityType: 'UPDATE';
+  title: string;
+  slug: string;
+  summary: string | null;
+  publishedAt: string;
+  isPinned: boolean;
+  category: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+}
+
+export interface HomepageCalendarHighlightCardDto {
+  id: string;
+  entityType: 'CALENDAR_EVENT';
+  title: string;
+  description: string | null;
+  startDate: string;
+  endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  allDay: boolean;
+  location: string | null;
+  isPinned: boolean;
+  eventType: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  calendar: {
+    id: string;
+    name: string;
+    academicYear: string | null;
+  };
+}
+
+export interface CurriculumShortcutCardDto {
+  id: string;
+  entityType: 'SUBJECT';
+  name: string;
+  slug: string;
+  code: string | null;
+  description: string | null;
+  isPinned: boolean;
+  publishedResourceCount: number;
+  curriculum: {
+    id: string;
+    name: string;
+    slug: string;
+    code: string | null;
+  };
+  educationLevel: {
+    id: string;
+    name: string;
+    slug: string;
+    sequenceOrder: number;
+  };
+  grade: {
+    id: string;
+    name: string;
+    slug: string;
+    sequenceOrder: number;
+  };
+  pathway: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+}
+
+export type HomepageSectionItemDto =
+  | HomepageResourceCardDto
+  | HomepageUpdateCardDto
+  | HomepageCalendarHighlightCardDto
+  | CurriculumShortcutCardDto;
+
+export interface HomepageSectionDto {
+  slotKey: HomepageSlotKey;
+  slotOrder: 1 | 2 | 3 | 4 | 5 | 6;
+  entityType: HomepageEntityType;
+  mode: HomepageSlotMode;
+  title: string;
+  subtitle: string | null;
+  maxItems: number;
+  count: number;
+  items: HomepageSectionItemDto[];
+}
+
+export interface PublicHomepagePayload {
+  country: HomepageCountrySummaryDto;
+  source: 'PUBLISHED_CONFIGURATION' | 'DEFAULT_FALLBACK';
+  configuration: {
+    id: string;
+    versionNumber: number;
+  } | null;
+  evaluatedAt: string;
+  sections: HomepageSectionDto[];
+}
+
+export interface PublicHomepageResponse {
+  data: PublicHomepagePayload;
+  _diagnostics?: {
+    cacheHit: boolean;
+    rebuildCount: number;
+    lazyReconciled: boolean;
+  };
+}
+
+export type ResourcePillar =
+  | 'PAST_PAPERS'
+  | 'LESSON_PLANS'
+  | 'SCHEMES_OF_WORK'
+  | 'NOTES_REVISION'
+  | 'SCHOOL_DOCUMENTS'
+  | 'ACADEMIC_CALENDAR'
+  | 'EDUCATION_UPDATES'
+  | 'TEACHER_RESOURCES';
+
+export interface ResourceTypeResult {
+  id: string;
+  code: string;
+  name: string;
+  slug: string;
+  pillar: ResourcePillar;
+  description?: string;
+  status: 'ACTIVE' | 'ARCHIVED';
+  sequenceOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutocompleteSuggestion {
+  text: string;
+  type: 'RESOURCE_TITLE' | 'CURRICULUM_TOPIC';
+  resourceId?: string;
+  slug?: string;
+  context?: {
+    country?: string;
+    curriculum?: string;
+    grade?: string;
+    subject?: string;
+  };
+}
+
+export interface AutocompleteResponse {
+  data: AutocompleteSuggestion[];
+  meta: {
+    count: number;
+    query: string;
+    fallbackUsed: boolean;
+  };
+}
+

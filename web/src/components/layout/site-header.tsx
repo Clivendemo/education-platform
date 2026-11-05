@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button';
 import { useTheme } from '@/providers/theme-provider';
 
 const PRIMARY_NAV_ITEMS = [
-  { href: '#curriculum', label: 'Curriculum' },
-  { href: '#visual-architecture', label: 'Resources' },
-  { href: '#workspace', label: 'Workspace' },
-  { href: '#readiness', label: 'Foundation' },
+  { href: '#search', label: 'Search' },
+  { href: '#pillars', label: 'Curriculum Pillars' },
+  { href: '#trending', label: 'Trending' },
+  { href: '#updates', label: 'Updates' },
+  { href: '#calendar', label: 'Calendar' },
 ] as const;
 
 export function SiteHeader() {
